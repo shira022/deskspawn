@@ -58,6 +58,14 @@ const providerLabels: Record<ProviderKind, string> = {
   custom: "カスタム",
 };
 
+const providerRepModel: Record<ProviderKind, string> = {
+  openai: "GPT",
+  anthropic: "Claude",
+  google: "Gemini",
+  ollama: "ローカルLLM",
+  custom: "OpenAI 互換",
+};
+
 export function MainLayout() {
   const {
     layoutMode,
@@ -221,7 +229,7 @@ export function MainLayout() {
                           >
                             {Object.entries(providerLabels).map(([id, label]) => (
                               <option key={id} value={id}>
-                                {label}
+                                {label} - {providerRepModel[id as ProviderKind]}
                               </option>
                             ))}
                           </Select>

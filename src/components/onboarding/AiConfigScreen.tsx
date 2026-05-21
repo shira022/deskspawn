@@ -21,11 +21,11 @@ import {
 const SIDECAR_BASE = "http://localhost:3001";
 
 const providers: { id: ProviderKind; name: string; icon: React.ReactNode; description: string }[] = [
-  { id: "openai", name: "OpenAI", icon: <Sparkles className="h-5 w-5" />, description: "GPT-4o, o1, o3 など" },
-  { id: "anthropic", name: "Anthropic", icon: <Cloud className="h-5 w-5" />, description: "Claude Sonnet, Opus など" },
-  { id: "google", name: "Google", icon: <Globe className="h-5 w-5" />, description: "Gemini 2.5 Flash, Pro など" },
-  { id: "ollama", name: "Ollama", icon: <Cpu className="h-5 w-5" />, description: "ローカルLLM（完全オフライン）" },
-  { id: "custom", name: "カスタム", icon: <Server className="h-5 w-5" />, description: "OpenAI API 互換エンドポイント" },
+  { id: "openai", name: "OpenAI", icon: <Sparkles className="h-5 w-5" />, description: "GPT" },
+  { id: "anthropic", name: "Anthropic", icon: <Cloud className="h-5 w-5" />, description: "Claude" },
+  { id: "google", name: "Google", icon: <Globe className="h-5 w-5" />, description: "Gemini" },
+  { id: "ollama", name: "Ollama", icon: <Cpu className="h-5 w-5" />, description: "ローカルLLM" },
+  { id: "custom", name: "カスタム", icon: <Server className="h-5 w-5" />, description: "OpenAI 互換" },
 ];
 
 const providerNeedsApiKey = (p: ProviderKind) => p !== "ollama";
@@ -150,8 +150,8 @@ export function AiConfigScreen() {
   const hasModels = models.length > 0 && !modelsLoading && !modelsError;
 
   return (
-    <div className="flex h-full items-center justify-center bg-gradient-to-b from-background to-muted/30">
-      <div className="w-full max-w-lg space-y-6 rounded-xl border bg-card p-8 shadow-lg">
+    <div className="flex h-full items-start justify-center overflow-y-auto bg-gradient-to-b from-background to-muted/30 py-6 md:items-center">
+      <div className="mx-auto w-full max-w-lg space-y-4 rounded-xl border bg-card p-6 shadow-lg sm:space-y-6 sm:p-8">
         <div className="space-y-2 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             <Sparkles className="h-6 w-6 text-primary" />
@@ -164,7 +164,7 @@ export function AiConfigScreen() {
 
         <Separator />
 
-        <ScrollArea className="h-[420px]">
+        <ScrollArea className="max-h-[420px] min-h-[160px] sm:h-[420px]">
           <div className="space-y-5 px-1">
             {/* Provider Selection */}
             <div className="space-y-2">
