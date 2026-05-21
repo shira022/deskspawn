@@ -22,8 +22,23 @@ export interface EnvCheckItem {
   name: string;
   description: string;
   checkCommand: string;
-  status: "pending" | "ok" | "fail";
+  status: "pending" | "ok" | "fail" | "installing";
   downloadUrl?: string;
+  wingetPackage?: string;
+  sizeMb?: number;
+}
+
+export interface WingetStatus {
+  available: boolean;
+  version?: string;
+  message: string;
+}
+
+export interface SetupProgress {
+  package: string;
+  stage: "starting" | "downloading" | "installing" | "complete" | "error";
+  progressPercent: number;
+  message: string;
 }
 
 // ============================================================

@@ -47,6 +47,8 @@ pub fn run() {
             commands::harness::initialize_workspace,
             // Environment check commands
             commands::env_check::check_environment,
+            commands::env_check::check_winget,
+            commands::env_check::install_with_winget,
             commands::env_check::open_url,
             // Spawn commands
             commands::spawn::spawn_build,

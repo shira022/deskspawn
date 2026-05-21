@@ -4,6 +4,8 @@ import type {
   LayoutMode,
   AiConfig,
   EnvCheckItem,
+  WingetStatus,
+  SetupProgress,
   ChatMessage,
   AgentStatus,
   ErrorInfo,
@@ -18,27 +20,36 @@ const defaultEnvChecks: EnvCheckItem[] = [
     checkCommand: "node --version",
     status: "pending",
     downloadUrl: "https://nodejs.org/",
+    wingetPackage: "OpenJS.NodeJS.LTS",
+    sizeMb: 30,
   },
   {
-    name: "Rust (MSVC Toolchain)",
+    name: "Rust",
     description: "Rust compiler and toolchain",
     checkCommand: "rustc --version",
     status: "pending",
     downloadUrl: "https://rustup.rs/",
+    wingetPackage: "Rustlang.Rustup",
+    sizeMb: 400,
   },
   {
-    name: "Visual Studio Build Tools",
-    description: "MSVC compiler for Rust",
+    name: "VS Build Tools",
+    description: "MSVC compiler for native compilation",
     checkCommand: "vswhere",
     status: "pending",
-    downloadUrl: "https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022",
+    downloadUrl:
+      "https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022",
+    wingetPackage: "Microsoft.VisualStudio.2022.BuildTools",
+    sizeMb: 4500,
   },
   {
-    name: "WebView2 Runtime",
+    name: "WebView2",
     description: "Required for Tauri WebView",
     checkCommand: "reg query",
     status: "pending",
     downloadUrl: "https://developer.microsoft.com/microsoft-edge/webview2/",
+    wingetPackage: "Microsoft.EdgeWebView2Runtime",
+    sizeMb: 120,
   },
 ];
 
@@ -57,8 +68,19 @@ interface Store {
 
   // Environment Check
   envChecks: EnvCheckItem[];
-  setEnvCheckStatus: (index: number, status: "ok" | "fail") => void;
+  setEnvCheckResults: (results: EnvCheckItem[]) => void;
+  setEnvCheckStatus: (index: number, status: EnvCheckItem["status"]) => void;
   allEnvChecksPassed: () => boolean;
+  failedEnvChecks: () => EnvCheckItem[];
+  wingetStatus: WingetStatus | null;
+  setWingetStatus: (status: WingetStatus | null) => void;
+  isWingetAvailable: () => boolean;
+
+  // Setup Progress
+  setupProgress: Map<string, SetupProgress>;
+  setSetupProgress: (progress: SetupProgress) => void;
+  setupRunning: boolean;
+  setSetupRunning: (running: boolean) => void;
 
   // Chat
   messages: ChatMessage[];
@@ -90,9 +112,13 @@ interface Store {
   isDarkMode: boolean;
   toggleDarkMode: () => void;
 
-  // Vite
+  // Vite (DeskSpawn own dev server)
   vitePort: number;
   setVitePort: (port: number) => void;
+
+  // Workspace preview
+  workspacePort: number;
+  setWorkspacePort: (port: number) => void;
 
   // Workspace
   workspaceReady: boolean;
@@ -110,6 +136,7 @@ export const useAppStore = create<Store>((set, get) => ({
   setAiConfig: (aiConfig) => set({ aiConfig }),
 
   envChecks: defaultEnvChecks,
+  setEnvCheckResults: (results) => set({ envChecks: results }),
   setEnvCheckStatus: (index, status) =>
     set((state) => {
       const checks = [...state.envChecks];
@@ -117,6 +144,20 @@ export const useAppStore = create<Store>((set, get) => ({
       return { envChecks: checks };
     }),
   allEnvChecksPassed: () => get().envChecks.every((c) => c.status === "ok"),
+  failedEnvChecks: () => get().envChecks.filter((c) => c.status === "fail"),
+  wingetStatus: null,
+  setWingetStatus: (wingetStatus) => set({ wingetStatus }),
+  isWingetAvailable: () => get().wingetStatus?.available ?? false,
+
+  setupProgress: new Map(),
+  setSetupProgress: (progress) =>
+    set((state) => {
+      const next = new Map(state.setupProgress);
+      next.set(progress.package, progress);
+      return { setupProgress: next };
+    }),
+  setupRunning: false,
+  setSetupRunning: (setupRunning) => set({ setupRunning }),
 
   messages: [],
   addMessage: (message) =>
@@ -146,6 +187,9 @@ export const useAppStore = create<Store>((set, get) => ({
 
   vitePort: 5173,
   setVitePort: (vitePort) => set({ vitePort }),
+
+  workspacePort: 5174,
+  setWorkspacePort: (workspacePort) => set({ workspacePort }),
 
   workspaceReady: false,
   setWorkspaceReady: (workspaceReady) => set({ workspaceReady }),

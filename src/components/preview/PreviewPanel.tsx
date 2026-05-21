@@ -1,11 +1,28 @@
 import { useAppStore } from "@/store/useAppStore";
+import { useRef, useEffect, useCallback } from "react";
 import { Monitor, ExternalLink, RefreshCw, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
 export function PreviewPanel() {
-  const { vitePort, workspaceReady } = useAppStore();
+  const { workspacePort, workspaceReady } = useAppStore();
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const versionRef = useRef(0);
 
-  const previewUrl = `http://localhost:${vitePort}`;
+  const previewUrl = `http://localhost:${workspacePort}`;
+
+  const handleReload = useCallback(() => {
+    if (iframeRef.current) {
+      versionRef.current += 1;
+      iframeRef.current.src = `${previewUrl}?_v=${versionRef.current}`;
+    }
+  }, [previewUrl]);
+
+  // Auto-reload when workspace changes (code generation completes)
+  useEffect(() => {
+    if (workspaceReady) {
+      handleReload();
+    }
+  }, [workspaceReady, handleReload]);
 
   return (
     <div className="flex h-full flex-col">
@@ -13,19 +30,17 @@ export function PreviewPanel() {
       <div className="flex h-10 items-center gap-2 border-b px-3">
         <Monitor className="h-4 w-4 text-muted-foreground" />
         <span className="text-sm font-medium">ライブプレビュー</span>
+        <span className="text-xs text-muted-foreground/50">:{workspacePort}</span>
         <div className="ml-auto flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-7 w-7"
-            onClick={() => {
-              const iframe = document.getElementById("preview-iframe") as HTMLIFrameElement;
-              iframe?.contentWindow?.location.reload();
-            }}
-            title="リロード"
-          >
-            <RefreshCw className="h-3.5 w-3.5" />
-          </Button>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={handleReload}
+              title="リロード"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+            </Button>
           <Button
             variant="ghost"
             size="icon"
@@ -42,7 +57,7 @@ export function PreviewPanel() {
       <div className="flex-1 bg-white">
         {workspaceReady ? (
           <iframe
-            id="preview-iframe"
+            ref={iframeRef}
             src={previewUrl}
             className="h-full w-full border-none"
             title="App Preview"
@@ -59,7 +74,7 @@ export function PreviewPanel() {
               ここにリアルタイムプレビューが表示されます。
             </p>
             <p className="text-xs text-muted-foreground/60 mt-2">
-              Vite dev server: {previewUrl}
+              workspace port: {workspacePort}
             </p>
           </div>
         )}

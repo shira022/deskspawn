@@ -1,9 +1,13 @@
 import fs from 'fs/promises';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { execSync } from 'child_process';
 import type { Artifact, Action, FileAction, DiffAction, TemplateAction, ShellAction } from './types.js';
 
-const WORKSPACE_DIR = path.resolve(process.cwd(), '..', 'workspace');
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+// sidecar/src/tool-executors.ts → project root → workspace/
+const WORKSPACE_DIR = path.resolve(__dirname, '..', '..', 'workspace');
 
 export function getWorkspaceDir(): string {
   return WORKSPACE_DIR;
