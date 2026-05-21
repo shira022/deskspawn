@@ -2,20 +2,19 @@
 
 ## Purpose
 
-Execute GitFlow merge operations: feature branches into `develop` (autonomous), and `develop` into `staging` (gated by full verification). Manage branch lifecycle and cleanup.
+Execute GitFlow merge operations: feature branches into `develop` (autonomous), and `develop` into `main` (gated by full verification). Manage branch lifecycle and cleanup.
 
 ## Trigger
 
 - Feature implementation is complete, verification passed, and review approved
-- The Orchestrator signals that merge gates are satisfied for a develop→staging batch
+- The Orchestrator signals that merge gates are satisfied for a develop→main batch
 
 ## Branch Types Handled
 
 | Merge | Authority | Preconditions |
 |-------|-----------|---------------|
 | `<type>/*` → `develop` | 🤖 Autonomous | Review `approved`, verify `pass` |
-| `develop` → `staging` | 🤖 PR: Orchestrator<br>👤 Merge: Human | All feature PRs in batch pass; full integration verify pass. Orchestrator creates PR; human merges. |
-| `staging` → `main` | 👤 Human only | NOT handled by this skill |
+| `develop` → `main` | 👤 Human only | All feature PRs in batch pass; full integration verify pass. Orchestrator creates PR; human merges. |
 
 ## Process
 
@@ -58,7 +57,7 @@ git push origin --delete <prefix>/<slug>
 |---------|----------|
 | Merge conflict | Rebase feature onto develop, resolve conflicts, retry. Document the conflict resolution in merge log. |
 | Push rejected | Pull latest develop, rebase, retry. If persistent, escalate. |
-| Post-merge CI failure | Flag to Orchestrator immediately. Do NOT proceed to staging merge. |
+| Post-merge CI failure | Flag to Orchestrator immediately. Do NOT proceed to develop→main merge. |
 
 #### Rollback: Reverting a Bad Merge to Develop
 
@@ -84,7 +83,7 @@ git push origin <prefix>/<slug>-rework
 
 **Important**: Use `git revert` (not `git reset`) on shared branches. This preserves history and avoids force-push conflicts.
 
-### Merge Type 2: Develop → Staging (Human-Gated)
+### Merge Type 2: Develop → Main (Human-Gated)
 
 The Orchestrator handles verification and PR creation. The human reviews and clicks merge.
 
@@ -101,23 +100,23 @@ The Orchestrator handles verification and PR creation. The human reviews and cli
 
 ```bash
 # 1. Ensure local branches are current
-git checkout staging
-git pull origin staging
+git checkout main
+git pull origin main
 git checkout develop
 git pull origin develop
 
 # 2. Run integration verification on develop HEAD
 # (re-run verify skill; if fails → abort, route failing features back to fix)
 
-# 3. Create a branch for the staging PR (so human can review the diff)
-STAGING_BRANCH="staging-pr-$(date +%Y%m%d-%H%M%S)"
-git checkout -b "$STAGING_BRANCH"
+# 3. Create a branch for the main PR (so human can review the diff)
+RELEASE_BRANCH="release-pr-$(date +%Y%m%d-%H%M%S)"
+git checkout -b "$RELEASE_BRANCH"
 # Build commit message using $'...' for actual newlines
-MSG=$'staging: prepare develop → staging merge\n\nBatch includes: <replace with list of feature branches>\nVerification: all feature PRs passed verify + review\nIntegration verify: passed on develop HEAD'
+MSG=$'release: prepare develop → main merge\n\nBatch includes: <replace with list of feature branches>\nVerification: all feature PRs passed verify + review\nIntegration verify: passed on develop HEAD'
 git merge --no-ff develop -m "$MSG"
-git push origin "$STAGING_BRANCH"
+git push origin "$RELEASE_BRANCH"
 
-# 4. Create PR: staging-pr-* → staging
+# 4. Create PR: release-pr-* → main
 # PR description must include:
 #   - List of feature branches in this batch
 #   - Summary of verification results
@@ -137,14 +136,14 @@ The human reviews the PR and clicks merge. The human may:
 After the human merges:
 
 ```bash
-# 1. Tag the staging snapshot
-git checkout staging
-git pull origin staging
-git tag -a "staging-$(date +%Y%m%d-%H%M%S)" -m "Staging snapshot $(date -Iseconds)"
+# 1. Tag the release snapshot
+git checkout main
+git pull origin main
+git tag -a "release-$(date +%Y%m%d-%H%M%S)" -m "Release snapshot $(date -Iseconds)"
 git push origin --tags
 
-# 2. Delete the staging-pr branch
-git push origin --delete staging-pr-<timestamp>
+# 2. Delete the release-pr branch
+git push origin --delete release-pr-<timestamp>
 ```
 
 #### Failure Handling
@@ -158,7 +157,7 @@ git push origin --delete staging-pr-<timestamp>
 ## Branch Cleanup Policy
 
 - ✅ Delete feature branches immediately after merge to `develop`
-- ✅ Never delete `develop`, `staging`, or `main`
+- ✅ Never delete `develop` or `main`
 - ⚠️ Stale branches (>14 days without activity): flag to Orchestrator; human decides to keep or delete
 - 📝 Branch deletions are logged in the merge log
 
@@ -169,9 +168,9 @@ Append to `.agents/artifacts/merge-log.jsonl` (JSON Lines — one JSON object pe
 ```jsonc
 {
   "timestamp": "ISO8601",
-  "type": "feature_to_develop|develop_to_staging_pr|develop_to_staging_merged",
+  "type": "feature_to_develop|develop_to_main_pr|develop_to_main_merged",
   "source_branch": "<prefix>/<slug>",
-  "target_branch": "develop|staging",
+  "target_branch": "develop|main",
   "commit_sha": "abc123def",
   "artifacts_referenced": [
     "plan-<slug>.json",
@@ -179,7 +178,7 @@ Append to `.agents/artifacts/merge-log.jsonl` (JSON Lines — one JSON object pe
     "review-report-<slug>.json"
   ],
   "branches_deleted": ["<prefix>/<slug>"],
-  "tags_created": ["staging-YYYYMMDD-HHMMSS"]
+  "tags_created": ["release-YYYYMMDD-HHMMSS"]
 }
 ```
 
@@ -189,7 +188,7 @@ Append to `.agents/artifacts/merge-log.jsonl` (JSON Lines — one JSON object pe
 - Never skip preconditions, even for "trivial" changes
 - If any precondition fails, abort and report to Orchestrator with specifics
 - Feature → develop merges should be frequent (avoid accumulating large batches)
-- Develop → staging: Orchestrator creates PR only after full gate check. Human decides when to merge.
-- Never merge locally to `staging` — always go through the PR workflow
+- Develop → main: Orchestrator creates PR only after full gate check. Human decides when to merge.
+- Never merge locally to `main` — always go through the PR workflow
 - Always use `--no-ff` to preserve branch history in the merge commit
 - The merge log is append-only — never edit or remove entries
