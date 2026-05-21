@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ProviderKind, AiConfig } from "@/types";
+import type { ProviderKind, AiConfig, ModelInfo } from "@/types";
 import {
   Sparkles,
   ChevronRight,
@@ -14,7 +14,11 @@ import {
   Cloud,
   Cpu,
   Server,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
+
+const SIDECAR_BASE = "http://localhost:3001";
 
 const providers: { id: ProviderKind; name: string; icon: React.ReactNode; description: string }[] = [
   { id: "openai", name: "OpenAI", icon: <Sparkles className="h-5 w-5" />, description: "GPT-4o, o1, o3 など" },
@@ -24,25 +28,92 @@ const providers: { id: ProviderKind; name: string; icon: React.ReactNode; descri
   { id: "custom", name: "カスタム", icon: <Server className="h-5 w-5" />, description: "OpenAI API 互換エンドポイント" },
 ];
 
-const defaultModels: Record<ProviderKind, string> = {
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-4-20250514",
-  google: "gemini-2.5-flash",
-  ollama: "llama3.2",
-  custom: "",
-};
+const providerNeedsApiKey = (p: ProviderKind) => p !== "ollama";
 
 export function AiConfigScreen() {
   const { setPhase, setAiConfig } = useAppStore();
   const [provider, setProvider] = useState<ProviderKind>("openai");
   const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState(defaultModels.openai);
+  const [model, setModel] = useState("");
   const [customEndpoint, setCustomEndpoint] = useState("");
   const [temperature, setTemperature] = useState("0.2");
   const [maxTokens, setMaxTokens] = useState("");
   const [error, setError] = useState("");
 
-  const showApiKey = provider !== "ollama";
+  // Model discovery state
+  const [models, setModels] = useState<ModelInfo[]>([]);
+  const [modelsLoading, setModelsLoading] = useState(false);
+  const [modelsError, setModelsError] = useState("");
+  const [selectedModelInfo, setSelectedModelInfo] = useState<ModelInfo | null>(null);
+
+  const showApiKey = providerNeedsApiKey(provider);
+
+  // ── Fetch models when provider or custom endpoint changes ──────────────────
+
+  const fetchModels = useCallback(async () => {
+    setModelsLoading(true);
+    setModelsError("");
+    setModels([]);
+    setSelectedModelInfo(null);
+
+    try {
+      const params = new URLSearchParams({ provider });
+      if (customEndpoint && (provider === "custom" || provider === "ollama")) {
+        params.set("customEndpoint", customEndpoint);
+      }
+      if (apiKey && provider === "custom") {
+        params.set("apiKey", apiKey);
+      }
+
+      const res = await fetch(`${SIDECAR_BASE}/api/models?${params}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error((errData as any).error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      const fetched: ModelInfo[] = data.models ?? [];
+      setModels(fetched);
+
+      if (fetched.length > 0) {
+        setModel(fetched[0].id);
+        setSelectedModelInfo(fetched[0]);
+      }
+    } catch (e: any) {
+      setModelsError(e.message || "モデル一覧の取得に失敗しました");
+    } finally {
+      setModelsLoading(false);
+    }
+  }, [provider, customEndpoint, apiKey]);
+
+  useEffect(() => {
+    fetchModels();
+  }, [fetchModels]);
+
+  // Update selected model info when model changes
+  useEffect(() => {
+    const info = models.find((m) => m.id === model) ?? null;
+    setSelectedModelInfo(info);
+  }, [model, models]);
+
+  // ── Handlers ───────────────────────────────────────────────────────────────
+
+  const handleProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const p = e.target.value as ProviderKind;
+    setProvider(p);
+    setModel("");
+    setSelectedModelInfo(null);
+    if (p === "ollama") setApiKey("");
+  };
+
+  const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const value = e.target.value;
+    if (value === "__custom__") {
+      setModel("");
+      setSelectedModelInfo(null);
+    } else {
+      setModel(value);
+    }
+  };
 
   const handleNext = () => {
     setError("");
@@ -52,7 +123,7 @@ export function AiConfigScreen() {
       return;
     }
     if (!model.trim()) {
-      setError("モデル名を入力してください");
+      setError("モデルを選択または入力してください");
       return;
     }
     if (provider === "custom" && !customEndpoint.trim()) {
@@ -73,12 +144,10 @@ export function AiConfigScreen() {
     setPhase("env-check");
   };
 
-  const handleProviderChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const p = e.target.value as ProviderKind;
-    setProvider(p);
-    setModel(defaultModels[p]);
-    if (p === "ollama") setApiKey("");
-  };
+  // ── Derived state ──────────────────────────────────────────────────────────
+
+  const showTemperature = !selectedModelInfo || selectedModelInfo.supportsTemperature;
+  const hasModels = models.length > 0 && !modelsLoading && !modelsError;
 
   return (
     <div className="flex h-full items-center justify-center bg-gradient-to-b from-background to-muted/30">
@@ -130,14 +199,76 @@ export function AiConfigScreen() {
               </div>
             )}
 
-            {/* Model */}
+            {/* Model Selection */}
             <div className="space-y-2">
-              <Label>モデル名</Label>
-              <Input
-                placeholder={`例: ${defaultModels[provider]}`}
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-              />
+              <Label>モデル</Label>
+
+              {modelsLoading ? (
+                <div className="flex items-center gap-2 h-9 px-3 rounded-md border bg-muted/30 text-sm text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  モデル一覧を取得中...
+                </div>
+              ) : modelsError ? (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-2 text-sm text-amber-600 dark:text-amber-400">
+                    <AlertCircle className="h-3.5 w-3.5" />
+                    {modelsError}
+                  </div>
+                  <Input
+                    placeholder="モデル名を手動入力"
+                    value={model}
+                    onChange={(e) => setModel(e.target.value)}
+                  />
+                </div>
+              ) : hasModels ? (
+                <Select value={model} onChange={handleModelChange}>
+                  {models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                  <option disabled>──────────</option>
+                  <option value="__custom__">その他（手動入力）...</option>
+                </Select>
+              ) : (
+                <Input
+                  placeholder={`モデル名を入力（例: gpt-4o）`}
+                  value={model}
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              )}
+
+              {/* Manual input fallback when "その他" selected */}
+              {model === "" && hasModels && (
+                <Input
+                  className="mt-2"
+                  placeholder="モデルIDを手動入力"
+                  value=""
+                  onChange={(e) => setModel(e.target.value)}
+                />
+              )}
+
+              {/* Selected model info */}
+              {selectedModelInfo && (
+                <div className="flex flex-wrap gap-1.5 mt-1">
+                  <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    コンテキスト: {formatTokens(selectedModelInfo.contextLimit)}
+                  </span>
+                  <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                    出力上限: {formatTokens(selectedModelInfo.maxOutput)}
+                  </span>
+                  {selectedModelInfo.supportsToolCall && (
+                    <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      Tool Call
+                    </span>
+                  )}
+                  {selectedModelInfo.supportsReasoning && (
+                    <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      Reasoning
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Custom Endpoint */}
@@ -155,18 +286,20 @@ export function AiConfigScreen() {
             {/* Advanced Options */}
             <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
               <p className="text-xs font-medium text-muted-foreground">詳細設定（任意）</p>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Temperature</Label>
-                  <Input
-                    type="number"
-                    min="0"
-                    max="2"
-                    step="0.1"
-                    value={temperature}
-                    onChange={(e) => setTemperature(e.target.value)}
-                  />
-                </div>
+              <div className={`grid gap-3 ${showTemperature ? "grid-cols-2" : "grid-cols-1"}`}>
+                {showTemperature && (
+                  <div className="space-y-1.5">
+                    <Label className="text-xs">Temperature</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      max="2"
+                      step="0.1"
+                      value={temperature}
+                      onChange={(e) => setTemperature(e.target.value)}
+                    />
+                  </div>
+                )}
                 <div className="space-y-1.5">
                   <Label className="text-xs">Max Tokens</Label>
                   <Input
@@ -179,6 +312,11 @@ export function AiConfigScreen() {
                   />
                 </div>
               </div>
+              {!showTemperature && (
+                <p className="text-[10px] text-muted-foreground">
+                  ※ このモデルは Temperature パラメータに対応していません
+                </p>
+              )}
             </div>
 
             {error && (
@@ -196,4 +334,12 @@ export function AiConfigScreen() {
       </div>
     </div>
   );
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function formatTokens(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+  if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+  return String(n);
 }

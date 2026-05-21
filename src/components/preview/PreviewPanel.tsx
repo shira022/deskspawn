@@ -61,7 +61,7 @@ export function PreviewPanel() {
             src={previewUrl}
             className="h-full w-full border-none"
             title="App Preview"
-            sandbox="allow-scripts allow-same-origin"
+            
           />
         ) : (
           <div className="flex h-full flex-col items-center justify-center text-muted-foreground p-8">

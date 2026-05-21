@@ -22,10 +22,11 @@ export function ChatInput({ onSend, disabled }: ChatInputProps) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
+    if (e.key === "Enter" && e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
+    // Enter alone creates a newline (default textarea behavior)
   };
 
   // Auto-resize textarea
