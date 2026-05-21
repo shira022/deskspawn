@@ -37,7 +37,7 @@ Artifacts are stored in `.agents/artifacts/` and serve as the bridge across sepa
 ```
 main        🔒 Protected. PR from staging only. Human approve + full CI pass required.
   ↑
-staging     🔒 Protected. PR from develop only. Orchestrator merges after all verification passes.
+staging     🔒 Protected. PR from develop only. Orchestrator verifies + creates PR. Human approves and merges.
   ↑
 develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore PRs.
   ↑
@@ -59,7 +59,7 @@ develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore
 | Source → Target | Merge Authority | Conditions |
 |-----------------|----------------|------------|
 | `<type>/*` → `develop` | 🤖 Agents (autonomous) | PR must be created; basic CI (lint/build) should pass |
-| `develop` → `staging` | 🎯 Orchestrator | Full verification (verify + review) must pass |
+| `develop` → `staging` | 🤖 PR: Orchestrator<br>👤 Merge: Human | Full verification (verify + review) must pass. Orchestrator creates PR; human approves and merges. |
 | `staging` → `main` | 👤 Human only | Manual approval + full CI green |
 
 ### Commit Convention
@@ -83,7 +83,7 @@ develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore
 3. **VERIFY**: Agent loads `verify` skill → runs lint, typecheck, test, build locally → outputs verify-report
 4. **REVIEW**: Separate session agents load `review` skill → multi-perspective review → outputs review-report
 5. **FIX**: If review finds issues → separate session loads `fix` skill → implements fixes → back to VERIFY (unlimited loop). If stuck after 5 iterations for the same issue → escalate to human.
-6. **MERGE (develop→staging)**: Orchestrator loads `merge` skill → confirms all gates → merges
+6. **MERGE (develop→staging)**: Orchestrator loads `merge` skill → confirms all gates → creates PR for human → human reviews and merges
 
 ## Skill Catalog
 

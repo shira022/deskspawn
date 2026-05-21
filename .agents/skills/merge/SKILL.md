@@ -14,7 +14,7 @@ Execute GitFlow merge operations: feature branches into `develop` (autonomous), 
 | Merge | Authority | Preconditions |
 |-------|-----------|---------------|
 | `<type>/*` → `develop` | 🤖 Autonomous | Review `approved`, verify `pass` |
-| `develop` → `staging` | 🎯 Orchestrator gate | All feature PRs in batch pass; full integration verify pass |
+| `develop` → `staging` | 🤖 PR: Orchestrator<br>👤 Merge: Human | All feature PRs in batch pass; full integration verify pass. Orchestrator creates PR; human merges. |
 | `staging` → `main` | 👤 Human only | NOT handled by this skill |
 
 ## Process
@@ -64,19 +64,20 @@ git branch -d <prefix>/<slug>
 | Push rejected | Pull latest develop, rebase, retry. If persistent, escalate. |
 | Post-merge CI failure | Flag to Orchestrator immediately. Do NOT proceed to staging merge. |
 
-### Merge Type 2: Develop → Staging (Gated)
+### Merge Type 2: Develop → Staging (Human-Gated)
 
-#### Preconditions Check (ALL must pass)
+The Orchestrator handles verification and PR creation. The human reviews and clicks merge.
+
+#### Orchestrator Preconditions Check (ALL must pass before creating PR)
 
 ```
 ✅ All feature PRs in the batch have verify: pass
 ✅ All feature PRs in the batch have review: approved
 ✅ Full integration verify passes on develop HEAD (run verify skill on develop)
 ✅ No open review reports with changes_requested against any included feature
-✅ Orchestrator explicitly signals: "Merge develop → staging approved"
 ```
 
-#### Execution
+#### Orchestrator Execution
 
 ```bash
 # 1. Ensure local branches are current
@@ -85,34 +86,57 @@ git pull origin staging
 git checkout develop
 git pull origin develop
 
-# 2. Merge develop into staging
-git checkout staging
-git merge --no-ff develop -m "merge: develop → staging
+# 2. Run integration verification on develop HEAD
+# (re-run verify skill; if fails → abort, route failing features back to fix)
+
+# 3. Create a branch for the staging PR (so human can review the diff)
+git checkout -b staging-pr-$(date +%Y%m%d-%H%M%S)
+git merge --no-ff develop -m "staging: prepare develop → staging merge
 
 Batch includes:
 - <list feature branches merged since last staging update>
 
 Verification: all feature PRs passed verify + review
 Integration verify: passed on develop HEAD"
+git push origin staging-pr-$(date +%Y%m%d-%H%M%S)
 
-# 3. Run integration verification on staging HEAD
-# (re-run verify skill; if fails → revert merge)
+# 4. Create PR: staging-pr-* → staging
+# PR description must include:
+#   - List of feature branches in this batch
+#   - Summary of verification results
+#   - Link to all review reports
+#   - Any notes for human reviewer
+```
 
-# 4. Push if integration verify passes
-git push origin staging
+#### Human Action
 
-# 5. Tag the staging snapshot
+The human reviews the PR and clicks merge. The human may:
+- **Approve and merge** — proceeds as normal
+- **Request changes** — Orchestrator addresses and re-submits
+- **Reject** — batch is split or features are reworked
+
+#### Post-Merge (Orchestrator)
+
+After the human merges:
+
+```bash
+# 1. Tag the staging snapshot
+git checkout staging
+git pull origin staging
 git tag -a "staging-$(date +%Y%m%d-%H%M%S)" -m "Staging snapshot $(date -Iseconds)"
 git push origin --tags
+
+# 2. Delete the staging-pr branch
+git push origin --delete staging-pr-<timestamp>
 ```
 
 #### Failure Handling
 
 | Failure | Response |
 |---------|----------|
-| Integration verify fails | Revert the staging merge (`git reset --hard HEAD~1`). Identify conflicting features. Route to Orchestrator for diagnosis. |
-| Push rejected | Someone else merged to staging concurrently. Rebase and retry. |
-| Tag conflict | Use a unique tag name (timestamp already ensures uniqueness). |
+| Integration verify fails before PR creation | Do NOT create PR. Identify conflicting features. Route to Orchestrator for diagnosis. |
+| Human rejects PR | Read rejection reason. Route affected features back to `fix` or `implement`. |
+| Post-merge tag conflict | Use a unique tag name (timestamp ensures uniqueness). |
 
 ## Branch Cleanup Policy
 
@@ -128,7 +152,7 @@ Append to `.agents/artifacts/merge-log.json`:
 ```jsonc
 {
   "timestamp": "ISO8601",
-  "type": "feature_to_develop|develop_to_staging",
+  "type": "feature_to_develop|develop_to_staging_pr|develop_to_staging_merged",
   "source_branch": "<prefix>/<slug>",
   "target_branch": "develop|staging",
   "commit_sha": "abc123def",
@@ -148,6 +172,7 @@ Append to `.agents/artifacts/merge-log.json`:
 - Never skip preconditions, even for "trivial" changes
 - If any precondition fails, abort and report to Orchestrator with specifics
 - Feature → develop merges should be frequent (avoid accumulating large batches)
-- Develop → staging merges should be deliberate and only after full gate check
+- Develop → staging: Orchestrator creates PR only after full gate check. Human decides when to merge.
+- Never merge locally to `staging` — always go through the PR workflow
 - Always use `--no-ff` to preserve branch history in the merge commit
 - The merge log is append-only — never edit or remove entries
