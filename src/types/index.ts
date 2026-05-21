@@ -14,6 +14,18 @@ export interface AiConfig {
   maxTokens?: number;
 }
 
+// ── Model Discovery ─────────────────────────────────────────────────────────
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  supportsTemperature: boolean;
+  supportsReasoning: boolean;
+  supportsToolCall: boolean;
+  contextLimit: number;
+  maxOutput: number;
+}
+
 // ============================================================
 // Environment Check Types
 // ============================================================

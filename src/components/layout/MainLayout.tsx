@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { PreviewPanel } from "@/components/preview/PreviewPanel";
@@ -20,13 +20,17 @@ import {
   Globe,
   Server,
   Settings2,
+  Loader2,
+  AlertCircle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import type { ProviderKind, AiConfig } from "@/types";
+import type { ProviderKind, AiConfig, ModelInfo } from "@/types";
+
+const SIDECAR_BASE = "http://localhost:3001";
 
 const layoutIcons: Record<string, React.ReactNode> = {
   "2-pane": <PanelsLeftRight className="h-4 w-4" />,
@@ -54,14 +58,6 @@ const providerLabels: Record<ProviderKind, string> = {
   custom: "カスタム",
 };
 
-const providerModels: Record<ProviderKind, string> = {
-  openai: "gpt-4o",
-  anthropic: "claude-sonnet-4-20250514",
-  google: "gemini-2.5-flash",
-  ollama: "",
-  custom: "",
-};
-
 export function MainLayout() {
   const {
     layoutMode,
@@ -76,6 +72,48 @@ export function MainLayout() {
   const currentModel = aiConfig?.model ?? null;
   const hasConfig = aiConfig !== null;
 
+  // Model discovery for toolbar popover
+  const [toolbarModels, setToolbarModels] = useState<ModelInfo[]>([]);
+  const [toolbarModelsLoading, setToolbarModelsLoading] = useState(false);
+  const [toolbarModelsError, setToolbarModelsError] = useState("");
+
+  const fetchToolbarModels = useCallback(async () => {
+    if (!hasConfig) return;
+    setToolbarModelsLoading(true);
+    setToolbarModelsError("");
+
+    try {
+      const params = new URLSearchParams({ provider: currentProvider });
+      if (aiConfig.customEndpoint && (currentProvider === "custom" || currentProvider === "ollama")) {
+        params.set("customEndpoint", aiConfig.customEndpoint);
+      }
+      if (aiConfig.apiKey && currentProvider === "custom") {
+        params.set("apiKey", aiConfig.apiKey);
+      }
+
+      const res = await fetch(`${SIDECAR_BASE}/api/models?${params}`);
+      if (!res.ok) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error((errData as any).error || `HTTP ${res.status}`);
+      }
+      const data = await res.json();
+      setToolbarModels(data.models ?? []);
+    } catch (e: any) {
+      setToolbarModelsError(e.message || "Failed to fetch models");
+    } finally {
+      setToolbarModelsLoading(false);
+    }
+  }, [hasConfig, currentProvider, aiConfig?.customEndpoint, aiConfig?.apiKey]);
+
+  // Fetch models when popover opens
+  useEffect(() => {
+    if (showModelSettings && hasConfig) {
+      // Reset to trigger re-fetch when provider changed
+      setToolbarModels([]);
+      fetchToolbarModels();
+    }
+  }, [showModelSettings, currentProvider, hasConfig, fetchToolbarModels]);
+
   const toggleLayout = () => {
     setLayoutMode(layoutMode === "2-pane" ? "3-pane" : "2-pane");
   };
@@ -83,11 +121,10 @@ export function MainLayout() {
   const handleProviderChange = useCallback(
     (e: React.ChangeEvent<HTMLSelectElement>) => {
       const provider = e.target.value as ProviderKind;
-      const model = providerModels[provider];
       setAiConfig({
         provider,
         apiKey: aiConfig?.apiKey ?? "",
-        model,
+        model: "",
         temperature: aiConfig?.temperature ?? 0.2,
         maxTokens: aiConfig?.maxTokens ?? 4096,
       });
@@ -96,12 +133,27 @@ export function MainLayout() {
   );
 
   const handleModelChange = useCallback(
+    (e: React.ChangeEvent<HTMLSelectElement>) => {
+      if (!aiConfig) return;
+      const value = e.target.value;
+      if (value === "__custom__") {
+        setAiConfig({ ...aiConfig, model: "" });
+      } else {
+        setAiConfig({ ...aiConfig, model: value });
+      }
+    },
+    [aiConfig, setAiConfig],
+  );
+
+  const handleModelInputChange = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       if (!aiConfig) return;
       setAiConfig({ ...aiConfig, model: e.target.value });
     },
     [aiConfig, setAiConfig],
   );
+
+  const hasToolbarModels = toolbarModels.length > 0 && !toolbarModelsLoading && !toolbarModelsError;
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -123,7 +175,7 @@ export function MainLayout() {
               {hasConfig ? (
                 <>
                   {providerIcons[currentProvider]}
-                  <span className="text-xs max-w-[80px] truncate">{currentModel}</span>
+                  <span className="text-xs max-w-[80px] truncate">{currentModel || "未選択"}</span>
                 </>
               ) : (
                 <>
@@ -177,14 +229,62 @@ export function MainLayout() {
 
                         <div>
                           <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-                            モデル名
+                            モデル
                           </label>
-                          <Input
-                            value={currentModel ?? ""}
-                            onChange={handleModelChange}
-                            className="h-8 text-xs"
-                            placeholder="モデル名を入力"
-                          />
+
+                          {toolbarModelsLoading ? (
+                            <div className="flex items-center gap-1.5 h-8 px-2 rounded border bg-muted/30 text-xs text-muted-foreground">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              取得中...
+                            </div>
+                          ) : toolbarModelsError ? (
+                            <div className="space-y-1.5">
+                              <div className="flex items-center gap-1 text-[10px] text-amber-600 dark:text-amber-400">
+                                <AlertCircle className="h-3 w-3" />
+                                {toolbarModelsError}
+                              </div>
+                              <Input
+                                value={currentModel ?? ""}
+                                onChange={handleModelInputChange}
+                                className="h-8 text-xs"
+                                placeholder="モデル名を入力"
+                              />
+                            </div>
+                          ) : hasToolbarModels ? (
+                            <Select
+                              value={currentModel ?? ""}
+                              onChange={handleModelChange}
+                              className="h-8 text-xs"
+                            >
+                              <option value="" disabled>
+                                モデルを選択...
+                              </option>
+                              {toolbarModels.map((m) => (
+                                <option key={m.id} value={m.id}>
+                                  {m.name}
+                                </option>
+                              ))}
+                              <option disabled>──────────</option>
+                              <option value="__custom__">その他（手動入力）...</option>
+                            </Select>
+                          ) : (
+                            <Input
+                              value={currentModel ?? ""}
+                              onChange={handleModelInputChange}
+                              className="h-8 text-xs"
+                              placeholder="モデル名を入力"
+                            />
+                          )}
+
+                          {/* Manual input fallback when "その他" selected */}
+                          {currentModel === "" && hasToolbarModels && (
+                            <Input
+                              className="h-8 text-xs mt-1.5"
+                              placeholder="モデルIDを手動入力"
+                              value=""
+                              onChange={handleModelInputChange}
+                            />
+                          )}
                         </div>
 
                         <Separator />
@@ -242,31 +342,23 @@ export function MainLayout() {
 
       {/* Main Content */}
       <div className="flex-1 overflow-hidden">
-        {layoutMode === "2-pane" ? (
-          <ResizablePanelGroup direction="horizontal">
-            <ResizablePanel defaultSize={40} minSize={25}>
-              <ChatPanel />
-            </ResizablePanel>
-            <ResizableHandle />
-            <ResizablePanel defaultSize={60} minSize={30}>
-              <PreviewPanel />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        ) : (
-          <ResizablePanelGroup direction="horizontal">
-            <ResizablePanel defaultSize={18} minSize={12}>
-              <FileTreePanel />
-            </ResizablePanel>
-            <ResizableHandle />
-            <ResizablePanel defaultSize={37} minSize={20}>
-              <ChatPanel />
-            </ResizablePanel>
-            <ResizableHandle />
-            <ResizablePanel defaultSize={45} minSize={25}>
-              <PreviewPanel />
-            </ResizablePanel>
-          </ResizablePanelGroup>
-        )}
+        <ResizablePanelGroup direction="horizontal">
+          <ResizablePanel
+            defaultSize={18}
+            minSize={0}
+            className={layoutMode === "2-pane" ? "hidden" : ""}
+          >
+            <FileTreePanel />
+          </ResizablePanel>
+          <ResizableHandle className={layoutMode === "2-pane" ? "hidden" : ""} />
+          <ResizablePanel defaultSize={37} minSize={20}>
+            <ChatPanel />
+          </ResizablePanel>
+          <ResizableHandle />
+          <ResizablePanel defaultSize={45} minSize={25}>
+            <PreviewPanel />
+          </ResizablePanel>
+        </ResizablePanelGroup>
       </div>
 
       {/* Status Bar */}
