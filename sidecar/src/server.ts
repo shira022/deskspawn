@@ -10,6 +10,7 @@ import { getModel } from './providers.js';
 import { tools } from './tools.js';
 import { buildSystemPrompt } from './system-prompt.js';
 import * as executors from './tool-executors.js';
+import { getModelsForProvider } from './models-fetcher.js';
 
 const app = express();
 app.use(cors());
@@ -22,6 +23,21 @@ const WORKSPACE_DIR = executors.getWorkspaceDir();
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', workspace: WORKSPACE_DIR });
+});
+
+// ── Model discovery endpoint ──────────────────────────────────────────────────
+
+app.get('/api/models', async (req, res) => {
+  try {
+    const provider = (req.query.provider as string) || 'openai';
+    const customEndpoint = req.query.customEndpoint as string | undefined;
+    const apiKey = req.query.apiKey as string | undefined;
+
+    const models = await getModelsForProvider(provider, customEndpoint, apiKey);
+    res.json({ models });
+  } catch (error: any) {
+    res.status(500).json({ error: `Failed to fetch models: ${error?.message || error}` });
+  }
 });
 
 // ── Chat endpoint ────────────────────────────────────────────────────────────
