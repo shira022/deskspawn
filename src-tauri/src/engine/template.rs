@@ -152,7 +152,7 @@ fn generate_migration_sql(table_name: &str, columns: &[TemplateColumn]) -> Strin
 
     lines.push(col_defs.join(",\n"));
     lines.push(");".to_string());
-    lines.push(format!("-- @deskspawn:end"));
+    lines.push("-- @deskspawn:end".to_string());
 
     lines.join("\n") + "\n"
 }

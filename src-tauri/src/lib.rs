@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 mod commands;
 mod engine;
 mod models;
@@ -21,7 +23,7 @@ pub fn run() {
 
             // Determine workspace path
             let workspace_path = determine_workspace_path(app)
-                .map_err(|e| Box::new(std::io::Error::new(std::io::ErrorKind::Other, e)) as Box<dyn std::error::Error>)?;
+                .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)?;
             log::info!("Workspace path: {:?}", workspace_path);
 
             // Initialize the error monitor

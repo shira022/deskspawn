@@ -78,7 +78,7 @@ pub fn is_extension_allowed(path: &str) -> bool {
     let p = Path::new(path);
     let ext = match p.extension() {
         Some(e) => e.to_str().unwrap_or(""),
-        None => return false,
+        None => "",
     };
 
     // Special case for dotfiles like .gitignore, .env, etc.

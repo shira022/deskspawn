@@ -179,7 +179,7 @@ fn write_generated_files(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::config::{Action, FileAction, TemplateAction, TemplateColumn};
+    use crate::models::config::{Action, FileAction};
 
     #[test]
     fn test_stage_and_apply() {
