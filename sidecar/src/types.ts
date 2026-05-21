@@ -11,6 +11,18 @@ export interface ProviderConfig {
   customEndpoint?: string;
 }
 
+// ─── Model Discovery ──────────────────────────────────────────────────────────
+
+export interface ModelInfo {
+  id: string;
+  name: string;
+  supportsTemperature: boolean;
+  supportsReasoning: boolean;
+  supportsToolCall: boolean;
+  contextLimit: number;
+  maxOutput: number;
+}
+
 // ─── IPC Messages (Rust → Sidecar) ─────────────────────────────────────────────
 
 export interface ChatMessage {
