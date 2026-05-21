@@ -266,8 +266,8 @@ export function EnvCheckScreen() {
   // ── Render ───────────────────────────────────────────────────────────────
 
   return (
-    <div className="flex h-full items-center justify-center bg-gradient-to-b from-background to-muted/30">
-      <div className="w-full max-w-lg space-y-6 rounded-xl border bg-card p-8 shadow-lg">
+    <div className="flex h-full items-start justify-center overflow-y-auto bg-gradient-to-b from-background to-muted/30 py-6 md:items-center">
+      <div className="mx-auto w-full max-w-lg space-y-4 rounded-xl border bg-card p-6 shadow-lg sm:space-y-6 sm:p-8">
         {/* Header */}
         <div className="space-y-2 text-center">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
@@ -281,8 +281,8 @@ export function EnvCheckScreen() {
 
         <Separator />
 
-        {/* Winget Status Banner */}
-        {hasChecked && !wingetOk && (
+        {/* Winget Status Banner — only show when winget not available AND there are failed checks */}
+        {hasChecked && !wingetOk && !allPassed && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 dark:border-amber-800 dark:bg-amber-950/30">
             <div className="flex items-start gap-2">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
@@ -321,7 +321,7 @@ export function EnvCheckScreen() {
         )}
 
         {/* Check List */}
-        <ScrollArea className="h-[320px]">
+        <ScrollArea className="max-h-[320px] min-h-[120px] sm:h-[320px]">
           <div className="space-y-3 px-1">
             {envChecks.map((item, i) => {
               const pkg = item.wingetPackage;
