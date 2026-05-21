@@ -1,0 +1,22 @@
+name: Block Feature to Main PRs
+
+on:
+  pull_request:
+    types: [opened, reopened]
+    branches: [main]
+
+permissions:
+  pull-requests: write
+
+jobs:
+  block:
+    runs-on: ubuntu-latest
+    if: startsWith(github.head_ref, 'feature/')
+    steps:
+      - name: Close feature→main PR
+        run: |
+          gh pr close "${{ github.event.pull_request.number }}" \
+            --repo "${{ github.repository }}" \
+            --comment "Feature branchesからmainブランチへのPRは許可されていません。developブランチに対してPRを作成してください。"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
