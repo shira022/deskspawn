@@ -166,10 +166,11 @@ Before writing the plan artifact, check `.agents/artifacts/` for any existing pl
 
 ### Phase 5: Human Approval
 
-1. Present the complete plan to the human user in a clear, readable format
-2. Ask explicitly: "Does this plan look correct? Shall I proceed with implementation?"
-3. Do NOT proceed to implementation until the human explicitly approves
-4. After approval, set `approved: true` and write to `.agents/artifacts/plan-<slug>.json`
+1. Write the draft plan to `.agents/artifacts/plan-<slug>.json` with `"approved": false`
+2. Present the complete plan to the human user in a clear, readable format
+3. Ask explicitly: "Does this plan look correct? Shall I proceed with implementation?"
+4. Do NOT proceed to implementation until the human explicitly approves
+5. After approval, update the plan artifact: set `"approved": true` and write back to `.agents/artifacts/plan-<slug>.json`
 
 ### Phase 6: Team Formation
 

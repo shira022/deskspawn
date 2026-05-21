@@ -39,7 +39,10 @@ All inter-agent communication flows through standardized artifacts:
 | `verify-report-<slug>.json` | `verify` skill | `review` skill, `merge` skill | Structured JSON |
 | `review-report-<slug>.json` | `review` skill | `fix` skill | Structured JSON |
 | `fix-log-<slug>-<iter>.json` | `fix` skill | `verify` skill | Structured JSON |
+| `escalation-<slug>.json` | `fix` skill | Orchestrator, human | Structured JSON |
 | `merge-log.jsonl` | `merge` skill | Orchestrator, human | Append-only JSON Lines |
+| `self-improve-log.jsonl` | `self-improve` skill | Orchestrator, human | Append-only JSON Lines |
+| `skill-proposal-<name>.json` | `self-improve` skill | human | Structured JSON |
 
 Artifacts are stored in `.agents/artifacts/` and serve as the bridge across separate sessions.
 
@@ -87,12 +90,12 @@ develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore
 ## Workflow
 
 ```
-[PLAN] → [IMPLEMENT] → [VERIFY] → [REVIEW] → [FIX]
-   ↑          ↑            ↑           ↑          ↑
-Hierarchical  feature/*   local      separate    separate
-              branches    session     session     session
-                            └─────── loop ───────┘
-                            ↓ (pass)
+[PLAN] → [IMPLEMENT] → [VERIFY] → [REVIEW] ──→ [FIX] ──┐
+   ↑          ↑            ↑           ↑          ↑       │
+Hierarchical  feature/*   local      separate    separate │
+              branches    session     session     session  │
+                            └── loop (FIX→VERIFY→REVIEW) ─┘
+                            ↓ (review passes)
                      [MERGE feature→develop]  ← autonomous
                             ↓
                     (develop accumulates)
@@ -133,6 +136,7 @@ Hierarchical  feature/*   local      separate    separate
 - Review sub-dimensions (security, architecture, etc.) MAY run in parallel separate sessions
 - Each session loads only the skills it needs
 - Cross-session state: `.agents/artifacts/` only. No in-memory state transfer.
+- **Enforcement**: The Orchestrator MUST create a session-isolation token (a random UUID) and pass it to only one session per role. An agent presenting a token that was already used for a different role in the same slug MUST be rejected. Each `.agents/artifacts/session-<slug>.json` records which session ID performed which role.
 
 ## Governance
 
@@ -150,3 +154,19 @@ Hierarchical  feature/*   local      separate    separate
 - Build system: Vite (frontend), Cargo (backend)
 - Testing: vitest (frontend), cargo test (backend)
 - Linting: ESLint (frontend), clippy (backend)
+
+## Allowed Package List
+
+Agents may add dependencies from the following list without human approval. Any package not on this list requires human approval before use.
+
+### npm (Frontend)
+```
+react, react-dom, @tauri-apps/api, @tauri-apps/plugin-*,
+tailwindcss, @tailwindcss/forms, @tailwindcss/typography,
+lucide-react, @radix-ui/* (shadcn/ui dependencies)
+```
+
+### Cargo (Backend)
+```
+tauri, tauri-build, serde, serde_json, sqlx (sqlite feature), tokio
+```

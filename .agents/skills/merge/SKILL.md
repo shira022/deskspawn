@@ -38,21 +38,18 @@ Execute GitFlow merge operations: feature branches into `develop` (autonomous), 
 git checkout develop
 git pull origin develop
 
-# 2. Merge feature branch with no-fast-forward to preserve history
-# Build commit message in a variable (multi-line single quotes are invalid in bash)
-MSG="merge: <prefix>/<slug> → develop"
-MSG="$MSG\n\nSummary: <replace with one-line summary>"
-MSG="$MSG\nRefs: plan-<slug>, verify-report-<slug>, review-report-<slug>"
+# 2. Merge the PR via GitHub CLI (preserves PR record, triggers CI)
+gh pr merge <pr-number> --squash --delete-branch --subject "merge: <prefix>/<slug> → develop"
+# Note: --squash is used to keep develop history linear.
+# The feature branch is auto-deleted by --delete-branch.
+```
+If `gh` CLI is unavailable, fall back to:
+```bash
+# Fallback: local merge (only if GitHub PR merge is not possible)
+MSG=$'merge: <prefix>/<slug> → develop\n\nSummary: <replace with one-line summary>\nRefs: plan-<slug>, verify-report-<slug>, review-report-<slug>'
 git merge --no-ff <prefix>/<slug> -m "$MSG"
-
-# 3. Push
 git push origin develop
-
-# 4. Delete remote feature branch
 git push origin --delete <prefix>/<slug>
-
-# 5. Delete local feature branch
-git branch -d <prefix>/<slug>
 ```
 
 #### Failure Handling
@@ -74,10 +71,8 @@ git log develop --oneline --merges -5
 # 2. Revert the merge (preserves history, safe for shared branches)
 git checkout develop
 git pull origin develop
-git revert -m 1 <merge-commit-sha> -m 'revert: <prefix>/<slug> merge to develop
-
-Reason: <brief reason for revert>
-Refs: plan-<slug>'
+MSG=$'revert: <prefix>/<slug> merge to develop\n\nReason: <brief reason for revert>\nRefs: plan-<slug>'
+git revert --mainline 1 <merge-commit-sha> -m "$MSG"
 
 # 3. Push the revert
 git push origin develop
@@ -117,11 +112,8 @@ git pull origin develop
 # 3. Create a branch for the staging PR (so human can review the diff)
 STAGING_BRANCH="staging-pr-$(date +%Y%m%d-%H%M%S)"
 git checkout -b "$STAGING_BRANCH"
-# Build commit message in a variable
-MSG="staging: prepare develop → staging merge"
-MSG="$MSG\n\nBatch includes: <replace with list of feature branches>"
-MSG="$MSG\nVerification: all feature PRs passed verify + review"
-MSG="$MSG\nIntegration verify: passed on develop HEAD"
+# Build commit message using $'...' for actual newlines
+MSG=$'staging: prepare develop → staging merge\n\nBatch includes: <replace with list of feature branches>\nVerification: all feature PRs passed verify + review\nIntegration verify: passed on develop HEAD'
 git merge --no-ff develop -m "$MSG"
 git push origin "$STAGING_BRANCH"
 

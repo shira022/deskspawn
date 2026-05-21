@@ -108,18 +108,9 @@ When recommending an edit to an existing skill:
 4. Include the rationale and the full proposed new content
 5. Do NOT modify the actual skill file
 
-### Step 6: Human Approval Gate
+### Step 6: Validation
 
-After creating a proposal:
-
-1. Present the proposal to the human at the next planning checkpoint
-2. The human reviews and may: approve, reject, or request changes
-3. Only after explicit human approval may the actual skill file be created/edited
-4. The human's decision is final — do not re-propose the same change without new evidence
-
-### Step 7: Notification
-
-After creating/editing a skill, self-validate:
+After drafting the proposal, self-validate before presenting to the human:
 
 1. **Clarity check**: Read it as if loading it for the first time. Is every instruction clear?
 2. **Actionability check**: Can an agent execute every step without guessing?
@@ -127,9 +118,18 @@ After creating/editing a skill, self-validate:
 4. **Token check**: Is it under 10,000 tokens? (If close, trim or split.)
 5. **Scope check**: Does it stay within `.agents/skills/` boundaries? No AGENTS.md edits?
 
+### Step 7: Human Approval Gate
+
+After validation passes:
+
+1. Present the proposal to the human at the next planning checkpoint
+2. The human reviews and may: approve, reject, or request changes
+3. Only after explicit human approval may the actual skill file be created/edited
+4. The human's decision is final — do not re-propose the same change without new evidence
+
 ### Step 8: Notification
 
-After creating a proposal:
+After human decision:
 
 1. Append a summary to `.agents/artifacts/self-improve-log.jsonl` (JSON Lines — append-only, one JSON object per line):
    ```jsonc

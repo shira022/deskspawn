@@ -43,7 +43,7 @@ npx tsc --noEmit
 cargo check
 ```
 
-**Pass condition**: Compilation succeeds with no type errors. No `any` type leaks that indicate missing types.
+**Pass condition**: Compilation succeeds with no type errors.
 
 ### Stage 3: Unit Tests
 
