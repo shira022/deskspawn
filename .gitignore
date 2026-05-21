@@ -7,3 +7,11 @@ target/
 .DS_Store
 src-tauri/gen/
 .deskspawn/
+
+# Build artifacts
+.vite/
+*.tsbuildinfo
+
+# Runtime data
+projects/
+workspace/

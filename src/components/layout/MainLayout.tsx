@@ -4,6 +4,8 @@ import { ChatPanel } from "@/components/chat/ChatPanel";
 import { PreviewPanel } from "@/components/preview/PreviewPanel";
 import { FileTreePanel } from "@/components/file-tree/FileTreePanel";
 import { SpawnDialog } from "@/components/spawn/SpawnDialog";
+import { NewAppDialog } from "@/components/project/NewAppDialog";
+import { ProjectSwitcher } from "@/components/project/ProjectSwitcher";
 import { StatusBar } from "@/components/layout/StatusBar";
 import {
   ResizablePanelGroup,
@@ -22,6 +24,9 @@ import {
   Settings2,
   Loader2,
   AlertCircle,
+  FolderKanban,
+  ChevronDown,
+  Plus,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
@@ -72,9 +77,14 @@ export function MainLayout() {
     setLayoutMode,
     aiConfig,
     setAiConfig,
+    currentProjectId,
+    projects,
+    projectSwitching,
   } = useAppStore();
   const [showSpawn, setShowSpawn] = useState(false);
   const [showModelSettings, setShowModelSettings] = useState(false);
+  const [showProjectSwitcher, setShowProjectSwitcher] = useState(false);
+  const [showNewApp, setShowNewApp] = useState(false);
 
   const currentProvider: ProviderKind = (aiConfig?.provider as ProviderKind) ?? "ollama";
   const currentModel = aiConfig?.model ?? null;
@@ -169,6 +179,47 @@ export function MainLayout() {
       <div className="flex h-10 items-center justify-between border-b bg-muted/30 px-3">
         <div className="flex items-center gap-2">
           <span className="text-sm font-semibold tracking-tight">DeskSpawn</span>
+
+          <Separator orientation="vertical" className="h-4" />
+
+          {/* Project selector */}
+          <div className="relative">
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 gap-1 px-2"
+              onClick={() => setShowProjectSwitcher(!showProjectSwitcher)}
+            >
+              <FolderKanban className="h-3.5 w-3.5 text-muted-foreground" />
+              <span className="text-xs max-w-[100px] truncate">
+                {currentProjectId
+                  ? projects.find((p) => p.id === currentProjectId)?.name || "プロジェクト"
+                  : "プロジェクト未選択"}
+              </span>
+              {projectSwitching ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <ChevronDown className="h-3 w-3 text-muted-foreground" />
+              )}
+            </Button>
+
+            <ProjectSwitcher
+              open={showProjectSwitcher}
+              onOpenChange={setShowProjectSwitcher}
+              onNewApp={() => setShowNewApp(true)}
+            />
+          </div>
+
+          {/* New App button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2"
+            onClick={() => setShowNewApp(true)}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span className="text-xs">新規アプリ</span>
+          </Button>
         </div>
 
         <div className="flex items-center gap-1">
@@ -374,6 +425,9 @@ export function MainLayout() {
 
       {/* Spawn Dialog */}
       <SpawnDialog open={showSpawn} onOpenChange={setShowSpawn} />
+
+      {/* New App Dialog */}
+      <NewAppDialog open={showNewApp} onOpenChange={setShowNewApp} />
     </div>
   );
 }
