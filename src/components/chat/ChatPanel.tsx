@@ -27,6 +27,9 @@ export function ChatPanel() {
     setAgentStepCount,
     setWorkspaceReady,
     aiConfig,
+    currentProjectId,
+    projects,
+    projectSwitching,
   } = useAppStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [toolCalls, setToolCalls] = useState<string[]>([]);
@@ -43,6 +46,16 @@ export function ChatPanel() {
         id: `msg-err-${Date.now()}`,
         role: "assistant",
         content: "⚠️ AI設定が行われていません。ツールバーの「AI未設定」ボタンから設定してください。",
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    if (!currentProjectId) {
+      addMessage({
+        id: `msg-err-${Date.now()}`,
+        role: "assistant",
+        content: "⚠️ プロジェクトが選択されていません。ツールバーの「新規アプリ」からプロジェクトを作成するか、アプリ履歴から選択してください。",
         timestamp: Date.now(),
       });
       return;
@@ -123,32 +136,53 @@ export function ChatPanel() {
             <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
               <Bot className="h-6 w-6 text-muted-foreground" />
             </div>
-            <h3 className="text-sm font-medium mb-1">DeskSpawn チャット</h3>
-            <p className="text-xs text-muted-foreground max-w-xs">
-              「タスク管理アプリにして」「ダークモードを追加して」など、
-              作りたいアプリを自由に指示してください。
-            </p>
+            {projectSwitching ? (
+              <>
+                <h3 className="text-sm font-medium mb-1">プロジェクトを切り替え中...</h3>
+                <p className="text-xs text-muted-foreground">新しいプロジェクトの準備ができ次第、チャットを開始できます。</p>
+              </>
+            ) : currentProjectId ? (
+              <>
+                <h3 className="text-sm font-medium mb-1">
+                  {projects.find((p) => p.id === currentProjectId)?.name || "アプリ"} — DeskSpawn チャット
+                </h3>
+                <p className="text-xs text-muted-foreground max-w-xs">
+                  「タスク管理アプリにして」「ダークモードを追加して」など、
+                  作りたいアプリを自由に指示してください。
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="text-sm font-medium mb-1">DeskSpawn チャット</h3>
+                <p className="text-xs text-muted-foreground max-w-xs">
+                  ツールバーの「新規アプリ」からプロジェクトを作成すると、
+                  チャットでアプリの構築を開始できます。
+                </p>
+              </>
+            )}
             <p className="text-xs text-muted-foreground/60 mt-2">
               {aiConfig
                 ? `${providerLabels[aiConfig.provider] || aiConfig.provider} ${aiConfig.model} を使用中`
                 : "AI未設定 — ツールバーから設定してください"}
             </p>
-            <div className="mt-4 flex flex-wrap gap-1.5 justify-center">
-              {[
-                "カウンターアプリにスタイルをつけて",
-                "ToDoリストアプリにして",
-                "ダークモード対応にして",
-                "タイマー機能を追加して",
-              ].map((s) => (
-                <button
-                  key={s}
-                  className="rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted transition-colors"
-                  onClick={() => handleSend(s)}
-                >
-                  {s}
-                </button>
-              ))}
-            </div>
+            {currentProjectId && (
+              <div className="mt-4 flex flex-wrap gap-1.5 justify-center">
+                {[
+                  "カウンターアプリにスタイルをつけて",
+                  "ToDoリストアプリにして",
+                  "ダークモード対応にして",
+                  "タイマー機能を追加して",
+                ].map((s) => (
+                  <button
+                    key={s}
+                    className="rounded-full border px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted transition-colors"
+                    onClick={() => handleSend(s)}
+                  >
+                    {s}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         ) : (
           <>

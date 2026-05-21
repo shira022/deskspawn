@@ -6,18 +6,38 @@ import type { Artifact, Action, FileAction, DiffAction, TemplateAction, ShellAct
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-// sidecar/src/tool-executors.ts → project root → workspace/
-const WORKSPACE_DIR = path.resolve(__dirname, '..', '..', 'workspace');
+// sidecar/src/tool-executors.ts → project root
+const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+const DEFAULT_WORKSPACE = path.resolve(PROJECT_ROOT, 'workspace');
+
+// Mutable workspace directory - can be changed via setWorkspaceDir()
+let _workspaceDir = DEFAULT_WORKSPACE;
+
+export function setWorkspaceDir(dir: string) {
+  _workspaceDir = path.resolve(dir);
+  console.log(`[tool-executors] Workspace dir set to: ${_workspaceDir}`);
+}
 
 export function getWorkspaceDir(): string {
-  return WORKSPACE_DIR;
+  return _workspaceDir;
+}
+
+// Shared constants
+export const IGNORED_DIRS = ['node_modules', 'target', '.deskspawn', '.git', 'dist'];
+
+const ALLOWED_COMMANDS = ['npm', 'npx', 'cargo', 'sqlx'];
+
+export function isCommandAllowed(command: string): boolean {
+  const firstWord = command.trim().split(/\s+/)[0];
+  return ALLOWED_COMMANDS.includes(firstWord);
 }
 
 // ── read_file ────────────────────────────────────────────────────────────────
 
-export async function readFile(relativePath: string): Promise<string> {
-  const fullPath = path.resolve(WORKSPACE_DIR, relativePath);
-  if (!fullPath.startsWith(WORKSPACE_DIR)) {
+export async function readFile(relativePath: string, workspaceDir?: string): Promise<string> {
+  const root = workspaceDir || getWorkspaceDir();
+  const fullPath = path.resolve(root, relativePath);
+  if (!fullPath.startsWith(root)) {
     throw new Error(`Path traversal detected: ${relativePath}`);
   }
   const content = await fs.readFile(fullPath, 'utf-8');
@@ -33,7 +53,8 @@ export interface FileEntry {
   isDirectory: boolean;
 }
 
-export async function listFiles(): Promise<FileEntry[]> {
+export async function listFiles(workspaceDir?: string): Promise<FileEntry[]> {
+  const root = workspaceDir || getWorkspaceDir();
   const files: FileEntry[] = [];
   
   async function walk(dir: string, relative: string) {
@@ -45,7 +66,7 @@ export async function listFiles(): Promise<FileEntry[]> {
         
         // Skip excluded directories
         if (e.isDirectory()) {
-          if (['node_modules', 'target', '.deskspawn', '.git', 'dist'].includes(e.name)) continue;
+          if (IGNORED_DIRS.includes(e.name)) continue;
           await walk(full, rel);
         } else {
           const stat = await fs.stat(full);
@@ -60,7 +81,7 @@ export async function listFiles(): Promise<FileEntry[]> {
     } catch { /* skip inaccessible dirs */ }
   }
   
-  await walk(WORKSPACE_DIR, '');
+  await walk(root, '');
   return files;
 }
 
@@ -73,7 +94,8 @@ export interface ApplyResult {
   errors?: string[];
 }
 
-export async function applyArtifact(jsonStr: string): Promise<ApplyResult> {
+export async function applyArtifact(jsonStr: string, workspaceDir?: string): Promise<ApplyResult> {
+  const root = workspaceDir || getWorkspaceDir();
   const result: ApplyResult = {
     success: true,
     filesChanged: [],
@@ -98,13 +120,13 @@ export async function applyArtifact(jsonStr: string): Promise<ApplyResult> {
   for (const action of artifact.actions as Action[]) {
     try {
       if (action.type === 'file' && action.mode === 'file') {
-        await executeFileAction(action, result);
+        await executeFileAction(action, result, root);
       } else if (action.type === 'file' && action.mode === 'diff') {
-        await executeDiffAction(action, result);
+        await executeDiffAction(action, result, root);
       } else if (action.type === 'shell') {
-        await executeShellAction(action, result);
+        await executeShellAction(action, result, root);
       } else if (action.type === 'template') {
-        await executeTemplateAction(action, result);
+        await executeTemplateAction(action, result, root);
       } else {
         result.errors!.push(`Unknown action type: ${JSON.stringify(action).substring(0, 100)}`);
         result.success = false;
@@ -119,9 +141,9 @@ export async function applyArtifact(jsonStr: string): Promise<ApplyResult> {
   return result;
 }
 
-async function executeFileAction(action: FileAction, result: ApplyResult) {
-  const fullPath = path.resolve(WORKSPACE_DIR, action.filePath);
-  if (!fullPath.startsWith(WORKSPACE_DIR)) {
+async function executeFileAction(action: FileAction, result: ApplyResult, workspaceRoot: string) {
+  const fullPath = path.resolve(workspaceRoot, action.filePath);
+  if (!fullPath.startsWith(workspaceRoot)) {
     throw new Error(`Path traversal: ${action.filePath}`);
   }
   await fs.mkdir(path.dirname(fullPath), { recursive: true });
@@ -129,9 +151,9 @@ async function executeFileAction(action: FileAction, result: ApplyResult) {
   result.filesChanged.push(action.filePath);
 }
 
-async function executeDiffAction(action: DiffAction, result: ApplyResult) {
-  const fullPath = path.resolve(WORKSPACE_DIR, action.filePath);
-  if (!fullPath.startsWith(WORKSPACE_DIR)) {
+async function executeDiffAction(action: DiffAction, result: ApplyResult, workspaceRoot: string) {
+  const fullPath = path.resolve(workspaceRoot, action.filePath);
+  if (!fullPath.startsWith(workspaceRoot)) {
     throw new Error(`Path traversal: ${action.filePath}`);
   }
   const content = await fs.readFile(fullPath, 'utf-8');
@@ -151,23 +173,20 @@ async function executeDiffAction(action: DiffAction, result: ApplyResult) {
   result.filesChanged.push(action.filePath);
 }
 
-async function executeShellAction(action: ShellAction, result: ApplyResult) {
+async function executeShellAction(action: ShellAction, result: ApplyResult, workspaceRoot: string) {
   const cmd = action.command.trim();
-  // Simple allowlist check
-  const allowed = ['npm', 'npx', 'cargo', 'sqlx'];
-  const firstWord = cmd.split(/\s+/)[0];
-  if (!allowed.includes(firstWord)) {
-    throw new Error(`Command not allowed: ${firstWord}. Allowed: ${allowed.join(', ')}`);
+  if (!isCommandAllowed(cmd)) {
+    throw new Error(`Command not allowed: ${cmd.split(/\s+/)[0]}. Allowed: ${ALLOWED_COMMANDS.join(', ')}`);
   }
   try {
-    execSync(cmd, { cwd: WORKSPACE_DIR, encoding: 'utf-8', timeout: 120_000, stdio: 'pipe' });
+    execSync(cmd, { cwd: workspaceRoot, encoding: 'utf-8', timeout: 120_000, stdio: 'pipe' });
     result.shellCommandsRun.push(cmd);
   } catch (e: any) {
     result.errors!.push(`Shell command failed: ${cmd}\n${e.stderr || e.message}`);
   }
 }
 
-async function executeTemplateAction(action: TemplateAction, result: ApplyResult) {
+async function executeTemplateAction(action: TemplateAction, result: ApplyResult, workspaceRoot: string) {
   const { tableName, columns } = action;
   const pascalName = tableName.charAt(0).toUpperCase() + tableName.slice(1);
   
@@ -188,8 +207,8 @@ ${colDefs},
 -- @deskspawn:end
 `;
   const migPath = `migrations/0001_create_${tableName}.sql`;
-  await fs.mkdir(path.join(WORKSPACE_DIR, 'migrations'), { recursive: true });
-  await fs.writeFile(path.join(WORKSPACE_DIR, migPath), migration, 'utf-8');
+  await fs.mkdir(path.join(workspaceRoot, 'migrations'), { recursive: true });
+  await fs.writeFile(path.join(workspaceRoot, migPath), migration, 'utf-8');
   result.filesChanged.push(migPath);
   
   // TypeScript types
@@ -210,18 +229,19 @@ ${tsFields}
 // @deskspawn:end
 `;
   const typesPath = `src/types/${tableName}.ts`;
-  await fs.mkdir(path.join(WORKSPACE_DIR, 'src/types'), { recursive: true });
-  await fs.writeFile(path.join(WORKSPACE_DIR, typesPath), typesFile, 'utf-8');
+  await fs.mkdir(path.join(workspaceRoot, 'src/types'), { recursive: true });
+  await fs.writeFile(path.join(workspaceRoot, typesPath), typesFile, 'utf-8');
   result.filesChanged.push(typesPath);
 }
 
 // ── get_errors ──────────────────────────────────────────────────────────────
 
-export async function getErrors(): Promise<{ type: string; message: string; filePath?: string }[]> {
+export async function getErrors(workspaceDir?: string): Promise<{ type: string; message: string; filePath?: string }[]> {
+  const root = workspaceDir || getWorkspaceDir();
   const errors: { type: string; message: string; filePath?: string }[] = [];
   
   try {
-    execSync('npx tsc --noEmit', { cwd: WORKSPACE_DIR, encoding: 'utf-8', timeout: 30_000, stdio: 'pipe' });
+    execSync('npx tsc --noEmit', { cwd: root, encoding: 'utf-8', timeout: 30_000, stdio: 'pipe' });
   } catch (e: any) {
     const output = e.stdout || e.stderr || e.message || '';
     for (const line of output.split('\n')) {

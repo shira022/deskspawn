@@ -11,6 +11,7 @@ import type {
   ErrorInfo,
   FileNode,
   SpawnConfig,
+  ProjectMeta,
 } from "@/types";
 
 const STORAGE_KEY = "deskspawn_ai_config";
@@ -128,6 +129,15 @@ interface Store {
   // Workspace
   workspaceReady: boolean;
   setWorkspaceReady: (ready: boolean) => void;
+
+  // Projects
+  currentProjectId: string | null;
+  setCurrentProjectId: (id: string | null) => void;
+  projects: ProjectMeta[];
+  setProjects: (projects: ProjectMeta[]) => void;
+  addProject: (project: ProjectMeta) => void;
+  projectSwitching: boolean;
+  setProjectSwitching: (switching: boolean) => void;
 }
 
 export const useAppStore = create<Store>((set, get) => ({
@@ -149,8 +159,34 @@ export const useAppStore = create<Store>((set, get) => ({
           set({ aiConfig: config, phase: "main" });
         }
       }
+
+      // Load projects on init
+      try {
+        const res = await fetch("http://localhost:3001/projects/current");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.project) {
+            set({ currentProjectId: data.project.id });
+          }
+        }
+      } catch {
+        // Sidecar not running yet, that's fine
+      }
+
+      // Try loading project list
+      try {
+        const res = await fetch("http://localhost:3001/projects/list");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.projects) {
+            set({ projects: data.projects });
+          }
+        }
+      } catch {
+        // Sidecar not running yet
+      }
     } catch (e) {
-      console.warn("Failed to load stored AI config:", e);
+      console.warn("Failed to load stored config:", e);
     } finally {
       set({ initialized: true });
     }
@@ -236,4 +272,14 @@ export const useAppStore = create<Store>((set, get) => ({
 
   workspaceReady: false,
   setWorkspaceReady: (workspaceReady) => set({ workspaceReady }),
+
+  // Projects
+  currentProjectId: null,
+  setCurrentProjectId: (currentProjectId) => set({ currentProjectId }),
+  projects: [],
+  setProjects: (projects) => set({ projects }),
+  addProject: (project) =>
+    set((state) => ({ projects: [...state.projects, project] })),
+  projectSwitching: false,
+  setProjectSwitching: (projectSwitching) => set({ projectSwitching }),
 }));
