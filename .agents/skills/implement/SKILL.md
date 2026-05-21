@@ -39,8 +39,9 @@ For each assigned task:
    - TypeScript/React: `src/` directory
    - Rust/Tauri: `src-tauri/` directory
    - SQL migrations: `migrations/` directory
-   - Generated code: `src-tauri/src/generated/`, `src/hooks/` — **read-only, never edit** (protected by `@deskspawn:generated` markers)
+   - Generated code: `src-tauri/src/generated/`, `src/hooks/` — **read-only, never edit** (protected by `@deskspawn:generated` markers; established by DeskSpawn's template project setup)
    - Custom code: `src-tauri/src/custom/`, `src/custom/` — edit freely, AST-guarded on apply
+   - **Bootstrap note**: `generated/`, `custom/`, and `hooks/` directories do not exist until DeskSpawn's template scaffold is in place. If these directories are missing, do not create or reference them — work exclusively in `src/`, `src-tauri/src/`, and `migrations/`.
 4. **Follow existing code patterns** — match naming conventions, module structure, error handling style
 5. **Keep changes focused** — one task, one branch, minimal diff
 6. **Respect the security policy**:

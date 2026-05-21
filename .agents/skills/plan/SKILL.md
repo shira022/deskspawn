@@ -93,8 +93,6 @@ Ask the human user about the dimensions required for the chosen tier. Do not ass
 
 ### Phase 4: Plan Structuring
 
-### Phase 4: Plan Structuring
-
 After questions are answered, produce a structured plan.
 
 #### Slug Naming Convention

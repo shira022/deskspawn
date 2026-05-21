@@ -74,7 +74,7 @@ cargo build
 Only if files under `migrations/` changed:
 
 ```bash
-sqlx migrate run --database-url sqlite:./dev.db
+sqlx migrate run --database-url sqlite://dev.db
 ```
 
 **Pass condition**: Migrations apply cleanly without errors. No duplicate migration versions.
@@ -173,4 +173,4 @@ Write to `.agents/artifacts/verify-report-<slug>.json`:
 - If a required tool is not installed, report it as a BLOCKER with installation instructions
 - The verification report is the single source of truth for gate decisions — no verbal "it's fine" bypasses
 - If the plan specifies additional verification steps beyond this pipeline, include them
-- Verification runs locally on the feature branch — never on `develop` or `staging` directly
+- Verification runs on the feature branch by default. Integration verification on `develop` HEAD is permitted only when gating a develop→staging merge (run by Orchestrator via `merge` skill). Never verify on `staging` directly.

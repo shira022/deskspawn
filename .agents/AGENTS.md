@@ -39,14 +39,14 @@ All inter-agent communication flows through standardized artifacts:
 | `verify-report-<slug>.json` | `verify` skill | `review` skill, `merge` skill | Structured JSON |
 | `review-report-<slug>.json` | `review` skill | `fix` skill | Structured JSON |
 | `fix-log-<slug>-<iter>.json` | `fix` skill | `verify` skill | Structured JSON |
-| `merge-log.json` | `merge` skill | Orchestrator, human | Append-only JSON |
+| `merge-log.jsonl` | `merge` skill | Orchestrator, human | Append-only JSON Lines |
 
 Artifacts are stored in `.agents/artifacts/` and serve as the bridge across separate sessions.
 
 #### Artifact Access Rules
 
 - **One writer per slug at a time**: Only one agent session may write artifacts for a given `<slug>`. If a session detects that the artifact file for its slug already exists and was modified by another session, it MUST NOT overwrite it. Instead, coordinate through the Orchestrator.
-- **Append-only where specified**: `merge-log.json` and `self-improve-log.json` are append-only. Never edit or remove existing entries.
+- **Append-only where specified**: `merge-log.jsonl` and `self-improve-log.jsonl` are append-only JSON Lines files. Never edit or remove existing entries. Each line is a standalone JSON object.
 - **Atomic writes**: Write artifacts to a temp file first, then rename/move into place to prevent partial reads.
 - **Read before write**: Always read the current artifact before writing to detect concurrent modifications.
 
@@ -87,21 +87,32 @@ develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore
 ## Workflow
 
 ```
-[PLAN] → [IMPLEMENT] → [VERIFY] → [REVIEW] → [FIX] → [MERGE develop→staging]
-   ↑          ↑            ↑           ↑          ↑              ↑
-Hierarchical  Autonomous  local      separate    separate      orchestrator
-              feature/*   session     session     session         gate
-                             └────── loop ──────┘
+[PLAN] → [IMPLEMENT] → [VERIFY] → [REVIEW] → [FIX]
+   ↑          ↑            ↑           ↑          ↑
+Hierarchical  feature/*   local      separate    separate
+              branches    session     session     session
+                            └─────── loop ───────┘
+                            ↓ (pass)
+                     [MERGE feature→develop]  ← autonomous
+                            ↓
+                    (develop accumulates)
+                            ↓
+                  [MERGE develop→staging]  ← orchestrator PR / human merge
+                            ↓
+                       [staging]
+                            ↓
+                  [MERGE staging→main]  ← human only
 ```
 
 ### Phase Transitions
 
-1. **PLAN**: Orchestrator loads `plan` skill → exhaustively questions user → outputs plan → user approves
-2. **IMPLEMENT**: Orchestrator spawns teams per task assignments → teams load `implement` skill → work on feature branches
+1. **PLAN**: Orchestrator loads `plan` skill → scope-adaptive questions → outputs plan → user approves
+2. **IMPLEMENT**: Orchestrator spawns teams per task assignments → teams load `implement` skill → work on feature branches → create PRs to `develop`
 3. **VERIFY**: Agent loads `verify` skill → runs lint, typecheck, test, build locally → outputs verify-report
 4. **REVIEW**: Separate session agents load `review` skill → multi-perspective review → outputs review-report
-5. **FIX**: If review finds issues → separate session loads `fix` skill → implements fixes → back to VERIFY (unlimited loop). If stuck after 5 iterations for the same issue → escalate to human.
-6. **MERGE (develop→staging)**: Orchestrator loads `merge` skill → confirms all gates → creates PR for human → human reviews and merges
+5. **FIX**: If review finds issues → separate session loads `fix` skill → implements fixes → back to VERIFY (unlimited loop; escalate to human at 5 iterations for same issue)
+6. **MERGE (feature→develop)**: `merge` skill autonomously detects passing PRs → merges to `develop` → deletes feature branch
+7. **MERGE (develop→staging)**: Orchestrator loads `merge` skill → integration verify on develop → creates PR for human → human reviews and merges
 
 ## Skill Catalog
 
@@ -126,7 +137,7 @@ Hierarchical  Autonomous  local      separate    separate      orchestrator
 ## Governance
 
 - **AGENTS.md is immutable** to agents — changes require human approval
-- **Skills** may be added/edited autonomously via `self-improve` (limited to `.agents/skills/` only)
+- **Skills** may be proposed autonomously via `self-improve`. All proposals must be approved by a human before being applied to `.agents/skills/`.
 - **Branch strategy** changes require human approval
 - The Orchestrator is responsible for enforcing phase transitions and gate conditions
 - When uncertain, escalate to human. Do not guess.

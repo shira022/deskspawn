@@ -6,11 +6,16 @@ Detect gaps in the agent team's skill coverage, propose new skills, and edit exi
 
 ## Scope Limitation
 
-- ✅ MAY: Create new skills under `.agents/skills/<name>/SKILL.md`
-- ✅ MAY: Edit existing skill files under `.agents/skills/`
+- ✅ MAY: Detect skill gaps and write proposals to `.agents/artifacts/skill-proposal-<name>.json`
+- ✅ MAY: Draft new skill content as proposals (do NOT write to `.agents/skills/` directly)
+- ✅ MAY: Recommend edits to existing skills via proposals
+- ❌ MAY NOT: Create or edit skill files directly — ALL skill changes require human approval
 - ❌ MAY NOT: Edit `AGENTS.md` (requires human approval)
 - ❌ MAY NOT: Change branch strategy or governance rules
 - ❌ MAY NOT: Delete skills without human confirmation
+
+**Design rationale**: At the current project stage (pre-implementation), autonomous skill mutation is too dangerous.
+Once the agent team has demonstrated reliable operation over multiple completed feature cycles, this scope may be re-evaluated.
 
 ## Trigger
 
@@ -62,9 +67,9 @@ Before creating/editing a skill, write a brief proposal to `.agents/artifacts/sk
 }
 ```
 
-### Step 4: Skill Creation
+### Step 4: Skill Creation (Proposal Only)
 
-When creating a new skill, follow this required structure:
+Draft the new skill content following this structure. Write the draft as a proposal artifact — do NOT create the actual skill file.
 
 ```markdown
 # <name> — <one-line purpose>
@@ -93,18 +98,26 @@ Requirements:
 - **Specific** — references DeskSpawn's tech stack, conventions, and directory structure
 - **Focused** — one skill, one purpose. Split broad topics into multiple skills.
 
-### Step 5: Skill Editing
+### Step 5: Skill Editing (Proposal Only)
 
-When editing an existing skill:
+When recommending an edit to an existing skill:
 
-1. Read the current skill file fully (do not assume you remember it)
-2. Make minimal, focused changes — prefer surgical edits over rewrites
-3. Preserve the existing structure, tone, and level of detail
-4. Add a changelog comment at the top: `<!-- Last updated: YYYY-MM-DD - <brief reason> -->`
-5. Ensure the edited skill still stays under 10,000 tokens
-6. If the edit significantly changes the skill's scope, write a brief proposal first (Step 3)
+1. Read the current skill file fully
+2. Prepare a diff proposal showing the exact changes
+3. Write the proposal to `.agents/artifacts/skill-proposal-<name>.json` with `"action": "edit"`
+4. Include the rationale and the full proposed new content
+5. Do NOT modify the actual skill file
 
-### Step 6: Validation
+### Step 6: Human Approval Gate
+
+After creating a proposal:
+
+1. Present the proposal to the human at the next planning checkpoint
+2. The human reviews and may: approve, reject, or request changes
+3. Only after explicit human approval may the actual skill file be created/edited
+4. The human's decision is final — do not re-propose the same change without new evidence
+
+### Step 7: Notification
 
 After creating/editing a skill, self-validate:
 
@@ -114,23 +127,23 @@ After creating/editing a skill, self-validate:
 4. **Token check**: Is it under 10,000 tokens? (If close, trim or split.)
 5. **Scope check**: Does it stay within `.agents/skills/` boundaries? No AGENTS.md edits?
 
-### Step 7: Notification
+### Step 8: Notification
 
-After creating/editing:
+After creating a proposal:
 
-1. Append a summary to `.agents/artifacts/self-improve-log.json` (append-only):
+1. Append a summary to `.agents/artifacts/self-improve-log.jsonl` (JSON Lines — append-only, one JSON object per line):
    ```jsonc
    {
      "timestamp": "ISO8601",
-     "action": "created|edited",
+     "action": "proposed_create|proposed_edit",
      "skill": "<name>",
      "rationale": "Brief reason",
-     "validation_passed": true
+     "human_approved": false
    }
    ```
-2. Notify the Orchestrator: "Skill <name> has been <created|updated>."
-3. The human will be informed at the next planning checkpoint.
-4. If the new skill should be added to the AGENTS.md skill catalog, write a catalog update note to `.agents/artifacts/skill-catalog-update.json` (the human will review and update AGENTS.md).
+2. Notify the Orchestrator: "Skill proposal ready for <name>."
+3. The human will review at the next planning checkpoint.
+4. If the new skill should be added to the AGENTS.md skill catalog, include that in the proposal notes.
 
 ## When NOT to Create a Skill
 
@@ -144,10 +157,10 @@ After creating/editing:
 ## Rules
 
 - Never edit AGENTS.md
-- Keep skills focused — one clear purpose per skill
+- Never edit or create skill files directly — always go through the proposal + human approval flow
+- Keep proposals focused — one clear purpose per proposal
 - Prefer editing existing skills over creating new ones when the gap is adjacent
-- Always write a proposal before creating — validate the need first
+- Always write a proposal before suggesting — validate the need first
 - Each skill must be self-contained and loadable independently
-- Skills are living documents — revisit and improve periodically as the project evolves
 - If unsure whether a skill is needed, ask the human at the next checkpoint
-- The self-improve log is append-only; it serves as the audit trail for skill evolution
+- The self-improve log is append-only JSON Lines; it serves as the audit trail for proposals

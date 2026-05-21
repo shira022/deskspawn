@@ -39,11 +39,11 @@ git checkout develop
 git pull origin develop
 
 # 2. Merge feature branch with no-fast-forward to preserve history
-# Use single-quoted message to prevent shell expansion
-git merge --no-ff <prefix>/<slug> -m 'merge: <prefix>/<slug> → develop
-
-Summary: <replace with one-line summary>
-Refs: plan-<slug>, verify-report-<slug>, review-report-<slug>'
+# Build commit message in a variable (multi-line single quotes are invalid in bash)
+MSG="merge: <prefix>/<slug> → develop"
+MSG="$MSG\n\nSummary: <replace with one-line summary>"
+MSG="$MSG\nRefs: plan-<slug>, verify-report-<slug>, review-report-<slug>"
+git merge --no-ff <prefix>/<slug> -m "$MSG"
 
 # 3. Push
 git push origin develop
@@ -117,12 +117,12 @@ git pull origin develop
 # 3. Create a branch for the staging PR (so human can review the diff)
 STAGING_BRANCH="staging-pr-$(date +%Y%m%d-%H%M%S)"
 git checkout -b "$STAGING_BRANCH"
-# Use single-quoted message to prevent shell expansion
-git merge --no-ff develop -m 'staging: prepare develop → staging merge
-
-Batch includes: <replace with list of feature branches>
-Verification: all feature PRs passed verify + review
-Integration verify: passed on develop HEAD'
+# Build commit message in a variable
+MSG="staging: prepare develop → staging merge"
+MSG="$MSG\n\nBatch includes: <replace with list of feature branches>"
+MSG="$MSG\nVerification: all feature PRs passed verify + review"
+MSG="$MSG\nIntegration verify: passed on develop HEAD"
+git merge --no-ff develop -m "$MSG"
 git push origin "$STAGING_BRANCH"
 
 # 4. Create PR: staging-pr-* → staging
@@ -172,7 +172,7 @@ git push origin --delete staging-pr-<timestamp>
 
 ## Output
 
-Append to `.agents/artifacts/merge-log.json`:
+Append to `.agents/artifacts/merge-log.jsonl` (JSON Lines — one JSON object per line, append-only):
 
 ```jsonc
 {
