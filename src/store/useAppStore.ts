@@ -13,6 +13,9 @@ import type {
   SpawnConfig,
 } from "@/types";
 
+const STORAGE_KEY = "deskspawn_ai_config";
+const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI__;
+
 const defaultEnvChecks: EnvCheckItem[] = [
   {
     name: "Node.js",
@@ -57,6 +60,8 @@ interface Store {
   // Phase
   phase: AppPhase;
   setPhase: (phase: AppPhase) => void;
+  initialized: boolean;
+  initialize: () => Promise<void>;
 
   // Layout
   layoutMode: LayoutMode;
@@ -128,12 +133,50 @@ interface Store {
 export const useAppStore = create<Store>((set, get) => ({
   phase: "ai-config",
   setPhase: (phase) => set({ phase }),
+  initialized: false,
+  initialize: async () => {
+    try {
+      if (isTauri) {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const config = await invoke<AiConfig | null>("load_ai_config");
+        if (config) {
+          set({ aiConfig: config, phase: "main" });
+        }
+      } else {
+        const raw = localStorage.getItem(STORAGE_KEY);
+        if (raw) {
+          const config = JSON.parse(raw) as AiConfig;
+          set({ aiConfig: config, phase: "main" });
+        }
+      }
+    } catch (e) {
+      console.warn("Failed to load stored AI config:", e);
+    } finally {
+      set({ initialized: true });
+    }
+  },
 
   layoutMode: "2-pane",
   setLayoutMode: (layoutMode) => set({ layoutMode }),
 
   aiConfig: null,
-  setAiConfig: (aiConfig) => set({ aiConfig }),
+  setAiConfig: (aiConfig) => {
+    set({ aiConfig });
+    // Persist to storage
+    if (isTauri) {
+      import("@tauri-apps/api/core").then(({ invoke }) => {
+        invoke("save_ai_config", { config: aiConfig }).catch((e) =>
+          console.warn("Failed to save AI config:", e),
+        );
+      });
+    } else {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(aiConfig));
+      } catch (e) {
+        console.warn("Failed to save AI config to localStorage:", e);
+      }
+    }
+  },
 
   envChecks: defaultEnvChecks,
   setEnvCheckResults: (results) => set({ envChecks: results }),

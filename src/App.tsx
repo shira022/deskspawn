@@ -1,10 +1,10 @@
-import { Component, type ReactNode } from "react";
+import { Component, type ReactNode, useEffect } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import { AiConfigScreen } from "@/components/onboarding/AiConfigScreen";
 import { EnvCheckScreen } from "@/components/onboarding/EnvCheckScreen";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { Button } from "@/components/ui/button";
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw, Loader2 } from "lucide-react";
 
 class ErrorBoundary extends Component<
   { children: ReactNode; onReset: () => void },
@@ -52,11 +52,28 @@ class ErrorBoundary extends Component<
 
 export function App() {
   const phase = useAppStore((s) => s.phase);
+  const initialized = useAppStore((s) => s.initialized);
+  const initialize = useAppStore((s) => s.initialize);
   const setPhase = useAppStore((s) => s.setPhase);
+
+  useEffect(() => {
+    initialize();
+  }, [initialize]);
 
   const handleReset = () => {
     setPhase("ai-config");
   };
+
+  if (!initialized) {
+    return (
+      <div className="flex h-screen w-screen items-center justify-center bg-background">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <Loader2 className="h-6 w-6 animate-spin" />
+          <p className="text-sm">読み込み中...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <ErrorBoundary onReset={handleReset}>
