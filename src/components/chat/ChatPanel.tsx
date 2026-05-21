@@ -6,13 +6,28 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Badge } from "@/components/ui/badge";
 import { MessageSquare, Bot, Loader2, Wrench } from "lucide-react";
-import type { ChatMessage as ChatMessageType } from "@/types";
+import type { ChatMessage as ChatMessageType, AiConfig } from "@/types";
 
 const SIDECAR_URL = "http://localhost:3001/chat";
 
+const providerLabels: Record<string, string> = {
+  openai: "OpenAI",
+  anthropic: "Anthropic",
+  google: "Google",
+  ollama: "Ollama",
+  custom: "カスタム",
+};
+
 export function ChatPanel() {
-  const { messages, agentStatus, addMessage, setAgentStatus, setAgentStepCount, setWorkspaceReady } =
-    useAppStore();
+  const {
+    messages,
+    agentStatus,
+    addMessage,
+    setAgentStatus,
+    setAgentStepCount,
+    setWorkspaceReady,
+    aiConfig,
+  } = useAppStore();
   const scrollRef = useRef<HTMLDivElement>(null);
   const [toolCalls, setToolCalls] = useState<string[]>([]);
 
@@ -23,6 +38,27 @@ export function ChatPanel() {
   }, [messages, toolCalls]);
 
   const handleSend = async (content: string) => {
+    if (!aiConfig) {
+      addMessage({
+        id: `msg-err-${Date.now()}`,
+        role: "assistant",
+        content: "⚠️ AI設定が行われていません。ツールバーの「AI未設定」ボタンから設定してください。",
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
+    // Validate API key for non-Ollama providers
+    if (aiConfig.provider !== "ollama" && !aiConfig.apiKey) {
+      addMessage({
+        id: `msg-err-${Date.now()}`,
+        role: "assistant",
+        content: `⚠️ ${providerLabels[aiConfig.provider] || aiConfig.provider} には API キーが必要です。\nツールバーの「${aiConfig.model || "AI未設定"}」→「APIキー設定」から設定してください。`,
+        timestamp: Date.now(),
+      });
+      return;
+    }
+
     const userMsg: ChatMessageType = {
       id: `msg-${Date.now()}`,
       role: "user",
@@ -31,20 +67,33 @@ export function ChatPanel() {
     };
     addMessage(userMsg);
     setToolCalls([]);
+    setAgentStepCount(0);
 
     setAgentStatus("running");
     setAgentStepCount(0);
 
     try {
-      await callSidecar(content, addMessage, setAgentStepCount, setToolCalls, setWorkspaceReady);
+      await callSidecar(content, addMessage, setAgentStepCount, setToolCalls, setWorkspaceReady, aiConfig);
       setAgentStatus("complete");
       setWorkspaceReady(true);
+      // Ensure preview shows the workspace app
+      const { setWorkspacePort, workspacePort } = useAppStore.getState();
+      if (workspacePort === 5173) setWorkspacePort(5174);
+      // Trigger preview refresh by toggling workspaceReady twice
+      setTimeout(() => setWorkspaceReady(false), 100);
+      setTimeout(() => setWorkspaceReady(true), 300);
     } catch (e) {
       console.error("Sidecar error:", e);
+      const errMsg = String(e);
+      const hint = errMsg.includes("API key") || errMsg.includes("401")
+        ? "APIキーが無効か未設定です。ツールバーの「APIキー設定」から確認してください。"
+        : errMsg.includes("fetch") || errMsg.includes("Load failed") || errMsg.includes("NetworkError")
+          ? "サイドカーサーバーに接続できません。\nnpm run sidecar server を実行してください。"
+          : `サイドカーサーバーが起動しているか確認してください。\n\`npm run sidecar server\` を実行してください。`;
       addMessage({
         id: `msg-err-${Date.now()}`,
         role: "assistant",
-        content: `⚠️ エラーが発生しました: ${String(e)}\n\nサイドカーサーバーが起動しているか確認してください。\n\`npm run sidecar server\` を実行してください。`,
+        content: `⚠️ エラーが発生しました: ${errMsg}\n\n${hint}`,
         timestamp: Date.now(),
       });
       setAgentStatus("error");
@@ -60,7 +109,9 @@ export function ChatPanel() {
         {agentStatus === "running" && (
           <span className="ml-auto text-xs text-muted-foreground animate-pulse flex items-center gap-1">
             <Loader2 className="h-3 w-3 animate-spin" />
-            AI がコードを生成しています...
+            {useAppStore.getState().agentStepCount > 0
+              ? `Step ${useAppStore.getState().agentStepCount}/${useAppStore.getState().agentMaxSteps}: コードを生成中...`
+              : "AI がコードを生成しています..."}
           </span>
         )}
       </div>
@@ -78,7 +129,9 @@ export function ChatPanel() {
               作りたいアプリを自由に指示してください。
             </p>
             <p className="text-xs text-muted-foreground/60 mt-2">
-              Ollama qwen3.5:4b を使用中
+              {aiConfig
+                ? `${providerLabels[aiConfig.provider] || aiConfig.provider} ${aiConfig.model} を使用中`
+                : "AI未設定 — ツールバーから設定してください"}
             </p>
             <div className="mt-4 flex flex-wrap gap-1.5 justify-center">
               {[
@@ -124,9 +177,13 @@ export function ChatPanel() {
 // ── Actual sidecar call via SSE ──────────────────────────────────────────────
 
 interface SSEMessage {
-  type: "tool_call" | "text" | "error" | "done";
+  type: "tool_call" | "tool_result" | "text" | "error" | "done" | "step_progress";
+  step?: number;
+  maxSteps?: number;
   toolName?: string;
   args?: Record<string, unknown>;
+  result?: string;
+  detail?: Record<string, unknown>;
   text?: string;
   error?: string;
   usage?: { inputTokens: number; outputTokens: number };
@@ -138,19 +195,22 @@ async function callSidecar(
   addMessage: (msg: ChatMessageType) => void,
   setStep: (step: number) => void,
   setToolCalls: (calls: string[]) => void,
-  setWorkspaceReady: (ready: boolean) => void
+  setWorkspaceReady: (ready: boolean) => void,
+  config: AiConfig | null,
 ) {
+  const provider = config?.provider ?? "ollama";
+  const model = config?.model ?? "";
+  const apiKey = config?.apiKey ?? "";
+  const customEndpoint = config?.customEndpoint;
+  const temperature = config?.temperature ?? 0.2;
+  const maxTokens = config?.maxTokens ?? 4096;
+
   const response = await fetch(SIDECAR_URL, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       messages: [{ role: "user", content: prompt }],
-      config: {
-        provider: "ollama",
-        model: "qwen3.5:4b",
-        temperature: 0.2,
-        maxTokens: 4096,
-      },
+      config: { provider, model, apiKey, customEndpoint, temperature, maxTokens },
       maxSteps: 10,
     }),
   });
@@ -166,6 +226,8 @@ async function callSidecar(
   let buffer = "";
   let fullText = "";
   const activeToolCalls: string[] = [];
+  let currentStep = 0;
+  let maxSteps = 10;
 
   while (true) {
     const { done, value } = await reader.read();
@@ -181,13 +243,21 @@ async function callSidecar(
       try {
         const msg: SSEMessage = JSON.parse(jsonStr);
 
-        if (msg.type === "tool_call") {
-          const label = `${msg.toolName}(${JSON.stringify(msg.args).substring(0, 60)}${JSON.stringify(msg.args).length > 60 ? "..." : ""})`;
+        if (msg.type === "step_progress") {
+          currentStep = msg.step ?? currentStep;
+          maxSteps = msg.maxSteps ?? maxSteps;
+          setStep(currentStep);
+        } else if (msg.type === "tool_call") {
+          const label = `🔧 ${msg.toolName}(${JSON.stringify(msg.args).substring(0, 60)}${JSON.stringify(msg.args).length > 60 ? "..." : ""})`;
           activeToolCalls.push(label);
           setToolCalls([...activeToolCalls]);
-          if (msg.stepNumber) setStep(msg.stepNumber);
+          if (msg.step) setStep(msg.step);
+        } else if (msg.type === "tool_result") {
+          const label = `   ${msg.result || "OK"}`;
+          activeToolCalls.push(label);
+          setToolCalls([...activeToolCalls]);
         } else if (msg.type === "text") {
-          fullText = msg.text;
+          fullText = msg.text ?? "";
         } else if (msg.type === "error") {
           throw new Error(msg.error);
         }

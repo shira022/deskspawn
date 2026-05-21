@@ -57,27 +57,63 @@ app.post('/chat', async (req, res) => {
       })),
     ];
 
-    // Create tools with execute functions that call executors directly
+    // Set up SSE for streaming (declare early so tools can use it)
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    res.flushHeaders();
+
+    const sendSSE = (data: Record<string, unknown>) => {
+      res.write(`data: ${JSON.stringify(data)}\n\n`);
+    };
+
+    let stepCount = 0;
+
+    // Create tools with execute functions that emit results via SSE
     const toolsWithExec = {
       read_file: {
         ...tools.read_file,
         execute: async ({ path: filePath }: { path: string }) => {
           const content = await executors.readFile(filePath);
           console.log(`[exec] read_file(${filePath}) => ${content.length} chars`);
+          sendSSE({
+            type: 'tool_result',
+            toolName: 'read_file',
+            result: `${content.length} chars read from ${filePath}`,
+            detail: { file: filePath, size: content.length },
+          });
           return content;
         },
       },
       list_files: {
         ...tools.list_files,
         execute: async () => {
-          return await executors.listFiles();
+          const files = await executors.listFiles();
+          sendSSE({
+            type: 'tool_result',
+            toolName: 'list_files',
+            result: `${files.length} files found`,
+          });
+          return files;
         },
       },
       apply_artifact: {
         ...tools.apply_artifact,
         execute: async ({ json }: { json: string }) => {
           console.log(`[exec] apply_artifact jsonLen=${json?.length || 0}`);
-          return await executors.applyArtifact(json);
+          const result = await executors.applyArtifact(json);
+          sendSSE({
+            type: 'tool_result',
+            toolName: 'apply_artifact',
+            result: result.success
+              ? `${result.filesChanged.length} files changed: ${result.filesChanged.join(', ')}`
+              : `Failed: ${(result.errors || []).join('; ')}`,
+            detail: {
+              filesChanged: result.filesChanged,
+              errors: result.errors,
+            },
+          });
+          return result;
         },
       },
       run_shell: {
@@ -92,8 +128,18 @@ app.post('/chat', async (req, res) => {
               timeout: 120_000,
               stdio: 'pipe',
             });
+            sendSSE({
+              type: 'tool_result',
+              toolName: 'run_shell',
+              result: `✅ ${command}`,
+            });
             return { success: true, stdout: result, stderr: '', exitCode: 0 };
           } catch (e: any) {
+            sendSSE({
+              type: 'tool_result',
+              toolName: 'run_shell',
+              result: `❌ ${command}: ${e.stderr || e.message || ''}`.substring(0, 200),
+            });
             return {
               success: false,
               stdout: e.stdout || '',
@@ -106,19 +152,15 @@ app.post('/chat', async (req, res) => {
       get_errors: {
         ...tools.get_errors,
         execute: async () => {
-          return await executors.getErrors();
+          const errors = await executors.getErrors();
+          sendSSE({
+            type: 'tool_result',
+            toolName: 'get_errors',
+            result: errors.length === 0 ? 'No errors found' : `${errors.length} errors found`,
+          });
+          return errors;
         },
       },
-    };
-
-    // Set up SSE for streaming
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const sendSSE = (data: Record<string, unknown>) => {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
     };
 
     try {
@@ -130,13 +172,19 @@ app.post('/chat', async (req, res) => {
         temperature: config?.temperature ?? 0.2,
         maxOutputTokens: config?.maxTokens ?? 4096,
         onStepFinish: (event: any) => {
-          console.log(`[step] toolCalls=${event.toolCalls?.length || 0} textLen=${event.text?.length || 0}`);
+          stepCount++;
+          console.log(`[step ${stepCount}] toolCalls=${event.toolCalls?.length || 0} textLen=${event.text?.length || 0}`);
+          // Send step progress
+          sendSSE({
+            type: 'step_progress',
+            step: stepCount,
+            maxSteps: config?.maxSteps || 10,
+          });
           if (event.toolCalls && event.toolCalls.length > 0) {
             for (const call of event.toolCalls) {
-              console.log(`[tool] full call keys=${JSON.stringify(Object.keys(call))}`);
-              console.log(`[tool] ${call.toolName} args=${JSON.stringify(call.args)} input=${JSON.stringify(call.input)}`);
               sendSSE({
                 type: 'tool_call',
+                step: stepCount,
                 toolName: call.toolName,
                 args: call.input || call.args || {},
               });
