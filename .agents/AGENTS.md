@@ -11,8 +11,19 @@ Our mission: build DeskSpawn — an AI-powered Windows native app development pl
 
 ### Hybrid Architecture
 
-- **Planning phase (Hierarchical)**: A lead Orchestrator loads the `plan` skill, conducts exhaustive requirements gathering with the human user, produces a structured plan with task assignments, and spawns implementation sub-teams.
+- **Planning phase (Hierarchical)**: A lead Orchestrator loads the `plan` skill, conducts scope-adaptive requirements gathering with the human user, produces a structured plan with task assignments, and spawns implementation sub-teams.
 - **Execution phase (Autonomous Distributed)**: Each implementation team operates independently, loading skills dynamically as needed. Teams coordinate via standardized artifacts stored in `.agents/artifacts/`.
+
+### What Is the Orchestrator?
+
+The Orchestrator is not a separate process, script, or human role. It is a **role temporarily assumed by an agent session**. Any agent can become the Orchestrator by loading the `plan` or `merge` skill when those phases are active. The Orchestrator's responsibilities are:
+
+1. **Phase gate enforcement**: Ensuring each phase completes with the required artifacts before the next begins
+2. **Task distribution**: Spawning implementation sub-sessions per the plan's team assignments
+3. **Artifact coordination**: Reading and validating artifacts from `.agents/artifacts/` to make gate decisions
+4. **Escalation**: Routing stuck issues to the human when automated resolution fails
+
+There is no persistent Orchestrator process. The role is ephemeral — assumed when needed, released when the phase completes.
 
 ### Dynamic Skill Loading
 
@@ -31,6 +42,13 @@ All inter-agent communication flows through standardized artifacts:
 | `merge-log.json` | `merge` skill | Orchestrator, human | Append-only JSON |
 
 Artifacts are stored in `.agents/artifacts/` and serve as the bridge across separate sessions.
+
+#### Artifact Access Rules
+
+- **One writer per slug at a time**: Only one agent session may write artifacts for a given `<slug>`. If a session detects that the artifact file for its slug already exists and was modified by another session, it MUST NOT overwrite it. Instead, coordinate through the Orchestrator.
+- **Append-only where specified**: `merge-log.json` and `self-improve-log.json` are append-only. Never edit or remove existing entries.
+- **Atomic writes**: Write artifacts to a temp file first, then rename/move into place to prevent partial reads.
+- **Read before write**: Always read the current artifact before writing to detect concurrent modifications.
 
 ## Branch Strategy: 4-Branch GitFlow
 
@@ -58,7 +76,7 @@ develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore
 
 | Source → Target | Merge Authority | Conditions |
 |-----------------|----------------|------------|
-| `<type>/*` → `develop` | 🤖 Agents (autonomous) | PR must be created; basic CI (lint/build) should pass |
+| `<type>/*` → `develop` | 🤖 Agents (autonomous) | PR must be created; CI must pass (see `.github/workflows/ci.yml`) |
 | `develop` → `staging` | 🤖 PR: Orchestrator<br>👤 Merge: Human | Full verification (verify + review) must pass. Orchestrator creates PR; human approves and merges. |
 | `staging` → `main` | 👤 Human only | Manual approval + full CI green |
 
@@ -71,9 +89,9 @@ develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore
 ```
 [PLAN] → [IMPLEMENT] → [VERIFY] → [REVIEW] → [FIX] → [MERGE develop→staging]
    ↑          ↑            ↑           ↑          ↑              ↑
- 階層型    自律分散      local      separate    separate      orchestrator
-           feature/*    session     session     session         gate
-                          └────── loop ──────┘
+Hierarchical  Autonomous  local      separate    separate      orchestrator
+              feature/*   session     session     session         gate
+                             └────── loop ──────┘
 ```
 
 ### Phase Transitions

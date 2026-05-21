@@ -19,7 +19,7 @@ Run a comprehensive local verification pipeline to ensure code quality before re
 
 ## Verification Pipeline
 
-Run stages in order. A stage failure blocks progression. Collect ALL errors from each stage before reporting.
+Run all stages. Do not stop after a failure — collect errors from every stage to build a complete picture before reporting. Failure in any stage sets `overall: fail`.
 
 ### Stage 1: Lint
 
@@ -63,8 +63,8 @@ cargo test
 # Frontend production build
 npm run build
 
-# Backend release build sanity check
-cargo build --release
+# Backend debug build (release build is covered by tauri build in Stage 6)
+cargo build
 ```
 
 **Pass condition**: Build succeeds with no errors. Warnings from build tools are noted but do not block.

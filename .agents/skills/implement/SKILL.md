@@ -83,7 +83,7 @@ Create a PR targeting the `develop` branch:
 
 - **PR title**: `[<type>] <task title>`
 - **PR body**: Summary of changes, reference to plan artifact (e.g., `Refs: plan-<slug>`), testing notes, any known limitations
-- Assign the PR to the Orchestrator (or leave unassigned for autonomous merge by `merge` skill)
+- **Do NOT assign the PR** — the `merge` skill will detect and autonomously merge it once verification and review pass.
 
 ### Step 7: Report Completion
 

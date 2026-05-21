@@ -39,12 +39,11 @@ git checkout develop
 git pull origin develop
 
 # 2. Merge feature branch with no-fast-forward to preserve history
-git merge --no-ff <prefix>/<slug> -m "merge: <prefix>/<slug> → develop
+# Use single-quoted message to prevent shell expansion
+git merge --no-ff <prefix>/<slug> -m 'merge: <prefix>/<slug> → develop
 
-$(cat <<EOF
-Summary of changes from plan-<slug>
-Refs: plan-<slug>, verify-report-<slug>, review-report-<slug>
-EOF)"
+Summary: <replace with one-line summary>
+Refs: plan-<slug>, verify-report-<slug>, review-report-<slug>'
 
 # 3. Push
 git push origin develop
@@ -63,6 +62,32 @@ git branch -d <prefix>/<slug>
 | Merge conflict | Rebase feature onto develop, resolve conflicts, retry. Document the conflict resolution in merge log. |
 | Push rejected | Pull latest develop, rebase, retry. If persistent, escalate. |
 | Post-merge CI failure | Flag to Orchestrator immediately. Do NOT proceed to staging merge. |
+
+#### Rollback: Reverting a Bad Merge to Develop
+
+If a merged feature is later found to be broken (e.g., post-merge CI fails, or review-after-merge catches an issue):
+
+```bash
+# 1. Identify the merge commit
+git log develop --oneline --merges -5
+
+# 2. Revert the merge (preserves history, safe for shared branches)
+git checkout develop
+git pull origin develop
+git revert -m 1 <merge-commit-sha> -m 'revert: <prefix>/<slug> merge to develop
+
+Reason: <brief reason for revert>
+Refs: plan-<slug>'
+
+# 3. Push the revert
+git push origin develop
+
+# 4. Re-create the feature branch for rework (if needed)
+git checkout -b <prefix>/<slug>-rework <merge-commit-sha>^2
+git push origin <prefix>/<slug>-rework
+```
+
+**Important**: Use `git revert` (not `git reset`) on shared branches. This preserves history and avoids force-push conflicts.
 
 ### Merge Type 2: Develop → Staging (Human-Gated)
 
@@ -90,15 +115,15 @@ git pull origin develop
 # (re-run verify skill; if fails → abort, route failing features back to fix)
 
 # 3. Create a branch for the staging PR (so human can review the diff)
-git checkout -b staging-pr-$(date +%Y%m%d-%H%M%S)
-git merge --no-ff develop -m "staging: prepare develop → staging merge
+STAGING_BRANCH="staging-pr-$(date +%Y%m%d-%H%M%S)"
+git checkout -b "$STAGING_BRANCH"
+# Use single-quoted message to prevent shell expansion
+git merge --no-ff develop -m 'staging: prepare develop → staging merge
 
-Batch includes:
-- <list feature branches merged since last staging update>
-
+Batch includes: <replace with list of feature branches>
 Verification: all feature PRs passed verify + review
-Integration verify: passed on develop HEAD"
-git push origin staging-pr-$(date +%Y%m%d-%H%M%S)
+Integration verify: passed on develop HEAD'
+git push origin "$STAGING_BRANCH"
 
 # 4. Create PR: staging-pr-* → staging
 # PR description must include:
