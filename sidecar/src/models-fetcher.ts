@@ -107,14 +107,33 @@ async function fetchModelsFromModelsDev(provider: string): Promise<ModelInfo[]> 
   return Object.values(providerData.models)
     .filter((m) => m.status !== 'deprecated')
     .filter((m) => {
-      // Exclude embedding and moderation models (no text generation)
+      // Exclude embedding and non-text-generation models
       const family = (m.family ?? '').toLowerCase();
+      const name = (m.name ?? '').toLowerCase();
+      const id = (m.id ?? '').toLowerCase();
       if (family.includes('embed')) return false;
+      if (name.includes('embed')) return false;
+      if (id.includes('embed')) return false;
       if (family.includes('moderation')) return false;
       if (family.includes('tts')) return false;
       if (family.includes('whisper')) return false;
       if (family.includes('dall')) return false;
       if (family.includes('audio')) return false;
+      return true;
+    })
+    .filter((m) => {
+      // Exclude models that can't generate text: zero context or zero output
+      if (m.limit.context <= 0) return false;
+      if (m.limit.output <= 0) return false;
+      return true;
+    })
+    .filter((m) => {
+      // Exclude image-only generation models (e.g. DALL-E, Imagen)
+      // Models that output only images have no text output
+      const outputModalities = m.modalities?.output ?? [];
+      if (outputModalities.length > 0 && outputModalities.every((mod) => mod !== 'text')) {
+        return false;
+      }
       return true;
     })
     .map(convertModelsDevModel)
