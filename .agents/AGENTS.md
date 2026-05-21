@@ -53,12 +53,10 @@ Artifacts are stored in `.agents/artifacts/` and serve as the bridge across sepa
 - **Atomic writes**: Write artifacts to a temp file first, then rename/move into place to prevent partial reads.
 - **Read before write**: Always read the current artifact before writing to detect concurrent modifications.
 
-## Branch Strategy: 4-Branch GitFlow
+## Branch Strategy: 3-Branch GitFlow
 
 ```
-main        🔒 Protected. PR from staging only. Human approve + full CI pass required.
-  ↑
-staging     🔒 Protected. PR from develop only. Orchestrator verifies + creates PR. Human approves and merges.
+main        🔒 Protected. PR from develop only. Human approve + full CI pass required.
   ↑
 develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore PRs.
   ↑
@@ -80,8 +78,7 @@ develop     🤖 Open. Agents autonomously merge feature/fix/docs/refactor/chore
 | Source → Target | Merge Authority | Conditions |
 |-----------------|----------------|------------|
 | `<type>/*` → `develop` | 🤖 Agents (autonomous) | PR must be created; CI must pass (see `.github/workflows/ci.yml`) |
-| `develop` → `staging` | 🤖 PR: Orchestrator<br>👤 Merge: Human | Full verification (verify + review) must pass. Orchestrator creates PR; human approves and merges. |
-| `staging` → `main` | 👤 Human only | Manual approval + full CI green |
+| `develop` → `main` | 👤 Human only | Full verification (verify + review) must pass. Human approves and merges. |
 
 ### Commit Convention
 
@@ -100,11 +97,7 @@ Hierarchical  feature/*   local      separate    separate │
                             ↓
                     (develop accumulates)
                             ↓
-                  [MERGE develop→staging]  ← orchestrator PR / human merge
-                            ↓
-                       [staging]
-                            ↓
-                  [MERGE staging→main]  ← human only
+                  [MERGE develop→main]  ← human only
 ```
 
 ### Phase Transitions
@@ -115,7 +108,7 @@ Hierarchical  feature/*   local      separate    separate │
 4. **REVIEW**: Separate session agents load `review` skill → multi-perspective review → outputs review-report
 5. **FIX**: If review finds issues → separate session loads `fix` skill → implements fixes → back to VERIFY (unlimited loop; escalate to human at 5 iterations for same issue)
 6. **MERGE (feature→develop)**: `merge` skill autonomously detects passing PRs → merges to `develop` → deletes feature branch
-7. **MERGE (develop→staging)**: Orchestrator loads `merge` skill → integration verify on develop → creates PR for human → human reviews and merges
+7. **MERGE (develop→main)**: Orchestrator loads `merge` skill → integration verify on develop → creates PR for human → human reviews and merges
 
 ## Skill Catalog
 
@@ -126,7 +119,7 @@ Hierarchical  feature/*   local      separate    separate │
 | `verify` | Implementation done / fixes applied | Local verification (lint, typecheck, test, build) |
 | `review` | Verification passes (separate session) | Multi-perspective code review |
 | `fix` | Review finds issues (separate session) | Implement review fixes |
-| `merge` | All gates passed | Feature→develop, develop→staging merges |
+| `merge` | All gates passed | Feature→develop, develop→main merges |
 | `self-improve` | Skill gaps detected | Autonomous skill creation/editing |
 
 ## Session Isolation Policy

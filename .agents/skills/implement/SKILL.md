@@ -114,7 +114,7 @@ Report to the Orchestrator:
 
 ## Rules
 
-- Never work directly on `main`, `staging`, or `develop`
+- Never work directly on `main` or `develop`
 - Never edit `src-tauri/src/generated/` or `src/hooks/` (Layer 1 generated code)
 - Never bypass the security policy (Layer 2 AST Guarded mode rules)
 - Never add dependencies outside the allowed package list without approval
