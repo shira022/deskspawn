@@ -246,7 +246,7 @@ pub async fn install_with_winget(
     // Special handling for VS Build Tools: include C++ workload
     if package == WINGET_VS_BUILD_TOOLS {
         cmd.arg("--override");
-        cmd.arg("--wait --quiet --add Microsoft.VisualStudio.Workload.NativeDesktop --includeRecommended");
+        cmd.args(["--wait", "--quiet", "--add", "Microsoft.VisualStudio.Workload.NativeDesktop", "--includeRecommended"]);
     }
 
     // Emit downloading event
