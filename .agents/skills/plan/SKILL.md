@@ -1,5 +1,8 @@
 # plan — Requirements Gathering & Task Planning
 
+> **Context Note**: These skills govern DeskSpawn (the tool) development — a Tauri v2 + React + TypeScript app. They **do not** apply to the generated web apps (which are pure Vite + React + TypeScript, no Rust/Tauri). Code generation for user apps is handled by the sidecar AI system prompt, not these skills.
+>
+
 ## Purpose
 
 Conduct exhaustive requirements gathering with the human user, produce a structured implementation plan with task assignments, and prepare for parallel team execution.

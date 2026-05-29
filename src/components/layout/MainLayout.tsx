@@ -3,7 +3,6 @@ import { useAppStore } from "@/store/useAppStore";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { PreviewPanel } from "@/components/preview/PreviewPanel";
 import { FileTreePanel } from "@/components/file-tree/FileTreePanel";
-import { SpawnDialog } from "@/components/spawn/SpawnDialog";
 import { NewAppDialog } from "@/components/project/NewAppDialog";
 import { ProjectSwitcher } from "@/components/project/ProjectSwitcher";
 import { StatusBar } from "@/components/layout/StatusBar";
@@ -15,7 +14,6 @@ import {
 import {
   LayoutPanelLeft,
   PanelsLeftRight,
-  LayoutPanelTop,
   Cpu,
   Sparkles,
   Cloud,
@@ -33,9 +31,9 @@ import { Tooltip } from "@/components/ui/tooltip";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import type { ProviderKind, AiConfig, ModelInfo } from "@/types";
-
-const SIDECAR_BASE = "http://localhost:3001";
+import type { ProviderKind } from "@/types";
+import { providerLabels } from "@/lib/constants";
+import { useModels } from "@/hooks/useModels";
 
 const layoutIcons: Record<string, React.ReactNode> = {
   "2-pane": <PanelsLeftRight className="h-4 w-4" />,
@@ -55,14 +53,6 @@ const providerIcons: Record<ProviderKind, React.ReactNode> = {
   custom: <Server className="h-3.5 w-3.5" />,
 };
 
-const providerLabels: Record<ProviderKind, string> = {
-  openai: "OpenAI",
-  anthropic: "Anthropic",
-  google: "Google",
-  ollama: "Ollama",
-  custom: "カスタム",
-};
-
 const providerRepModel: Record<ProviderKind, string> = {
   openai: "GPT",
   anthropic: "Claude",
@@ -80,8 +70,13 @@ export function MainLayout() {
     currentProjectId,
     projects,
     projectSwitching,
+    appLoading,
+    previewMaximized,
   } = useAppStore();
-  const [showSpawn, setShowSpawn] = useState(false);
+
+  const currentAppName = currentProjectId
+    ? projects.find((p) => p.id === currentProjectId)?.name
+    : null;
   const [showModelSettings, setShowModelSettings] = useState(false);
   const [showProjectSwitcher, setShowProjectSwitcher] = useState(false);
   const [showNewApp, setShowNewApp] = useState(false);
@@ -91,43 +86,15 @@ export function MainLayout() {
   const hasConfig = aiConfig !== null;
 
   // Model discovery for toolbar popover
-  const [toolbarModels, setToolbarModels] = useState<ModelInfo[]>([]);
-  const [toolbarModelsLoading, setToolbarModelsLoading] = useState(false);
-  const [toolbarModelsError, setToolbarModelsError] = useState("");
-
-  const fetchToolbarModels = useCallback(async () => {
-    if (!hasConfig) return;
-    setToolbarModelsLoading(true);
-    setToolbarModelsError("");
-
-    try {
-      const params = new URLSearchParams({ provider: currentProvider });
-      if (aiConfig.customEndpoint && (currentProvider === "custom" || currentProvider === "ollama")) {
-        params.set("customEndpoint", aiConfig.customEndpoint);
-      }
-      if (aiConfig.apiKey && currentProvider === "custom") {
-        params.set("apiKey", aiConfig.apiKey);
-      }
-
-      const res = await fetch(`${SIDECAR_BASE}/api/models?${params}`);
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error((errData as any).error || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      setToolbarModels(data.models ?? []);
-    } catch (e: any) {
-      setToolbarModelsError(e.message || "Failed to fetch models");
-    } finally {
-      setToolbarModelsLoading(false);
-    }
-  }, [hasConfig, currentProvider, aiConfig?.customEndpoint, aiConfig?.apiKey]);
+  const { models: toolbarModels, loading: toolbarModelsLoading, error: toolbarModelsError, fetchModels: fetchToolbarModels } = useModels({
+    provider: currentProvider,
+    customEndpoint: aiConfig?.customEndpoint,
+    apiKey: aiConfig?.apiKey,
+  });
 
   // Fetch models when popover opens
   useEffect(() => {
     if (showModelSettings && hasConfig) {
-      // Reset to trigger re-fetch when provider changed
-      setToolbarModels([]);
       fetchToolbarModels();
     }
   }, [showModelSettings, currentProvider, hasConfig, fetchToolbarModels]);
@@ -235,6 +202,12 @@ export function MainLayout() {
                 <>
                   {providerIcons[currentProvider]}
                   <span className="text-xs max-w-[80px] truncate">{currentModel || "未選択"}</span>
+                  {(() => {
+                    const info = toolbarModels.find((m) => m.id === currentModel);
+                    return info?.supportsImageInput ? (
+                      <span className="text-[10px]" title="📷 スクリーンショットレビュー対応">📷</span>
+                    ) : null;
+                  })()}
                 </>
               ) : (
                 <>
@@ -319,8 +292,12 @@ export function MainLayout() {
                                 モデルを選択...
                               </option>
                               {toolbarModels.map((m) => (
-                                <option key={m.id} value={m.id}>
-                                  {m.name}
+                                <option
+                                  key={m.id}
+                                  value={m.id}
+                                  title={m.supportsImageInput ? '📷 画像レビュー対応' : 'テキストベースの画面確認のみ'}
+                                >
+                                  {m.supportsImageInput ? '📷 ' : '   '}{m.name}
                                 </option>
                               ))}
                               <option disabled>──────────</option>
@@ -376,16 +353,6 @@ export function MainLayout() {
             )}
           </div>
 
-          <Button
-            variant="ghost"
-            size="sm"
-            className="h-7 px-2"
-            onClick={() => setShowSpawn(true)}
-          >
-            <LayoutPanelTop className="mr-1 h-4 w-4" />
-            <span className="text-xs">Spawn .exe</span>
-          </Button>
-
           <Tooltip content={layoutLabels[layoutMode]}>
             <Button
               variant="ghost"
@@ -400,8 +367,11 @@ export function MainLayout() {
       </div>
 
       {/* Main Content */}
-      <div className="flex-1 overflow-hidden">
-        <ResizablePanelGroup direction="horizontal">
+      <div className="flex-1 overflow-hidden relative">
+        <ResizablePanelGroup
+          direction="horizontal"
+          className={appLoading ? "opacity-20 pointer-events-none select-none" : ""}
+        >
           <ResizablePanel
             defaultSize={18}
             minSize={0}
@@ -410,21 +380,54 @@ export function MainLayout() {
             <FileTreePanel />
           </ResizablePanel>
           <ResizableHandle className={layoutMode === "2-pane" ? "hidden" : ""} />
-          <ResizablePanel defaultSize={37} minSize={20}>
+          <ResizablePanel
+            defaultSize={37}
+            minSize={previewMaximized ? 0 : 20}
+            className={previewMaximized ? "hidden" : ""}
+          >
             <ChatPanel />
           </ResizablePanel>
-          <ResizableHandle />
+          <ResizableHandle className={previewMaximized ? "hidden" : ""} />
           <ResizablePanel defaultSize={45} minSize={25}>
             <PreviewPanel />
           </ResizablePanel>
         </ResizablePanelGroup>
+
+        {/* App loading overlay — shown when creating a new app */}
+        {appLoading && (
+          <div className="absolute inset-0 z-30 flex items-center justify-center bg-background/90 backdrop-blur-sm">
+            <div className="flex flex-col items-center gap-5 max-w-sm text-center px-6">
+              <div className="relative">
+                <Loader2 className="h-10 w-10 animate-spin text-primary" />
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="h-3 w-3 rounded-full bg-primary/20 animate-ping" />
+                </div>
+              </div>
+              <div>
+                <p className="text-base font-semibold">新しいアプリを準備しています</p>
+                <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
+                  {currentAppName ? (
+                    <>「{currentAppName}」のテンプレートを展開し、<br />開発サーバーを起動しています</>
+                  ) : (
+                    <>テンプレートを展開し、開発サーバーを起動しています</>
+                  )}
+                </p>
+                <p className="text-xs text-muted-foreground/60 mt-3">
+                  この画面は準備が完了すると自動で消えます
+                </p>
+              </div>
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground/50">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:0ms]" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:150ms]" />
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-primary/40 animate-bounce [animation-delay:300ms]" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Status Bar */}
       <StatusBar />
-
-      {/* Spawn Dialog */}
-      <SpawnDialog open={showSpawn} onOpenChange={setShowSpawn} />
 
       {/* New App Dialog */}
       <NewAppDialog open={showNewApp} onOpenChange={setShowNewApp} />

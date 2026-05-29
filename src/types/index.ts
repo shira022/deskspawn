@@ -12,6 +12,8 @@ export interface AiConfig {
   apiVersion?: string;
   temperature: number;
   maxTokens?: number;
+  /** エージェントの最大ステップ数（動的ステップ管理のベース値として使用） */
+  maxSteps?: number;
 }
 
 // ── Model Discovery ─────────────────────────────────────────────────────────
@@ -22,6 +24,7 @@ export interface ModelInfo {
   supportsTemperature: boolean;
   supportsReasoning: boolean;
   supportsToolCall: boolean;
+  supportsImageInput: boolean;
   contextLimit: number;
   maxOutput: number;
 }
@@ -125,7 +128,7 @@ export interface ShellResult {
   exitCode: number;
 }
 
-export type ErrorType = "typescript" | "sqlx" | "rust" | "vite" | "tauri";
+export type ErrorType = "typescript" | "vite";
 
 export interface ErrorInfo {
   type: ErrorType;
@@ -140,6 +143,23 @@ export interface ErrorInfo {
 
 export type MessageRole = "user" | "assistant" | "system";
 
+export interface StepLogEntry {
+  /** ステップ番号 (1-based) */
+  step: number;
+  /** 呼び出されたツール名 */
+  toolName: string;
+  /** ツールに渡された引数 */
+  args: Record<string, unknown>;
+  /** ツール実行結果の要約 */
+  result?: string;
+  /** ツール実行結果の詳細データ */
+  detail?: Record<string, unknown>;
+  /** 実行ステータス */
+  status: "running" | "success" | "error";
+  /** ツール表示用のアイコン/ラベル */
+  toolLabel?: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -147,6 +167,9 @@ export interface ChatMessage {
   timestamp: number;
   artifacts?: Artifact[];
   toolResults?: Record<string, unknown>;
+  checkpointId?: string;
+  /** AIエージェントの各ステップ実行ログ（折りたたみ表示用） */
+  stepLogs?: StepLogEntry[];
 }
 
 // ============================================================
@@ -162,25 +185,22 @@ export interface FileNode {
 }
 
 // ============================================================
-// Spawn Configuration Types
-// ============================================================
-
-export interface SpawnConfig {
-  appName: string;
-  version: string;
-  windowTitle: string;
-  iconPath?: string;
-}
-
-// ============================================================
 // Project Types
 // ============================================================
+
+export type AppType = "web";
+export type StorageType = "indexeddb";
 
 export interface ProjectMeta {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
+}
+
+export interface CheckpointInfo {
+  id: string;
+  createdAt: Date;
 }
 
 // ============================================================
@@ -204,6 +224,5 @@ export interface AppState {
   agentMaxSteps: number;
   selectedFile: string | null;
   errors: ErrorInfo[];
-  isDarkMode: boolean;
   vitePort: number;
 }

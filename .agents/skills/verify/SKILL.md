@@ -1,5 +1,8 @@
 # verify — Local Verification Pipeline
 
+> **Context Note**: These skills govern DeskSpawn (the tool) development — a Tauri v2 + React + TypeScript app. They **do not** apply to the generated web apps (which are pure Vite + React + TypeScript, no Rust/Tauri). Code generation for user apps is handled by the sidecar AI system prompt, not these skills.
+>
+
 ## Purpose
 
 Run a comprehensive local verification pipeline to ensure code quality before review and merge. Catch issues early and produce an actionable, machine-readable report.

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -7,6 +7,7 @@ import { Select } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ProviderKind, AiConfig, ModelInfo } from "@/types";
+import { useModels } from "@/hooks/useModels";
 import {
   Sparkles,
   ChevronRight,
@@ -17,8 +18,6 @@ import {
   Loader2,
   AlertCircle,
 } from "lucide-react";
-
-const SIDECAR_BASE = "http://localhost:3001";
 
 const providers: { id: ProviderKind; name: string; icon: React.ReactNode; description: string }[] = [
   { id: "openai", name: "OpenAI", icon: <Sparkles className="h-5 w-5" />, description: "GPT" },
@@ -40,54 +39,28 @@ export function AiConfigScreen() {
   const [maxTokens, setMaxTokens] = useState("");
   const [error, setError] = useState("");
 
-  // Model discovery state
-  const [models, setModels] = useState<ModelInfo[]>([]);
-  const [modelsLoading, setModelsLoading] = useState(false);
-  const [modelsError, setModelsError] = useState("");
+  // Model discovery
+  const { models, loading: modelsLoading, error: modelsError, fetchModels } = useModels({
+    provider,
+    customEndpoint,
+    apiKey,
+  });
   const [selectedModelInfo, setSelectedModelInfo] = useState<ModelInfo | null>(null);
 
   const showApiKey = providerNeedsApiKey(provider);
 
-  // ── Fetch models when provider or custom endpoint changes ──────────────────
-
-  const fetchModels = useCallback(async () => {
-    setModelsLoading(true);
-    setModelsError("");
-    setModels([]);
-    setSelectedModelInfo(null);
-
-    try {
-      const params = new URLSearchParams({ provider });
-      if (customEndpoint && (provider === "custom" || provider === "ollama")) {
-        params.set("customEndpoint", customEndpoint);
-      }
-      if (apiKey && provider === "custom") {
-        params.set("apiKey", apiKey);
-      }
-
-      const res = await fetch(`${SIDECAR_BASE}/api/models?${params}`);
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error((errData as any).error || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      const fetched: ModelInfo[] = data.models ?? [];
-      setModels(fetched);
-
-      if (fetched.length > 0) {
-        setModel(fetched[0].id);
-        setSelectedModelInfo(fetched[0]);
-      }
-    } catch (e: any) {
-      setModelsError(e.message || "モデル一覧の取得に失敗しました");
-    } finally {
-      setModelsLoading(false);
-    }
-  }, [provider, customEndpoint, apiKey]);
-
+  // Fetch models when provider or custom endpoint changes
   useEffect(() => {
     fetchModels();
   }, [fetchModels]);
+
+  // Auto-select first model when list loads
+  useEffect(() => {
+    if (models.length > 0 && !model) {
+      setModel(models[0].id);
+      setSelectedModelInfo(models[0]);
+    }
+  }, [models, model]);
 
   // Update selected model info when model changes
   useEffect(() => {
@@ -223,8 +196,12 @@ export function AiConfigScreen() {
               ) : hasModels ? (
                 <Select value={model} onChange={handleModelChange}>
                   {models.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.name}
+                    <option
+                      key={m.id}
+                      value={m.id}
+                      title={m.supportsImageInput ? '📷 画像レビュー対応' : 'テキストベースの画面確認のみ'}
+                    >
+                      {m.supportsImageInput ? '📷 ' : '   '}{m.name}
                     </option>
                   ))}
                   <option disabled>──────────</option>

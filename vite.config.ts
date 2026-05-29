@@ -21,7 +21,9 @@ export default defineConfig({
       ? { protocol: "ws", host, port: 1421 }
       : undefined,
     watch: {
-      ignored: ["**/src-tauri/**"],
+      // Don't watch project workspaces — they have their own dev server.
+      // Also ignore .deskspawn checkpoint internals to prevent unnecessary reloads.
+      ignored: ["**/src-tauri/**", "**/projects/**", "**/.deskspawn/**"],
     },
   },
   envPrefix: ["VITE_", "TAURI_ENV_"],

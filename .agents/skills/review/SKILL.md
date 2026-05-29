@@ -1,5 +1,8 @@
 # review — Multi-Perspective Code Review
 
+> **Context Note**: These skills govern DeskSpawn (the tool) development — a Tauri v2 + React + TypeScript app. They **do not** apply to the generated web apps (which are pure Vite + React + TypeScript, no Rust/Tauri). Code generation for user apps is handled by the sidecar AI system prompt, not these skills.
+>
+
 ## Purpose
 
 Conduct a thorough, multi-dimensional code review in a separate session. Evaluate code from security, architecture, performance, correctness, and UI/UX perspectives. Produce an actionable, structured review report.

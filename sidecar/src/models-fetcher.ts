@@ -78,12 +78,16 @@ const PROVIDER_TO_MODELSDEV: Record<string, string> = {
 };
 
 function convertModelsDevModel(raw: ModelsDevModel): ModelInfo {
+  const inputModalities = raw.modalities?.input ?? [];
+  const supportsImageInput = inputModalities.includes('image');
+
   return {
     id: raw.id,
     name: raw.name,
     supportsTemperature: raw.temperature,
     supportsReasoning: raw.reasoning,
     supportsToolCall: raw.tool_call,
+    supportsImageInput,
     contextLimit: raw.limit.context,
     maxOutput: raw.limit.output,
   };
@@ -164,6 +168,7 @@ async function fetchOllamaModels(endpoint: string): Promise<ModelInfo[]> {
     supportsTemperature: true,
     supportsReasoning: false,
     supportsToolCall: true,
+    supportsImageInput: false,
     contextLimit: 8192,
     maxOutput: 4096,
   }));
@@ -203,6 +208,7 @@ async function fetchCustomModels(
     supportsTemperature: true,
     supportsReasoning: false,
     supportsToolCall: true,
+    supportsImageInput: false,
     contextLimit: 8192,
     maxOutput: 4096,
   }));

@@ -3,7 +3,6 @@ use std::fs;
 use std::path::Path;
 
 use super::template::{generate_crud_files, GeneratedFiles};
-use super::security;
 
 const STAGING_DIR: &str = ".deskspawn/staging";
 
@@ -133,7 +132,7 @@ pub fn has_staged_files(workspace: &Path) -> bool {
 
 /// Write generated files from the template engine to the staging directory.
 fn write_generated_files(
-    _workspace: &Path,
+    workspace: &Path,
     staging_root: &Path,
     generated: &GeneratedFiles,
 ) -> Result<(), String> {
@@ -155,9 +154,6 @@ fn write_generated_files(
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Failed to create directory: {}", e))?;
         }
-        // Security check the generated Rust code
-        security::check_rust_security(&rust.content)
-            .map_err(|violations| format!("Generated Rust code has security violations: {:?}", violations))?;
         fs::write(&dest, &rust.content)
             .map_err(|e| format!("Failed to write Rust file: {}", e))?;
     }
@@ -171,6 +167,48 @@ fn write_generated_files(
         }
         fs::write(&dest, &ts.content)
             .map_err(|e| format!("Failed to write TypeScript hooks file: {}", e))?;
+    }
+
+    // ── Apply registration patches against existing workspace files ─────
+    for patch in &generated.patches {
+        let relative_path = Path::new(&patch.file_path);
+        // Read from the workspace (real file) since the staging won't have it
+        let source_path = workspace.join(relative_path);
+        if !source_path.exists() {
+            log::warn!(
+                "Patch target '{}' not found in workspace; skipping.",
+                patch.file_path
+            );
+            continue;
+        }
+
+        let content = fs::read_to_string(&source_path)
+            .map_err(|e| format!("Failed to read '{}' for patching: {}", patch.file_path, e))?;
+
+        if !content.contains(&patch.search) {
+            log::warn!(
+                "Search string not found in '{}'; skipping patch.",
+                patch.file_path
+            );
+            continue;
+        }
+
+        let new_content = content.replacen(&patch.search, &patch.content, 1);
+
+        // Write patched file to staging (it will be copied to workspace later)
+        let dest = staging_root.join(relative_path);
+        if let Some(parent) = dest.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory for patch: {}", e))?;
+        }
+        fs::write(&dest, &new_content)
+            .map_err(|e| format!("Failed to write patched '{}': {}", patch.file_path, e))?;
+
+        log::info!(
+            "Applied registration patch to '{}' (replaced marker '{}')",
+            patch.file_path,
+            patch.search
+        );
     }
 
     Ok(())
