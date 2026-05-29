@@ -13,6 +13,9 @@ src-tauri/gen/
 *.tsbuildinfo
 sidecar/dist/
 
+# Agent artifacts
+.agents/artifacts/
+
 # Runtime data
 projects/
 workspace/
