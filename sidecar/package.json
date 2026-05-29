@@ -18,7 +18,7 @@
     "pixelmatch": "^6.0.0",
     "puppeteer-core": "^24.0.0",
     "sharp": "^0.34.5",
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
