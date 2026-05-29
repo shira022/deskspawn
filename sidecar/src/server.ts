@@ -8,7 +8,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import { ChildProcess, spawn, execSync } from 'child_process';
+import { ChildProcess, spawn, execSync, execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { generateText } from 'ai';
 import { getModel } from './providers.js';
@@ -562,7 +562,7 @@ function startWorkspaceDevServer(dir: string) {
 function installDeps(dir: string): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log(`[projects] Installing dependencies in ${dir}...`);
-    const child = spawn('npm', ['install'], {
+    const child = spawn('npm', ['install', '--ignore-scripts'], {
       cwd: dir,
       stdio: 'pipe',
       shell: true,
@@ -1462,9 +1462,9 @@ app.get('/projects/:id/export', (req, res) => {
       exportedAt: new Date().toISOString(),
     }, null, 2));
 
-    // Create zip archive
-    const zipName = `${projMeta.name.toLowerCase().replace(/\s+/g, '-')}.deskspawn`;
-    execSync(`cd "${exportDir}" && zip -r "${path.join(exportDir, zipName)}" .`, { timeout: 30000 });
+    // Create zip archive (use execFileSync to avoid shell injection from project name)
+    const zipName = `${projMeta.name.toLowerCase().replace(/[^a-z0-9-]/g, '')}.deskspawn`;
+    execFileSync('zip', ['-r', zipName, '.'], { cwd: exportDir, timeout: 30000 });
 
     // Send the zip file
     const zipPath = path.join(exportDir, zipName);
@@ -1492,8 +1492,8 @@ app.post('/projects/import', async (req, res) => {
     const zipPath = path.join(tempDir, 'import.deskspawn');
     fs.writeFileSync(zipPath, Buffer.from(fileBase64, 'base64'));
 
-    // Extract zip
-    execSync(`unzip -o "${zipPath}" -d "${tempDir}"`, { timeout: 10000 });
+    // Extract zip (execFileSync avoids shell injection from file paths)
+    execFileSync('unzip', ['-o', zipPath, '-d', tempDir], { timeout: 10000 });
 
     // Read metadata
     const metaPath = path.join(tempDir, 'deskspawn.json');
