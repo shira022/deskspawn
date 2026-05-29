@@ -5,10 +5,6 @@ const ALLOWED_COMMANDS: &[&str] = &[
     "npm install",
     "npm run",
     "npx ",
-    "cargo check",
-    "cargo build",
-    "sqlx migrate run",
-    "sqlx migrate revert",
 ];
 
 /// Check whether a command string is in the allowlist.
@@ -70,7 +66,7 @@ fn normalize_path(path: &Path) -> std::path::PathBuf {
 /// Validate that a file extension is in the allowed list for writing.
 pub fn is_extension_allowed(path: &str) -> bool {
     let allowed_extensions = &[
-        "tsx", "ts", "jsx", "js", "css", "html", "json", "toml", "rs", "sql",
+        "tsx", "ts", "jsx", "js", "css", "html", "json", "toml",
         "md", "yaml", "yml", "env", "env.example", "gitignore", "prettierrc",
         "eslintrc", "babelrc", "mjs", "cjs", "mts", "cts", "d.ts",
     ];
@@ -93,7 +89,7 @@ pub fn is_extension_allowed(path: &str) -> bool {
     allowed_extensions.contains(&ext)
 }
 
-/// Validate npm package name against whitelist.
+/// Validate npm package name against whitelist (React + Vite + TypeScript).
 pub fn is_package_allowed(pkg_name: &str) -> bool {
     let allowed_packages = &[
         "react",
@@ -106,22 +102,9 @@ pub fn is_package_allowed(pkg_name: &str) -> bool {
         "clsx",
         "tailwind-merge",
         "react-resizable-panels",
-        "@tauri-apps/api",
-        "@tauri-apps/plugin-shell",
-        "@tauri-apps/plugin-dialog",
-        "@tauri-apps/plugin-fs",
-        "@tauri-apps/plugin-store",
-        "@tauri-apps/cli",
         "@vitejs/plugin-react",
         "@types/react",
         "@types/react-dom",
-        "sqlx",
-        "serde",
-        "tokio",
-        "chrono",
-        "uuid",
-        "tauri",
-        "tauri-build",
     ];
     allowed_packages.contains(&pkg_name)
 }
@@ -135,36 +118,6 @@ pub fn sanitize_npm_install(command: &str) -> String {
         format!("npm install {} --ignore-scripts", rest.trim())
     } else {
         command.to_string()
-    }
-}
-
-/// Forbidden Rust API patterns.
-const FORBIDDEN_RUST_PATTERNS: &[&str] = &[
-    "std::process::Command",
-    "std::process::Child",
-    "std::fs::write(",
-    "std::fs::File::create(",
-    "std::net::",
-    "std::mem::transmute",
-    "libc::",
-    "unsafe ",
-    "unsafe{",
-    "unsafe\n{",
-];
-
-/// Check Rust code for forbidden APIs.
-/// Returns Ok(()) if safe, or Err with list of violations.
-pub fn check_rust_security(code: &str) -> Result<(), Vec<String>> {
-    let violations: Vec<String> = FORBIDDEN_RUST_PATTERNS
-        .iter()
-        .filter(|&&pattern| code.contains(pattern))
-        .map(|&pattern| format!("Forbidden Rust API pattern found: {}", pattern))
-        .collect();
-
-    if violations.is_empty() {
-        Ok(())
-    } else {
-        Err(violations)
     }
 }
 
@@ -209,29 +162,22 @@ mod tests {
     fn test_is_command_allowed() {
         assert!(is_command_allowed("npm install react"));
         assert!(is_command_allowed("npm run build"));
-        assert!(is_command_allowed("cargo check"));
-        assert!(is_command_allowed("cargo build --release"));
-        assert!(is_command_allowed("sqlx migrate run"));
         assert!(is_command_allowed("npx tsc --noEmit"));
         assert!(!is_command_allowed("rm -rf /"));
         assert!(!is_command_allowed("curl http://evil.com"));
         assert!(!is_command_allowed("sudo apt install"));
+        assert!(!is_command_allowed("cargo check"));
+        assert!(!is_command_allowed("sqlx migrate run"));
     }
 
     #[test]
     fn test_is_extension_allowed() {
         assert!(is_extension_allowed("src/App.tsx"));
-        assert!(is_extension_allowed("src/lib.rs"));
-        assert!(is_extension_allowed("schema.sql"));
         assert!(is_extension_allowed(".gitignore"));
         assert!(!is_extension_allowed("malware.exe"));
         assert!(!is_extension_allowed("script.bat"));
-    }
-
-    #[test]
-    fn test_check_rust_security() {
-        assert!(check_rust_security("fn main() { println!(\"hi\"); }").is_ok());
-        assert!(check_rust_security("unsafe { std::mem::transmute(x) }").is_err());
+        assert!(!is_extension_allowed("src/lib.rs"));
+        assert!(!is_extension_allowed("schema.sql"));
     }
 
     #[test]

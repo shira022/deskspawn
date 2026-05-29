@@ -1,5 +1,8 @@
 # merge — GitFlow Merge & Branch Management
 
+> **Context Note**: These skills govern DeskSpawn (the tool) development — a Tauri v2 + React + TypeScript app. They **do not** apply to the generated web apps (which are pure Vite + React + TypeScript, no Rust/Tauri). Code generation for user apps is handled by the sidecar AI system prompt, not these skills.
+>
+
 ## Purpose
 
 Execute GitFlow merge operations: feature branches into `develop` (autonomous), and `develop` into `main` (gated by full verification). Manage branch lifecycle and cleanup.

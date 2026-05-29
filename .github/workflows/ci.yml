@@ -31,6 +31,22 @@ jobs:
       - run: npm ci
       - run: npx tsc --noEmit
 
+  sidecar-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: sidecar/package-lock.json
+
+      - run: npm ci
+        working-directory: sidecar
+      - run: npx tsc --noEmit
+        working-directory: sidecar
+
   frontend-test:
     runs-on: ubuntu-latest
     steps:

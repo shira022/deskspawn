@@ -1,7 +1,9 @@
-import { generateText, stepCountIs, type LanguageModel, type ToolSet } from 'ai';
+import { generateText, type LanguageModel, type ToolSet } from 'ai';
 import { getModel } from './providers.js';
 import { tools } from './tools.js';
 import { buildSystemPrompt } from './system-prompt.js';
+import { StepManager } from './step-limits.js';
+import { withRateLimitRetry } from './retry.js';
 import type {
   ChatRequest,
   ChatMessage,
@@ -75,44 +77,80 @@ export async function handleChat(
   }
 
   const systemPrompt = buildSystemPrompt();
-  const conversationMessages = request.messages.map(toCoreMessage);
-
-  // Prepend the system prompt as a system message at the front
-  const messages = [
-    { role: 'system' as const, content: systemPrompt },
-    ...conversationMessages,
-  ];
+  const conversationMessages = (request.messages ?? []).map(toCoreMessage);
 
   try {
-    const result = await generateText({
-      model,
-      messages: messages as Parameters<typeof generateText>[0]['messages'],
-      tools: tools as unknown as ToolSet,
-      stopWhen: stepCountIs(request.maxSteps ?? 20),
-      temperature: request.config.temperature ?? 0.2,
-      maxOutputTokens: request.config.maxTokens ?? 4096,
-      onStepFinish: (event) => {
-        if (event.toolCalls && event.toolCalls.length > 0) {
-          for (const call of event.toolCalls) {
-            send({
-              type: 'tool_call',
-              id: request.id,
-              toolCallId: call.toolCallId,
-              toolName: call.toolName,
-              args: call.args as Record<string, unknown>,
-            });
+    const stepManager = new StepManager(request.maxSteps ?? 15);
+    const result = await withRateLimitRetry(
+      () => generateText({
+        model,
+        system: systemPrompt,
+        messages: conversationMessages as any,
+        tools: tools as unknown as ToolSet,
+        stopWhen: (opts) => stepManager.shouldStop(opts),
+        temperature: request.config.temperature ?? 0.2,
+        maxOutputTokens: request.config.maxTokens ?? 16384,
+        onStepFinish: (event) => {
+          const toolCalls = event.toolCalls || [];
+          stepManager.recordStep(
+            toolCalls.map((tc: any) => ({
+              toolName: tc.toolName,
+              args: (tc.args ?? tc.input ?? {}) as Record<string, unknown>,
+            })),
+          );
+
+          if (toolCalls.length > 0) {
+            for (const call of toolCalls) {
+              const rawArgs = call.input as Record<string, unknown>;
+              // apply_artifact now passes structured {id, title, actions} instead of
+              // {json: "..."}. Convert to the format Rust's harness.rs expects.
+              const args = call.toolName === 'apply_artifact'
+                ? { json: JSON.stringify({ name: rawArgs.id, description: rawArgs.title, actions: rawArgs.actions }) }
+                : rawArgs;
+              send({
+                type: 'tool_call',
+                id: request.id,
+                toolCallId: call.toolCallId,
+                toolName: call.toolName,
+                args,
+              });
+            }
           }
+        },
+      }),
+    );
+
+    // 停止理由の判定（上限 / ループ検出 / 正常終了）
+    const finalState = stepManager.getFinalState();
+    const { step: _stepCount, maxSteps: effectiveMaxSteps, hitLimit, stoppedReason } = finalState;
+
+    let finalText = result.text;
+    if (!finalText || finalText.trim().length === 0) {
+      // Try to provide a contextual suggestion based on agent behaviour
+      const suggestion = stepManager.getSuggestion();
+
+      if (hitLimit) {
+        if (stoppedReason === 'loop_detected') {
+          finalText = suggestion
+            ? `⚠️ 処理がループしているため終了しました。${suggestion}`
+            : `⚠️ 同じ処理を繰り返していると判断されたため、生成を終了しました。「続けて」と送信することで続きの生成を試みます。`;
+        } else {
+          finalText = suggestion
+            ? `⚠️ 最大ステップ数（${effectiveMaxSteps}）に達しました。${suggestion}`
+            : `⚠️ 最大ステップ数（${effectiveMaxSteps}）に達したため、生成を終了しました。「続けて」と送信することで続きの生成を試みます。`;
         }
-      },
-    });
+      } else {
+        finalText = '⚠️ 応答の生成に失敗しました。もう一度お試しください。';
+      }
+    }
 
     send({
       type: 'text',
       id: request.id,
-      text: result.text,
+      text: finalText,
       usage: {
-        inputTokens: result.usage?.promptTokens ?? 0,
-        outputTokens: result.usage?.completionTokens ?? 0,
+        inputTokens: result.usage?.inputTokens ?? 0,
+        outputTokens: result.usage?.outputTokens ?? 0,
       },
     });
   } catch (error) {
