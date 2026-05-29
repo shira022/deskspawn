@@ -15,7 +15,16 @@
     "dialog:allow-save",
     "dialog:allow-message",
     "dialog:allow-ask",
-    "fs:default",
+    {
+      "identifier": "fs:scope",
+      "allow": [
+        { "path": "$APPDATA/**" },
+        { "path": "$RESOURCE/**" },
+        { "path": "$HOME/DeskSpawn/**" },
+        { "path": "$HOME/Desktop/**" },
+        { "path": "$HOME/Documents/**" }
+      ]
+    },
     "fs:allow-read",
     "fs:allow-write",
     "fs:allow-exists",

@@ -34,7 +34,7 @@ pub fn read_file(
     // Security: only allow text file extensions
     if !security::is_extension_allowed(&path) {
         return Err(format!(
-            "File extension not allowed for reading: {}. Allowed: .tsx, .ts, .jsx, .js, .css, .html, .json, .toml, .rs, .sql, .md, .yaml, .yml",
+            "File extension not allowed for reading: {}. Allowed: .tsx, .ts, .jsx, .js, .css, .html, .json, .toml, .md, .yaml, .yml",
             Path::new(&path).extension().and_then(|e| e.to_str()).unwrap_or("")
         ));
     }
@@ -388,7 +388,7 @@ fn execute_shell_action(
     // Validate command against allowlist
     if !security::is_command_allowed(command) {
         return Err(format!(
-            "Command not in allowlist: {}. Allowed: npm install/run, cargo check/build, sqlx migrate run/revert, npx ...",
+            "Command not in allowlist: {}. Allowed: npm install/run, npx ...",
             command
         ));
     }
@@ -480,17 +480,11 @@ fn execute_with_timeout(
 fn detect_auto_command(file_path: &str) -> Option<String> {
     let path = Path::new(file_path);
 
-    match path.extension().and_then(|e| e.to_str()) {
-        Some("sql") => Some("sqlx migrate run".to_string()),
-        Some("rs") => Some("cargo check".to_string()),
-        _ => {
-            // Check if it's package.json
-            if path.file_name().and_then(|n| n.to_str()) == Some("package.json") {
-                Some("npm install".to_string())
-            } else {
-                None
-            }
-        }
+    // Trigger npm install on package.json changes
+    if path.file_name().and_then(|n| n.to_str()) == Some("package.json") {
+        Some("npm install".to_string())
+    } else {
+        None
     }
 }
 
@@ -551,13 +545,9 @@ pub fn initialize_workspace(
             "Template directory {:?} not found. Creating empty workspace.",
             template_dir
         );
-        // Create minimal structure
+        // Create minimal structure for React + TypeScript projects
         std::fs::create_dir_all(workspace.join("src"))
             .map_err(|e| format!("Failed to create src directory: {}", e))?;
-        std::fs::create_dir_all(workspace.join("src-tauri/src"))
-            .map_err(|e| format!("Failed to create src-tauri/src directory: {}", e))?;
-        std::fs::create_dir_all(workspace.join("migrations"))
-            .map_err(|e| format!("Failed to create migrations directory: {}", e))?;
     }
 
     log::info!("Workspace initialized at {:?}", workspace);
