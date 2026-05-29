@@ -10,46 +10,24 @@ import {
   Loader2,
   ExternalLink,
   MonitorCheck,
-  MonitorX,
-  Monitor,
   PackageOpen,
-  Wrench,
-  Cpu,
   Download,
   ArrowRight,
   AlertTriangle,
   Store,
 } from "lucide-react";
 import type { EnvCheckItem, WingetStatus, SetupProgress } from "@/types";
+import { callBackend } from "@/lib/backend";
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
 
 const envCheckIcons: Record<string, React.ReactNode> = {
   "Node.js": <PackageOpen className="h-4 w-4" />,
-  Rust: <Wrench className="h-4 w-4" />,
-  Cargo: <Wrench className="h-4 w-4" />,
-  "VS Build Tools": <Monitor className="h-4 w-4" />,
-  WebView2: <Cpu className="h-4 w-4" />,
 };
 
 function formatSize(mb: number): string {
   if (mb >= 1000) return `${(mb / 1000).toFixed(1)}GB`;
   return `${mb}MB`;
-}
-
-// ── Tauri API detection ───────────────────────────────────────────────────────
-
-const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI__;
-
-async function getTauriApis() {
-  if (!isTauri) return null;
-  try {
-    const { invoke } = await import("@tauri-apps/api/core");
-    const { listen } = await import("@tauri-apps/api/event");
-    return { invoke, listen };
-  } catch {
-    return null;
-  }
 }
 
 // ── Main Component ────────────────────────────────────────────────────────────
@@ -62,7 +40,6 @@ export function EnvCheckScreen() {
     setPhase,
     allEnvChecksPassed,
     failedEnvChecks,
-    wingetStatus,
     setWingetStatus,
     isWingetAvailable,
     setupProgress,
@@ -80,77 +57,18 @@ export function EnvCheckScreen() {
     let cancelled = false;
 
     async function runChecks() {
-      const tauri = await getTauriApis();
-
-      if (tauri) {
-        // Real Tauri environment — use backend commands
-        try {
-          const results = await tauri.invoke<EnvCheckItem[]>("check_environment");
-          if (!cancelled) setEnvCheckResults(results);
-
-          const winget = await tauri.invoke<WingetStatus>("check_winget");
-          if (!cancelled) setWingetStatus(winget);
-        } catch (err) {
-          console.error("Environment check failed:", err);
-        }
-      } else {
-        // Browser dev mode — mock checks
-        const isWindows =
-          typeof navigator !== "undefined" &&
-          navigator.platform.toLowerCase().includes("win");
-
-        const mockResults: EnvCheckItem[] = [
-          {
-            name: "Node.js",
-            description: "Runtime >= 20 LTS",
-            checkCommand: "node --version",
-            status: "ok",
-            downloadUrl: "https://nodejs.org/",
-            wingetPackage: "OpenJS.NodeJS.LTS",
-            sizeMb: 30,
-          },
-          {
-            name: "Rust",
-            description: "Rust compiler and toolchain",
-            checkCommand: "rustc --version",
-            status: isWindows ? "fail" : "ok",
-            downloadUrl: "https://rustup.rs/",
-            wingetPackage: "Rustlang.Rustup",
-            sizeMb: 400,
-          },
-          {
-            name: "VS Build Tools",
-            description: "MSVC compiler for native compilation",
-            checkCommand: "vswhere",
-            status: isWindows ? "fail" : "ok",
-            downloadUrl:
-              "https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022",
-            wingetPackage: "Microsoft.VisualStudio.2022.BuildTools",
-            sizeMb: 4500,
-          },
-          {
-            name: "WebView2",
-            description: "Required for Tauri WebView",
-            checkCommand: "reg query",
-            status: isWindows ? "fail" : "ok",
-            downloadUrl:
-              "https://developer.microsoft.com/microsoft-edge/webview2/",
-            wingetPackage: "Microsoft.EdgeWebView2Runtime",
-            sizeMb: 120,
-          },
-        ];
-
-        if (!cancelled) {
-          setEnvCheckResults(mockResults);
-          setWingetStatus({
-            available: isWindows,
-            message: isWindows
-              ? "winget is available"
-              : "winget is not available on this platform",
-          });
-        }
+      try {
+        const results = await callBackend<EnvCheckItem[]>("check_environment");
+        if (!cancelled) setEnvCheckResults(results);
+      } catch (err) {
+        console.error("Environment check failed:", err);
       }
-
+      try {
+        const winget = await callBackend<WingetStatus>("check_winget");
+        if (!cancelled) setWingetStatus(winget);
+      } catch (err) {
+        console.error("Winget check failed:", err);
+      }
       if (!cancelled) setCheckingComplete(true);
     }
 
@@ -160,26 +78,23 @@ export function EnvCheckScreen() {
     };
   }, []);
 
-  // ── Listen for winget install progress events ────────────────────────────
+  // ── Listen for install progress events (Tauri Tauri only) ──────────────
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     async function setupListener() {
-      const tauri = await getTauriApis();
-      if (!tauri) return;
+      const hasTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+      if (!hasTauri) return;
+      const { listen } = await import("@tauri-apps/api/event");
 
-      unlisten = await tauri.listen<SetupProgress>(
+      unlisten = await listen<SetupProgress>(
         "env-setup-progress",
         (event) => {
           setSetupProgress(event.payload);
-          // Update env check status when a package completes
           if (event.payload.stage === "complete") {
             const packageToIndex: Record<string, number> = {
               "OpenJS.NodeJS.LTS": 0,
-              "Rustlang.Rustup": 1,
-              "Microsoft.VisualStudio.2022.BuildTools": 2,
-              "Microsoft.EdgeWebView2Runtime": 3,
             };
             const idx = packageToIndex[event.payload.package];
             if (idx !== undefined) {
@@ -199,8 +114,8 @@ export function EnvCheckScreen() {
   // ── Auto-setup logic ─────────────────────────────────────────────────────
 
   const startAutoSetup = useCallback(async () => {
-    const tauri = await getTauriApis();
-    if (!tauri) return;
+    const hasTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
+    if (!hasTauri) return;
 
     setSetupRunning(true);
     setShowSetupModal(false);
@@ -215,7 +130,7 @@ export function EnvCheckScreen() {
       );
 
       try {
-        await tauri.invoke("install_with_winget", {
+        await callBackend("install_with_winget", {
           package: item.wingetPackage,
         });
       } catch (err) {
@@ -226,7 +141,7 @@ export function EnvCheckScreen() {
 
     // Re-check environment after all installs
     try {
-      const results = await tauri.invoke<EnvCheckItem[]>("check_environment");
+      const results = await callBackend<EnvCheckItem[]>("check_environment");
       setEnvCheckResults(results);
     } catch (err) {
       console.error("Re-check failed:", err);
@@ -275,7 +190,7 @@ export function EnvCheckScreen() {
           </div>
           <h1 className="text-2xl font-bold tracking-tight">環境チェック</h1>
           <p className="text-sm text-muted-foreground">
-            Tauri で .exe をビルドするために必要な依存関係を確認します
+            Node.js と npm が利用可能かを確認します
           </p>
         </div>
 
@@ -323,7 +238,7 @@ export function EnvCheckScreen() {
         {/* Check List */}
         <ScrollArea className="max-h-[320px] min-h-[120px] sm:h-[320px]">
           <div className="space-y-3 px-1">
-            {envChecks.map((item, i) => {
+            {envChecks.map((item, _i) => {
               const pkg = item.wingetPackage;
               const progress = pkg ? getPackageProgress(pkg) : undefined;
 
@@ -334,7 +249,7 @@ export function EnvCheckScreen() {
                 >
                   <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-background text-muted-foreground">
                     {envCheckIcons[item.name] ?? (
-                      <MonitorX className="h-4 w-4" />
+                      <PackageOpen className="h-4 w-4" />
                     )}
                   </div>
                   <div className="min-w-0 flex-1">
@@ -470,8 +385,7 @@ export function EnvCheckScreen() {
           </div>
 
           <p className="text-xs text-muted-foreground text-center">
-            ※ 一部の依存関係が不足していてもチャット機能は利用できます。
-            .exe のビルド時に必要になります。
+            Node.js はアプリの開発サーバーと依存関係の管理に必要です。
           </p>
         </div>
       </div>

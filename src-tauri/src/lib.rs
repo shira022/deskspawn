@@ -5,6 +5,7 @@ mod engine;
 mod models;
 
 use commands::harness::AppState;
+use commands::sidecar::SidecarManager;
 use std::path::PathBuf;
 use tauri::Manager;
 
@@ -31,12 +32,33 @@ pub fn run() {
 
             // Store in managed state
             app.manage(AppState {
-                workspace_path,
+                workspace_path: workspace_path.clone(),
                 error_monitor,
             });
 
+            // Start the security HTTP server (Rust-backed file ops for sidecar)
+            let security_port = engine::security_server::start(workspace_path.clone());
+            log::info!("Security server started on port {}", security_port);
+
+            // Initialize and start the sidecar manager (pass security port)
+            let sidecar_manager = SidecarManager::new(workspace_path.clone(), security_port);
+            if let Err(e) = sidecar_manager.start() {
+                log::warn!("Failed to start sidecar on launch: {}", e);
+            } else {
+                log::info!("Sidecar started successfully.");
+            }
+            app.manage(sidecar_manager);
+
             log::info!("DeskSpawn backend ready.");
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if let tauri::WindowEvent::Destroyed = event {
+                // SidecarManager's Drop impl will clean up the child process
+                if let Some(sidecar) = window.try_state::<SidecarManager>() {
+                    let _ = sidecar.stop();
+                }
+            }
         })
         .invoke_handler(tauri::generate_handler![
             // Harness commands
@@ -57,6 +79,11 @@ pub fn run() {
             // AI config commands
             commands::ai_config::save_ai_config,
             commands::ai_config::load_ai_config,
+            // Sidecar management commands
+            commands::sidecar::restart_tauri,
+            commands::sidecar::restart_sidecar,
+            commands::sidecar::kill_sidecar,
+            commands::sidecar::sidecar_status,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

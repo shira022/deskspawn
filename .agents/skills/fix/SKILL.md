@@ -1,5 +1,8 @@
 # fix — Review-Driven Fix Implementation
 
+> **Context Note**: These skills govern DeskSpawn (the tool) development — a Tauri v2 + React + TypeScript app. They **do not** apply to the generated web apps (which are pure Vite + React + TypeScript, no Rust/Tauri). Code generation for user apps is handled by the sidecar AI system prompt, not these skills.
+>
+
 ## Purpose
 
 Implement fixes based on review report findings. Execute in a separate session from the review. Loop back through verification and review until all issues are resolved or escalation is triggered.

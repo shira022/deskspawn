@@ -1,6 +1,8 @@
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Button } from "@/components/ui/button";
 import {
   Loader2,
   Bot,
@@ -8,11 +10,73 @@ import {
   AlertCircle,
   Wifi,
   WifiOff,
+  RotateCw,
+  RefreshCw,
+  ChevronsUpDown,
 } from "lucide-react";
+import { callBackend } from "@/lib/backend";
+import { SIDECAR_HEALTH_URL } from "@/lib/constants";
 
 export function StatusBar() {
   const { agentStatus, agentStepCount, agentMaxSteps, errors, vitePort } =
     useAppStore();
+
+  const [sidecarOnline, setSidecarOnline] = useState(false);
+  const [restarting, setRestarting] = useState(false);
+  const [tauriRestarting, setTauriRestarting] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Poll sidecar health
+  useEffect(() => {
+    const check = async () => {
+      try {
+        const res = await fetch(SIDECAR_HEALTH_URL, { signal: AbortSignal.timeout(2000) });
+        setSidecarOnline(res.ok);
+      } catch {
+        setSidecarOnline(false);
+      }
+    };
+    check();
+    const interval = setInterval(check, 5000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // Close menu on outside click
+  useEffect(() => {
+    if (!menuOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        setMenuOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [menuOpen]);
+
+  const handleRestart = useCallback(async () => {
+    setMenuOpen(false);
+    setRestarting(true);
+    try {
+      await callBackend("restart_sidecar");
+      await new Promise((r) => setTimeout(r, 2000));
+    } catch (e) {
+      console.error("Failed to restart sidecar:", e);
+    } finally {
+      setRestarting(false);
+    }
+  }, []);
+
+  const handleTauriRestart = useCallback(async () => {
+    setMenuOpen(false);
+    setTauriRestarting(true);
+    try {
+      await callBackend("restart_tauri");
+    } catch (e) {
+      console.error("Failed to restart Tauri:", e);
+      setTauriRestarting(false);
+    }
+  }, []);
 
   const statusConfig = {
     idle: { label: "待機中", icon: <Bot className="h-3 w-3" />, variant: "outline" as const },
@@ -22,6 +86,8 @@ export function StatusBar() {
   };
 
   const s = statusConfig[agentStatus];
+
+  const isRestarting = restarting || tauriRestarting;
 
   return (
     <div className="flex h-7 items-center justify-between border-t bg-muted/20 px-3 text-xs text-muted-foreground">
@@ -46,6 +112,51 @@ export function StatusBar() {
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Sidecar status & restart dropdown */}
+        <div ref={menuRef} className="relative flex items-center gap-1">
+          {sidecarOnline
+            ? <Wifi className="h-3 w-3 text-success" />
+            : <WifiOff className="h-3 w-3 text-destructive" />
+          }
+          <span className={sidecarOnline ? "" : "text-destructive"}>
+            Sidecar
+          </span>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-4 w-4"
+            onClick={() => setMenuOpen((v) => !v)}
+            disabled={isRestarting}
+            title="再起動オプション"
+          >
+            {restarting
+              ? <RotateCw className="h-3 w-3 animate-spin" />
+              : tauriRestarting
+                ? <RefreshCw className="h-3 w-3 animate-spin" />
+                : <ChevronsUpDown className="h-3 w-3" />
+            }
+          </Button>
+
+          {menuOpen && (
+            <div className="absolute bottom-full right-0 mb-1 z-50 w-44 rounded-md border bg-popover py-1 shadow-md">
+              <button
+                onClick={handleRestart}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent"
+              >
+                <RotateCw className="h-3 w-3 shrink-0" />
+                <span>Sidecar を再起動</span>
+              </button>
+              <button
+                onClick={handleTauriRestart}
+                className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent"
+              >
+                <RefreshCw className="h-3 w-3 shrink-0" />
+                <span>Tauri を再起動</span>
+              </button>
+            </div>
+          )}
+        </div>
+        <Separator orientation="vertical" className="h-3" />
         <div className="flex items-center gap-1">
           <div className="h-1.5 w-1.5 rounded-full bg-success" />
           <span>Vite :{vitePort}</span>

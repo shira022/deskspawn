@@ -13,8 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Sparkles } from "lucide-react";
-
-const SIDECAR_BASE = "http://localhost:3001";
+import { SIDECAR_BASE } from "@/lib/constants";
 
 interface NewAppDialogProps {
   open: boolean;
@@ -36,6 +35,8 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
     setFileTree,
     setSelectedFile,
     setErrors,
+    setProjectSwitching,
+    setAppLoading,
   } = useAppStore();
 
   const handleCreate = async () => {
@@ -47,6 +48,7 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
 
     setCreating(true);
     setError("");
+    setProjectSwitching(true);
 
     try {
       const res = await fetch(`${SIDECAR_BASE}/projects/new`, {
@@ -76,10 +78,15 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
       setSelectedFile(null);
       setErrors([]);
 
+      // Keep projectSwitching true + set appLoading to show preparation overlay
+      setAppLoading(true);
+
       onOpenChange(false);
       setAppName("");
     } catch (e: any) {
       setError(e.message || "アプリの作成に失敗しました");
+      setProjectSwitching(false);
+      setAppLoading(false);
     } finally {
       setCreating(false);
     }
@@ -94,8 +101,7 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
             新しいアプリを作成
           </DialogTitle>
           <DialogDescription>
-            新しいアプリをまっさらな状態から作成します。
-            過去のアプリは履歴からいつでも再開できます。
+            DeskSpawn で新しいアプリをゼロから作成します。
           </DialogDescription>
         </DialogHeader>
 
@@ -112,9 +118,6 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
               }}
               placeholder="例: タスク管理アプリ"
               autoFocus
-              onKeyDown={(e) => {
-                if (e.key === "Enter") handleCreate();
-              }}
             />
             {error && (
               <p className="text-xs text-destructive">{error}</p>
@@ -123,9 +126,10 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
 
           <div className="rounded-lg border bg-muted/30 p-3">
             <p className="text-xs text-muted-foreground space-y-1">
-              <span>• 新しいチャットセッションが開始されます</span><br />
-              <span>• React + Vite + Tailwind CSS のテンプレートが使用されます</span><br />
-              <span>• 作成後すぐにチャットでアプリの構築を開始できます</span>
+              <span>• React + Vite + Tailwind CSS のテンプレートを使用</span><br />
+              <span>• データは IndexedDB（ブラウザ内蔵DB）に自動保存</span><br />
+              <span>• 変更は自動でバックアップされます</span><br />
+              <span>• 他のユーザーとアプリを共有するにはエクスポート/インポート</span>
             </p>
           </div>
         </div>

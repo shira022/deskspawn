@@ -19,6 +19,7 @@ export interface ModelInfo {
   supportsTemperature: boolean;
   supportsReasoning: boolean;
   supportsToolCall: boolean;
+  supportsImageInput: boolean;
   contextLimit: number;
   maxOutput: number;
 }
@@ -125,18 +126,21 @@ const FileActionSchema = z.object({
   replace: z.string().optional(),
 });
 
+const ColumnSchema = z.object({
+  name: z.string(),
+  sqlType: z.string(),
+  nullable: z.boolean(),
+  defaultValue: z.string().optional(),
+  primaryKey: z.boolean().default(false),
+  unique: z.boolean().default(false),
+  references: z.string().optional(),
+});
+
 const TemplateActionSchema = z.object({
   type: z.literal('template'),
   template: z.string(),
   tableName: z.string(),
-  columns: z.array(
-    z.object({
-      name: z.string(),
-      sqlType: z.string(),
-      nullable: z.boolean(),
-      defaultValue: z.string().optional(),
-    })
-  ),
+  columns: z.array(ColumnSchema).min(1),
 });
 
 const ShellActionSchema = z.object({
@@ -175,16 +179,21 @@ export interface DiffAction {
   replace: string;
 }
 
+export interface ColumnDef {
+  name: string;
+  sqlType: string;
+  nullable: boolean;
+  defaultValue?: string;
+  primaryKey?: boolean;
+  unique?: boolean;
+  references?: string;
+}
+
 export interface TemplateAction {
   type: 'template';
   template: string;
   tableName: string;
-  columns: {
-    name: string;
-    sqlType: string;
-    nullable: boolean;
-    defaultValue?: string;
-  }[];
+  columns: ColumnDef[];
 }
 
 export interface ShellAction {
