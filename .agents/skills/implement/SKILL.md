@@ -1,5 +1,8 @@
 # implement — Parallel Team Implementation
 
+> **Context Note**: These skills govern DeskSpawn (the tool) development — a Tauri v2 + React + TypeScript app. They **do not** apply to the generated web apps (which are pure Vite + React + TypeScript, no Rust/Tauri). Code generation for user apps is handled by the sidecar AI system prompt, not these skills.
+>
+
 ## Purpose
 
 Execute implementation tasks in parallel across teams, working on type-prefixed branches, following the approved plan artifact. Integrate completed work back into `develop` via PR.

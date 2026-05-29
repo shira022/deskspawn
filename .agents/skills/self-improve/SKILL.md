@@ -1,5 +1,8 @@
 # self-improve — Autonomous Skill Management
 
+> **Context Note**: These skills govern DeskSpawn (the tool) development — a Tauri v2 + React + TypeScript app. They **do not** apply to the generated web apps (which are pure Vite + React + TypeScript, no Rust/Tauri). Code generation for user apps is handled by the sidecar AI system prompt, not these skills.
+>
+
 ## Purpose
 
 Detect gaps in the agent team's skill coverage, propose new skills, and edit existing skills. This is the meta-skill that enables the agent team to evolve its own capabilities autonomously.

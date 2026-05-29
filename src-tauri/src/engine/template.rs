@@ -7,12 +7,26 @@ pub struct GeneratedFile {
     pub content: String,
 }
 
+/// A search-and-replace patch against an existing file.
+/// Used to auto-register generated modules and commands in the Rust backend.
+#[derive(Debug, Clone)]
+pub struct PatchSpec {
+    /// Relative path to the file to patch (e.g. "src-tauri/src/generated/mod.rs").
+    pub file_path: String,
+    /// Text to search for (must exist in the target file).
+    pub search: String,
+    /// Replacement text (can include the search text to keep the marker alive).
+    pub content: String,
+}
+
 /// Holds all generated files from a CRUD template expansion.
 #[derive(Debug, Clone)]
 pub struct GeneratedFiles {
     pub migration: Option<GeneratedFile>,
     pub rust_code: Option<GeneratedFile>,
     pub ts_hooks: Option<GeneratedFile>,
+    /// Registration patches against existing files (mod.rs, lib.rs).
+    pub patches: Vec<PatchSpec>,
 }
 
 impl GeneratedFiles {
@@ -26,6 +40,12 @@ impl GeneratedFiles {
         }
         if let Some(ref t) = self.ts_hooks {
             paths.push(t.path.clone());
+        }
+        // Also include files that will be patched
+        for p in &self.patches {
+            if !paths.contains(&p.file_path) {
+                paths.push(p.file_path.clone());
+            }
         }
         paths
     }
@@ -103,10 +123,14 @@ pub fn generate_crud_files(
         content: ts_hooks,
     };
 
+    // Generate registration patches for mod.rs and lib.rs
+    let patches = generate_registration_patches(&snake_name, &pascal_name);
+
     Ok(GeneratedFiles {
         migration: Some(migration_file),
         rust_code: Some(rust_file),
         ts_hooks: Some(ts_file),
+        patches,
     })
 }
 
@@ -306,6 +330,48 @@ pub async fn delete_{snake_name}(
         insert_binds = generate_bind_statements(columns, false),
         update_binds = generate_bind_statements(columns, true),
     )
+}
+
+/// Generate registration patches for mod.rs and lib.rs.
+///
+/// These patches auto-register the generated CRUD module so the AI
+/// doesn't need to manually edit `mod.rs` and `lib.rs` after code generation.
+///
+/// The patches use a special marker comment (`@deskspawn:register ...`) that
+/// stays in the file so subsequent generations can add more commands alongside
+/// existing ones without duplication.
+fn generate_registration_patches(snake_name: &str, _pascal_name: &str) -> Vec<PatchSpec> {
+    let mut patches = Vec::new();
+
+    // ── mod.rs patch: add `pub mod {table}_generated;` ──────────────────
+    patches.push(PatchSpec {
+        file_path: "src-tauri/src/generated/mod.rs".to_string(),
+        search: "// @deskspawn:register generated modules".to_string(),
+        content: format!(
+            "pub mod {}_generated;\n// @deskspawn:register generated modules",
+            snake_name
+        ),
+    });
+
+    // ── lib.rs patch: register 5 CRUD commands in invoke_handler ────────
+    let commands = [
+        format!("generated::{}_generated::get_{}s,", snake_name, snake_name),
+        format!("generated::{}_generated::get_{}_by_id,", snake_name, snake_name),
+        format!("generated::{}_generated::create_{},", snake_name, snake_name),
+        format!("generated::{}_generated::update_{},", snake_name, snake_name),
+        format!("generated::{}_generated::delete_{},", snake_name, snake_name),
+    ];
+    let registration_block = commands.join("\n            ");
+    patches.push(PatchSpec {
+        file_path: "src-tauri/src/lib.rs".to_string(),
+        search: "// @deskspawn:register commands".to_string(),
+        content: format!(
+            "{} \n            // @deskspawn:register commands",
+            registration_block
+        ),
+    });
+
+    patches
 }
 
 /// Generate bind statements for sqlx queries.

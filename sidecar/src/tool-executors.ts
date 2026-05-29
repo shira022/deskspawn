@@ -1,8 +1,9 @@
 import fs from 'fs/promises';
+import fsSync from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { execSync } from 'child_process';
-import type { Artifact, Action, FileAction, DiffAction, TemplateAction, ShellAction } from './types.js';
+import crypto from 'crypto';
+import type { Artifact, Action, TemplateAction } from './types.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -10,12 +11,30 @@ const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 const DEFAULT_WORKSPACE = path.resolve(PROJECT_ROOT, 'workspace');
 
+// Security server (Rust) endpoint for all file/shell operations
+const SECURITY_SERVER_PORT = process.env.DESKSPAWN_SECURITY_PORT;
+const SECURITY_SERVER_URL = SECURITY_SERVER_PORT
+  ? `http://127.0.0.1:${SECURITY_SERVER_PORT}`
+  : null;
+
+if (!SECURITY_SERVER_URL) {
+  console.warn('[tool-executors] DESKSPAWN_SECURITY_PORT not set — security server unavailable!');
+}
+
 // Mutable workspace directory - can be changed via setWorkspaceDir()
 let _workspaceDir = DEFAULT_WORKSPACE;
 
 export function setWorkspaceDir(dir: string) {
   _workspaceDir = path.resolve(dir);
   console.log(`[tool-executors] Workspace dir set to: ${_workspaceDir}`);
+  // Notify the Rust security server about the workspace change
+  if (SECURITY_SERVER_URL) {
+    fetch(`${SECURITY_SERVER_URL}/api/update-workspace`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: _workspaceDir }),
+    }).catch((err) => console.warn('[tool-executors] Failed to update workspace in security server:', err.message));
+  }
 }
 
 export function getWorkspaceDir(): string {
@@ -25,22 +44,33 @@ export function getWorkspaceDir(): string {
 // Shared constants
 export const IGNORED_DIRS = ['node_modules', 'target', '.deskspawn', '.git', 'dist'];
 
-const ALLOWED_COMMANDS = ['npm', 'npx', 'cargo', 'sqlx'];
+// ── Security server HTTP helper ──────────────────────────────────────────────
 
-export function isCommandAllowed(command: string): boolean {
-  const firstWord = command.trim().split(/\s+/)[0];
-  return ALLOWED_COMMANDS.includes(firstWord);
+function securityUrl(endpoint: string): string {
+  if (!SECURITY_SERVER_URL) {
+    throw new Error('Security server not available (DESKSPAWN_SECURITY_PORT not set)');
+  }
+  return `${SECURITY_SERVER_URL}${endpoint}`;
+}
+
+async function securityPost(endpoint: string, body: unknown): Promise<any> {
+  const res = await fetch(securityUrl(endpoint), {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    throw new Error(data.error || `Security server error (${res.status})`);
+  }
+  return data;
 }
 
 // ── read_file ────────────────────────────────────────────────────────────────
 
-export async function readFile(relativePath: string, workspaceDir?: string): Promise<string> {
-  const root = workspaceDir || getWorkspaceDir();
-  const fullPath = path.resolve(root, relativePath);
-  if (!fullPath.startsWith(root)) {
-    throw new Error(`Path traversal detected: ${relativePath}`);
-  }
-  const content = await fs.readFile(fullPath, 'utf-8');
+export async function readFile(relativePath: string, _workspaceDir?: string): Promise<string> {
+  // Always route through Rust security server for path validation
+  const { content } = await securityPost('/api/read-file', { path: relativePath });
   return content;
 }
 
@@ -94,7 +124,10 @@ export interface ApplyResult {
   errors?: string[];
 }
 
-export async function applyArtifact(jsonStr: string, workspaceDir?: string): Promise<ApplyResult> {
+// Maximum content size for a single file action before auto-splitting
+const MAX_FILE_CONTENT_CHARS = 50_000;
+
+export async function applyArtifact(artifact: Artifact, workspaceDir?: string): Promise<ApplyResult> {
   const root = workspaceDir || getWorkspaceDir();
   const result: ApplyResult = {
     success: true,
@@ -103,13 +136,6 @@ export async function applyArtifact(jsonStr: string, workspaceDir?: string): Pro
     errors: [],
   };
 
-  let artifact: Artifact;
-  try {
-    artifact = JSON.parse(jsonStr);
-  } catch (e) {
-    return { success: false, filesChanged: [], shellCommandsRun: [], errors: [`JSON parse error: ${e}`] };
-  }
-
   if (!artifact.actions || !Array.isArray(artifact.actions)) {
     return { success: false, filesChanged: [], shellCommandsRun: [], errors: ['Missing actions array'] };
   }
@@ -117,140 +143,442 @@ export async function applyArtifact(jsonStr: string, workspaceDir?: string): Pro
     return { success: false, filesChanged: [], shellCommandsRun: [], errors: ['Too many actions (max 30)'] };
   }
 
+  // Split actions: file/diff/shell → Rust security server, template → local
+  const securityActions: any[] = [];
+
   for (const action of artifact.actions as Action[]) {
-    try {
-      if (action.type === 'file' && action.mode === 'file') {
-        await executeFileAction(action, result, root);
-      } else if (action.type === 'file' && action.mode === 'diff') {
-        await executeDiffAction(action, result, root);
-      } else if (action.type === 'shell') {
-        await executeShellAction(action, result, root);
-      } else if (action.type === 'template') {
+    if (action.type === 'template') {
+      // Template actions are handled locally (generate CRUD hooks within workspace)
+      try {
         await executeTemplateAction(action, result, root);
-      } else {
-        result.errors!.push(`Unknown action type: ${JSON.stringify(action).substring(0, 100)}`);
+      } catch (e) {
+        result.errors!.push(`template: ${e}`);
         result.success = false;
       }
-    } catch (e) {
-      result.errors!.push(`${action.type}/${(action as any).mode}: ${e}`);
+    } else if (action.type === 'file' && action.mode === 'file') {
+      // Large file actions: write directly (avoids JSON serialization issues)
+      if (action.content && action.content.length > MAX_FILE_CONTENT_CHARS) {
+        console.log(`[split] Large file action (${action.content.length} chars) for ${action.filePath}, writing directly via Rust...`);
+        try {
+          await securityPost('/api/apply-artifact', {
+            actions: [{ type: 'file', file_path: action.filePath, content: action.content, mode: 'file' }],
+          });
+          result.filesChanged.push(action.filePath);
+          console.log(`[split] Direct write succeeded for ${action.filePath}`);
+        } catch (e: any) {
+          result.errors!.push(`file/file: ${e.message || e}`);
+          result.success = false;
+        }
+      } else {
+        securityActions.push({
+          type: 'file',
+          file_path: action.filePath,
+          content: action.content,
+          mode: 'file',
+        });
+      }
+    } else if (action.type === 'file' && action.mode === 'diff') {
+      securityActions.push({
+        type: 'diff',
+        file_path: action.filePath,
+        search: action.search,
+        content: action.replace,
+      });
+    } else if (action.type === 'shell') {
+      securityActions.push({
+        type: 'shell',
+        command: action.command,
+      });
+    } else {
+      result.errors!.push(`Unknown action type: ${JSON.stringify(action).substring(0, 100)}`);
       result.success = false;
     }
   }
-  console.log(`[apply_artifact] result: success=${result.success} changed=${result.filesChanged} errors=${result.errors?.length || 0}`);
+
+  // Send file/diff/shell actions to Rust security server
+  if (securityActions.length > 0) {
+    try {
+      const rustResult = await securityPost('/api/apply-artifact', {
+        name: 'artifact',
+        actions: securityActions,
+      });
+      result.filesChanged.push(...(rustResult.filesChanged || []));
+      result.shellCommandsRun.push(...(rustResult.shellCommandsRun || []));
+      if (rustResult.errors && rustResult.errors.length > 0) {
+        result.errors!.push(...rustResult.errors);
+        result.success = false;
+      }
+    } catch (e: any) {
+      result.errors!.push(`Security server error: ${e.message || e}`);
+      result.success = false;
+    }
+  }
+
+  console.log(`[apply_artifact] result: success=${result.success} changed=${result.filesChanged.length} errors=${result.errors?.length || 0}`);
 
   return result;
 }
 
-async function executeFileAction(action: FileAction, result: ApplyResult, workspaceRoot: string) {
-  const fullPath = path.resolve(workspaceRoot, action.filePath);
-  if (!fullPath.startsWith(workspaceRoot)) {
-    throw new Error(`Path traversal: ${action.filePath}`);
-  }
-  await fs.mkdir(path.dirname(fullPath), { recursive: true });
-  await fs.writeFile(fullPath, action.content, 'utf-8');
-  result.filesChanged.push(action.filePath);
+// ── run_shell (via Rust security server) ─────────────────────────────────────
+
+export interface ShellExecResult {
+  success: boolean;
+  stdout: string;
+  stderr: string;
+  exitCode: number;
 }
 
-async function executeDiffAction(action: DiffAction, result: ApplyResult, workspaceRoot: string) {
-  const fullPath = path.resolve(workspaceRoot, action.filePath);
-  if (!fullPath.startsWith(workspaceRoot)) {
-    throw new Error(`Path traversal: ${action.filePath}`);
-  }
-  const content = await fs.readFile(fullPath, 'utf-8');
-  if (!content.includes(action.search)) {
-    throw new Error(`Search pattern not found in ${action.filePath}: "${action.search.substring(0, 80)}..."`);
-  }
-  // Count occurrences - must be unique
-  const count = content.split(action.search).length - 1;
-  if (count === 0) {
-    throw new Error(`Search pattern not found: ${action.filePath}`);
-  }
-  if (count > 1) {
-    throw new Error(`Search pattern matches ${count} times (must be unique): ${action.filePath}`);
-  }
-  const newContent = content.replace(action.search, action.replace);
-  await fs.writeFile(fullPath, newContent, 'utf-8');
-  result.filesChanged.push(action.filePath);
-}
-
-async function executeShellAction(action: ShellAction, result: ApplyResult, workspaceRoot: string) {
-  const cmd = action.command.trim();
-  if (!isCommandAllowed(cmd)) {
-    throw new Error(`Command not allowed: ${cmd.split(/\s+/)[0]}. Allowed: ${ALLOWED_COMMANDS.join(', ')}`);
-  }
+export async function runShell(command: string): Promise<ShellExecResult> {
   try {
-    execSync(cmd, { cwd: workspaceRoot, encoding: 'utf-8', timeout: 120_000, stdio: 'pipe' });
-    result.shellCommandsRun.push(cmd);
+    const result = await securityPost('/api/run-shell', { command });
+    return {
+      success: result.exit_code === 0,
+      stdout: result.stdout || '',
+      stderr: result.stderr || '',
+      exitCode: result.exit_code ?? 1,
+    };
   } catch (e: any) {
-    result.errors!.push(`Shell command failed: ${cmd}\n${e.stderr || e.message}`);
+    return {
+      success: false,
+      stdout: '',
+      stderr: e.message || 'Command execution failed',
+      exitCode: 1,
+    };
   }
 }
+
+// ── Template CRUD generation helpers ─────────────────────────────────────────
+
+function toPascalCase(s: string): string {
+  return s.split('_').filter(Boolean).map(p => p.charAt(0).toUpperCase() + p.slice(1)).join('');
+}
+
+function toSnakeCase(s: string): string {
+  return s.replace(/[A-Z]/g, c => '_' + c.toLowerCase()).replace(/^_/, '');
+}
+
+function sqlToTsType(sqlType: string, nullable: boolean): string {
+  let base = 'string';
+  switch (sqlType.toUpperCase()) {
+    case 'INTEGER': case 'INT': case 'BIGINT': base = 'number'; break;
+    case 'REAL': case 'FLOAT': case 'DOUBLE': base = 'number'; break;
+    case 'BOOLEAN': case 'BOOL': base = 'boolean'; break;
+  }
+  return nullable ? `${base} | null` : base;
+}
+
 
 async function executeTemplateAction(action: TemplateAction, result: ApplyResult, workspaceRoot: string) {
-  const { tableName, columns } = action;
-  const pascalName = tableName.charAt(0).toUpperCase() + tableName.slice(1);
-  
-  // SQL migration
-  const colDefs = columns.map((c: any) => {
-    let def = `  ${c.name} ${c.sqlType}`;
-    if (!c.nullable) def += ' NOT NULL';
-    if (c.defaultValue !== undefined) def += ` DEFAULT ${c.defaultValue}`;
-    return def;
-  }).join(',\n');
-  
-  const migration = `-- @deskspawn:generated ${tableName}_crud
-CREATE TABLE IF NOT EXISTS ${tableName} (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-${colDefs},
-  created_at TEXT NOT NULL DEFAULT (datetime('now'))
-);
--- @deskspawn:end
-`;
-  const migPath = `migrations/0001_create_${tableName}.sql`;
-  await fs.mkdir(path.join(workspaceRoot, 'migrations'), { recursive: true });
-  await fs.writeFile(path.join(workspaceRoot, migPath), migration, 'utf-8');
-  result.filesChanged.push(migPath);
-  
-  // TypeScript types
-  const tsFields = columns.map((c: any) => {
-    let tsType = 'string';
-    if (c.sqlType === 'INTEGER') tsType = 'number';
-    else if (c.sqlType === 'REAL') tsType = 'number';
-    else if (c.sqlType === 'BOOLEAN') tsType = 'boolean';
-    return `  ${c.name}: ${tsType};`;
-  }).join('\n');
-  
-  const typesFile = `// @deskspawn:generated ${tableName}_types
+  const { tableName, columns: rawColumns } = action;
+  const pascalName = toPascalCase(tableName);
+  const snakeName = toSnakeCase(tableName);
+
+  // ── Prevent duplicate timestamp columns ─────────────────────────────
+  const AUTO_COLUMNS = ['created_at', 'updated_at'];
+  const columns = rawColumns.filter((c: any) => !AUTO_COLUMNS.includes(c.name));
+
+  let effectiveColumns = columns;
+  if (columns.length === 0) {
+    effectiveColumns = [
+      { name: 'id', sqlType: 'INTEGER', nullable: false, primaryKey: true },
+    ];
+    result.errors?.push(`All columns were auto-generated timestamps; added default 'id' column.`);
+  }
+
+  const idTsType = effectiveColumns.find((c: any) => c.primaryKey)?.sqlType?.toUpperCase() === 'INTEGER' ? 'number' : 'string';
+
+  // ── Generate TypeScript hooks using storage adapter ──────────────
+  const tsColumns = effectiveColumns.filter((c: any) => c.name !== (effectiveColumns.find((col: any) => col.primaryKey)?.name || 'id'));
+  const tsFields = tsColumns.map((c: any) => `  ${c.name}: ${sqlToTsType(c.sqlType, c.nullable)};`).join('\n');
+  const collectionName = snakeName;
+
+  const tsHooks = `// @deskspawn:generated table=${snakeName}
+// Auto-generated React hooks for ${pascalName}
+// Uses the storage adapter (@/lib/storage) — IndexedDB with auto file backup.
+
+import { getStorage } from "@/lib/storage";
+
 export interface ${pascalName} {
-  id: number;
+  id: ${idTsType};
 ${tsFields}
   created_at: string;
+  updated_at: string | null;
+}
+
+const COLLECTION = "${collectionName}";
+
+export async function get${pascalName}s(): Promise<${pascalName}[]> {
+  return getStorage().getAll<${pascalName}>(COLLECTION);
+}
+
+export async function get${pascalName}ById(id: ${idTsType}): Promise<${pascalName} | null> {
+  return getStorage().getById<${pascalName}>(COLLECTION, String(id));
+}
+
+export async function create${pascalName}(data: Omit<${pascalName}, "id" | "created_at" | "updated_at">): Promise<${pascalName}> {
+  return getStorage().create<${pascalName}>(COLLECTION, data);
+}
+
+export async function update${pascalName}(id: ${idTsType}, data: Partial<Omit<${pascalName}, "id">>): Promise<${pascalName}> {
+  return getStorage().update<${pascalName}>(COLLECTION, String(id), data);
+}
+
+export async function delete${pascalName}(id: ${idTsType}): Promise<void> {
+  return getStorage().remove(COLLECTION, String(id));
 }
 // @deskspawn:end
 `;
-  const typesPath = `src/types/${tableName}.ts`;
-  await fs.mkdir(path.join(workspaceRoot, 'src/types'), { recursive: true });
-  await fs.writeFile(path.join(workspaceRoot, typesPath), typesFile, 'utf-8');
-  result.filesChanged.push(typesPath);
+
+  const hooksPath = `src/hooks/use${pascalName}.ts`;
+  await fs.mkdir(path.join(workspaceRoot, 'src', 'hooks'), { recursive: true });
+  await fs.writeFile(path.join(workspaceRoot, hooksPath), tsHooks, 'utf-8');
+  result.filesChanged.push(hooksPath);
+
+  console.log(`[template] Generated CRUD for ${tableName}: TS types + storage adapter hooks`);
 }
+
 
 // ── get_errors ──────────────────────────────────────────────────────────────
 
-export async function getErrors(workspaceDir?: string): Promise<{ type: string; message: string; filePath?: string }[]> {
-  const root = workspaceDir || getWorkspaceDir();
-  const errors: { type: string; message: string; filePath?: string }[] = [];
-  
+export interface ErrorEntry {
+  type: 'typescript';
+  /** Machine-readable pattern label for AI-driven auto-recovery. */
+  pattern:
+    | 'missing_module'
+    | 'missing_component'
+    | 'missing_command'
+    | 'type_error'
+    | 'syntax_error'
+    | 'not_found'
+    | 'unknown';
+  message: string;
+  filePath?: string;
+  line?: number;
+  /** Actionable suggestion in Japanese for the AI to self-correct. */
+  suggestion?: string;
+}
+
+/**
+ * Classify a TypeScript error message into a pattern label + suggestion.
+ */
+function classifyTsError(message: string, filePath?: string): Pick<ErrorEntry, 'pattern' | 'suggestion'> {
+  const m = message.toLowerCase();
+
+  // Missing module import (e.g. lucide-react)
+  if (m.includes('cannot find module') || m.includes('cannot find name') || m.includes('module not found')) {
+    const missing = message.match(/['"]([^'"]+)['"]/)?.[1];
+    return {
+      pattern: 'missing_module',
+      suggestion: missing
+        ? `モジュール '${missing}' が見つかりません。run_shell で "npm install ${missing}" を実行してください。`
+        : '不足しているモジュールがあります。npm install でインストールしてください。',
+    };
+  }
+
+  // Missing UI component (e.g. @/components/ui/Button)
+  if (m.includes('cannot find module') && filePath?.includes('@/components/ui/')) {
+    return {
+      pattern: 'missing_component',
+      suggestion: `${filePath} が見つかりません。適用可能な shadcn/ui パターンがない場合、よりシンプルな Tailwind CSS ベースのコンポーネントを作成してください。例: div + Tailwind utility classes + lucide-react アイコン。`,
+    };
+  }
+
+  // URI resolve issue (import path not found)
+  if (m.includes('failed to resolve') && (filePath?.includes('@/') || filePath?.includes('/ui/'))) {
+    return {
+      pattern: 'missing_component',
+      suggestion: `'${filePath}' のインポートパスが間違っているか、ファイルが存在しません。ファイルを作成するか、パスを修正してください。`,
+    };
+  }
+
+  // Type error (assignability, type mismatch)
+  if (m.includes('is not assignable') || m.includes('type') && m.includes('is not') || m.includes('property') && m.includes('does not exist')) {
+    return {
+      pattern: 'type_error',
+      suggestion: '型定義と実際の使用が一致していません。型定義ファイル (src/types/*.ts) を確認し、必要に応じて修正または新しい型を追加してください。',
+    };
+  }
+
+  // Syntax error
+  if (m.includes('unterminated') || m.includes('unexpected token') || m.includes('expression expected')) {
+    return {
+      pattern: 'syntax_error',
+      suggestion: '構文エラーです。括弧やセミコロン、引用符が正しく閉じられているか確認してください。',
+    };
+  }
+
+  // Default
+  return { pattern: 'type_error', suggestion: undefined };
+}
+
+/**
+ * Run TypeScript compiler check and return structured errors.
+ * Shell execution goes through the Rust security server.
+ */
+async function getTsErrors(): Promise<ErrorEntry[]> {
+  const errors: ErrorEntry[] = [];
   try {
-    execSync('npx tsc --noEmit', { cwd: root, encoding: 'utf-8', timeout: 30_000, stdio: 'pipe' });
-  } catch (e: any) {
-    const output = e.stdout || e.stderr || e.message || '';
+    // Run tsc via the Rust security server (validated command allowlist)
+    const result = await securityPost('/api/run-shell', { command: 'npx tsc --noEmit' });
+    // If exit code is 0, no errors — success path returns stdout
+    if (result.exit_code === 0) return errors;
+    const output = result.stderr || result.stdout || '';
     for (const line of output.split('\n')) {
       const match = line.match(/^(.+?)\((\d+),\d+\):\s+(error\s+\w+):\s+(.+)/);
       if (match) {
-        errors.push({ type: 'typescript', message: line.trim(), filePath: match[1] });
+        const filePath = match[1];
+        const lineNum = parseInt(match[2], 10);
+        const message = line.trim();
+        const { pattern, suggestion } = classifyTsError(message, filePath);
+        errors.push({
+          type: 'typescript' as const,
+          pattern,
+          message,
+          filePath,
+          line: lineNum,
+          suggestion,
+        });
+      }
+    }
+  } catch (e: any) {
+    console.warn('[getTsErrors] Failed to run tsc via security server:', e.message || e);
+  }
+  return errors;
+}
+
+/**
+ * Collect all project errors (TypeScript).
+ * Each error includes a pattern classification and actionable suggestion
+ * so the AI agent can autonomously decide how to fix it.
+ */
+export async function getErrors(_workspaceDir?: string): Promise<ErrorEntry[]> {
+  const errors: ErrorEntry[] = [];
+
+  // Gather TS errors (shell execution via Rust security server)
+  const tsErrors = await getTsErrors();
+  errors.push(...tsErrors);
+
+  return errors;
+}
+
+// ── Checkpoint System ──────────────────────────────────────────────────────────
+
+const CHECKPOINTS_DIR_NAME = 'checkpoints';
+
+/**
+ * Create a full snapshot of the project source files (excluding ignored dirs).
+ * Returns a unique checkpoint ID. If `checkpointId` is provided, uses that
+ * instead of generating a random one (useful for the initial checkpoint).
+ */
+export async function createCheckpoint(workspaceDir: string, checkpointId?: string): Promise<string> {
+  const deskspawnDir = path.join(workspaceDir, '.deskspawn');
+  const checkpointsDir = path.join(deskspawnDir, CHECKPOINTS_DIR_NAME);
+  fsSync.mkdirSync(checkpointsDir, { recursive: true });
+
+  const id = checkpointId || crypto.randomUUID();
+  const destDir = path.join(checkpointsDir, id);
+  fsSync.mkdirSync(destDir, { recursive: true });
+
+  copyProjectFilesSync(workspaceDir, destDir, workspaceDir);
+  console.log(`[checkpoint] Created checkpoint ${id} (${destDir})`);
+  return id;
+}
+
+/**
+ * Restore project files from a checkpoint.
+ */
+export async function restoreCheckpoint(workspaceDir: string, checkpointId: string): Promise<void> {
+  const srcDir = path.join(workspaceDir, '.deskspawn', CHECKPOINTS_DIR_NAME, checkpointId);
+
+  if (!fsSync.existsSync(srcDir)) {
+    throw new Error(`Checkpoint not found: ${checkpointId}`);
+  }
+
+  // Remove all project source files (preserve .deskspawn, node_modules, target, dist, .git)
+  clearProjectFilesSync(workspaceDir);
+
+  // Copy back from checkpoint
+  copyProjectFilesSync(srcDir, workspaceDir, srcDir);
+  console.log(`[checkpoint] Restored checkpoint ${checkpointId}`);
+}
+
+/**
+ * List checkpoints for a workspace, newest first.
+ */
+export function listCheckpoints(workspaceDir: string): { id: string; createdAt: Date }[] {
+  const checkpointsDir = path.join(workspaceDir, '.deskspawn', CHECKPOINTS_DIR_NAME);
+  if (!fsSync.existsSync(checkpointsDir)) return [];
+
+  const entries = fsSync.readdirSync(checkpointsDir, { withFileTypes: true });
+  const checkpoints: { id: string; createdAt: Date }[] = [];
+
+  for (const entry of entries) {
+    if (entry.isDirectory()) {
+      const stat = fsSync.statSync(path.join(checkpointsDir, entry.name));
+      checkpoints.push({ id: entry.name, createdAt: stat.birthtime || stat.mtime });
+    }
+  }
+
+  checkpoints.sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
+  return checkpoints;
+}
+
+/**
+ * Delete all checkpoints created after the given checkpoint ID.
+ * The checkpoints list is newest-first, so we keep everything from `checkpointId` and older.
+ */
+export function deleteCheckpointsAfter(workspaceDir: string, beforeCheckpointId: string): void {
+  const all = listCheckpoints(workspaceDir);
+  const idx = all.findIndex((cp) => cp.id === beforeCheckpointId);
+  if (idx === -1) return; // not found, nothing to do
+
+  // `all` is newest-first, so the first `idx` entries are newer than beforeCheckpointId
+  const toDelete = all.slice(0, idx);
+  const checkpointsDir = path.join(workspaceDir, '.deskspawn', CHECKPOINTS_DIR_NAME);
+  for (const cp of toDelete) {
+    const cpDir = path.join(checkpointsDir, cp.id);
+    try {
+      fsSync.rmSync(cpDir, { recursive: true, force: true });
+      console.log(`[checkpoint] Deleted checkpoint ${cp.id}`);
+    } catch (e) {
+      console.warn(`[checkpoint] Failed to delete ${cp.id}:`, e);
+    }
+  }
+}
+
+// ── Internal helpers ──────────────────────────────────────────────────────────
+
+function copyProjectFilesSync(srcDir: string, dstDir: string, rootDir: string) {
+  const entries = fsSync.readdirSync(srcDir, { withFileTypes: true });
+  for (const entry of entries) {
+    // Skip ignored directories (relative to the root)
+    if (entry.isDirectory() && IGNORED_DIRS.includes(entry.name)) continue;
+
+    const srcPath = path.join(srcDir, entry.name);
+    const dstPath = path.join(dstDir, entry.name);
+
+    if (entry.isDirectory()) {
+      fsSync.mkdirSync(dstPath, { recursive: true });
+      copyProjectFilesSync(srcPath, dstPath, rootDir);
+    } else {
+      try {
+        fsSync.copyFileSync(srcPath, dstPath);
+      } catch (e) {
+        console.warn(`[checkpoint] Failed to copy ${srcPath}: ${e}`);
       }
     }
   }
-  
-  return errors;
+}
+
+function clearProjectFilesSync(workspaceDir: string) {
+  const entries = fsSync.readdirSync(workspaceDir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isDirectory() && IGNORED_DIRS.includes(entry.name)) continue;
+    const fullPath = path.join(workspaceDir, entry.name);
+    try {
+      fsSync.rmSync(fullPath, { recursive: true, force: true });
+    } catch (e) {
+      console.warn(`[checkpoint] Failed to remove ${fullPath}: ${e}`);
+    }
+  }
 }

@@ -92,3 +92,20 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes pulse-ring {
+  0% { box-shadow: 0 0 0 0 oklch(0.704 0.191 22.216 / 0.5); }
+  70% { box-shadow: 0 0 0 12px oklch(0.704 0.191 22.216 / 0); }
+  100% { box-shadow: 0 0 0 0 oklch(0.704 0.191 22.216 / 0); }
+}
+
+@keyframes pulse-ring-subtle {
+  0% { box-shadow: 0 0 0 0 oklch(0.704 0.191 22.216 / 0.3); }
+  50% { box-shadow: 0 0 0 8px oklch(0.704 0.191 22.216 / 0); }
+  100% { box-shadow: 0 0 0 0 oklch(0.704 0.191 22.216 / 0); }
+}
+
+@keyframes generating-pulse {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.7; }
+}

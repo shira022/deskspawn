@@ -10,12 +10,27 @@ import type {
   AgentStatus,
   ErrorInfo,
   FileNode,
-  SpawnConfig,
   ProjectMeta,
+  CheckpointInfo,
 } from "@/types";
+import { callBackend } from "@/lib/backend";
+import { SIDECAR_BASE } from "@/lib/constants";
 
-const STORAGE_KEY = "deskspawn_ai_config";
-const isTauri = typeof window !== "undefined" && !!(window as any).__TAURI__;
+/**
+ * Persist the current messages array to the sidecar so it survives page reloads.
+ * Silently fails if the sidecar is not available (non-critical).
+ */
+async function persistMessages(messages: ChatMessage[]): Promise<void> {
+  try {
+    await fetch(`${SIDECAR_BASE}/chat/history`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ messages }),
+    });
+  } catch {
+    // Sidecar not available — messages stay in memory, next save will retry
+  }
+}
 
 const defaultEnvChecks: EnvCheckItem[] = [
   {
@@ -26,34 +41,6 @@ const defaultEnvChecks: EnvCheckItem[] = [
     downloadUrl: "https://nodejs.org/",
     wingetPackage: "OpenJS.NodeJS.LTS",
     sizeMb: 30,
-  },
-  {
-    name: "Rust",
-    description: "Rust compiler and toolchain",
-    checkCommand: "rustc --version",
-    status: "pending",
-    downloadUrl: "https://rustup.rs/",
-    wingetPackage: "Rustlang.Rustup",
-    sizeMb: 400,
-  },
-  {
-    name: "VS Build Tools",
-    description: "MSVC compiler for native compilation",
-    checkCommand: "vswhere",
-    status: "pending",
-    downloadUrl:
-      "https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022",
-    wingetPackage: "Microsoft.VisualStudio.2022.BuildTools",
-    sizeMb: 4500,
-  },
-  {
-    name: "WebView2",
-    description: "Required for Tauri WebView",
-    checkCommand: "reg query",
-    status: "pending",
-    downloadUrl: "https://developer.microsoft.com/microsoft-edge/webview2/",
-    wingetPackage: "Microsoft.EdgeWebView2Runtime",
-    sizeMb: 120,
   },
 ];
 
@@ -91,7 +78,13 @@ interface Store {
   // Chat
   messages: ChatMessage[];
   addMessage: (message: ChatMessage) => void;
+  updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
+  truncateMessages: (fromIndex: number) => void;
   clearMessages: () => void;
+
+  // Editing
+  editingMessageId: string | null;
+  setEditingMessageId: (id: string | null) => void;
 
   // Agent
   agentStatus: AgentStatus;
@@ -99,6 +92,7 @@ interface Store {
   agentStepCount: number;
   setAgentStepCount: (count: number) => void;
   agentMaxSteps: number;
+  setAgentMaxSteps: (count: number) => void;
 
   // File Tree
   fileTree: FileNode[];
@@ -109,14 +103,6 @@ interface Store {
   // Errors
   errors: ErrorInfo[];
   setErrors: (errors: ErrorInfo[]) => void;
-
-  // Spawn
-  spawnConfig: SpawnConfig | null;
-  setSpawnConfig: (config: SpawnConfig) => void;
-
-  // Theme
-  isDarkMode: boolean;
-  toggleDarkMode: () => void;
 
   // Vite (DeskSpawn own dev server)
   vitePort: number;
@@ -136,8 +122,36 @@ interface Store {
   projects: ProjectMeta[];
   setProjects: (projects: ProjectMeta[]) => void;
   addProject: (project: ProjectMeta) => void;
+  removeProject: (id: string) => void;
   projectSwitching: boolean;
   setProjectSwitching: (switching: boolean) => void;
+
+  // New app preparation (dev server starting, deps installing)
+  appLoading: boolean;
+  setAppLoading: (loading: boolean) => void;
+
+  // Checkpoints
+  checkpoints: CheckpointInfo[];
+  setCheckpoints: (checkpoints: CheckpointInfo[]) => void;
+  currentCheckpointIndex: number;
+  setCurrentCheckpointIndex: (index: number) => void;
+  fetchCheckpoints: () => Promise<void>;
+
+  // How many chat messages are visible.
+  // -1 means "show all" (the normal state).
+  // Any non-negative value means only the first N messages are shown,
+  // used when the preview slider navigates back in time.
+  visibleMessageCount: number;
+  setVisibleMessageCount: (count: number) => void;
+
+  // Preview maximized state
+  previewMaximized: boolean;
+  setPreviewMaximized: (maximized: boolean) => void;
+  togglePreviewMaximized: () => void;
+
+  // Generation reload trigger (increment to force iframe reload after generation)
+  reloadCounter: number;
+  triggerReload: () => void;
 }
 
 export const useAppStore = create<Store>((set, get) => ({
@@ -146,23 +160,19 @@ export const useAppStore = create<Store>((set, get) => ({
   initialized: false,
   initialize: async () => {
     try {
-      if (isTauri) {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const config = await invoke<AiConfig | null>("load_ai_config");
+      // Load AI config from backend (Tauri IPC or localStorage)
+      try {
+        const config = await callBackend<AiConfig | null>("load_ai_config");
         if (config) {
           set({ aiConfig: config, phase: "main" });
         }
-      } else {
-        const raw = localStorage.getItem(STORAGE_KEY);
-        if (raw) {
-          const config = JSON.parse(raw) as AiConfig;
-          set({ aiConfig: config, phase: "main" });
-        }
+      } catch {
+        // No stored config — stay on ai-config phase
       }
 
       // Load projects on init
       try {
-        const res = await fetch("http://localhost:3001/projects/current");
+        const res = await fetch(`${SIDECAR_BASE}/projects/current`);
         if (res.ok) {
           const data = await res.json();
           if (data.project) {
@@ -175,11 +185,42 @@ export const useAppStore = create<Store>((set, get) => ({
 
       // Try loading project list
       try {
-        const res = await fetch("http://localhost:3001/projects/list");
+        const res = await fetch(`${SIDECAR_BASE}/projects/list`);
         if (res.ok) {
           const data = await res.json();
           if (data.projects) {
             set({ projects: data.projects });
+          }
+        }
+      } catch {
+        // Sidecar not running yet
+      }
+
+      // Try fetching checkpoints
+      try {
+        const res = await fetch(`${SIDECAR_BASE}/projects/checkpoints`);
+        if (res.ok) {
+          const data = await res.json();
+          const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
+            id: cp.id,
+            createdAt: new Date(cp.createdAt),
+          }));
+          set({
+            checkpoints: cps,
+            currentCheckpointIndex: cps.length > 0 ? cps.length - 1 : -1,
+          });
+        }
+      } catch {
+        // Sidecar not running yet
+      }
+
+      // Try loading chat history (so it survives page reload)
+      try {
+        const res = await fetch(`${SIDECAR_BASE}/chat/history`);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.messages) && data.messages.length > 0) {
+            set({ messages: data.messages });
           }
         }
       } catch {
@@ -198,20 +239,9 @@ export const useAppStore = create<Store>((set, get) => ({
   aiConfig: null,
   setAiConfig: (aiConfig) => {
     set({ aiConfig });
-    // Persist to storage
-    if (isTauri) {
-      import("@tauri-apps/api/core").then(({ invoke }) => {
-        invoke("save_ai_config", { config: aiConfig }).catch((e) =>
-          console.warn("Failed to save AI config:", e),
-        );
-      });
-    } else {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(aiConfig));
-      } catch (e) {
-        console.warn("Failed to save AI config to localStorage:", e);
-      }
-    }
+    callBackend("save_ai_config", { config: aiConfig }).catch((e) =>
+      console.warn("Failed to save AI config:", e),
+    );
   },
 
   envChecks: defaultEnvChecks,
@@ -239,15 +269,35 @@ export const useAppStore = create<Store>((set, get) => ({
   setSetupRunning: (setupRunning) => set({ setupRunning }),
 
   messages: [],
-  addMessage: (message) =>
-    set((state) => ({ messages: [...state.messages, message] })),
+  addMessage: (message) => {
+    set((state) => ({ messages: [...state.messages, message] }));
+    persistMessages(get().messages);
+  },
+  updateMessage: (id, updates) => {
+    set((state) => ({
+      messages: state.messages.map((m) =>
+        m.id === id ? { ...m, ...updates } : m
+      ),
+    }));
+    persistMessages(get().messages);
+  },
+  truncateMessages: (fromIndex) => {
+    set((state) => ({
+      messages: state.messages.slice(0, fromIndex),
+    }));
+    persistMessages(get().messages);
+  },
   clearMessages: () => set({ messages: [] }),
+
+  editingMessageId: null,
+  setEditingMessageId: (editingMessageId) => set({ editingMessageId }),
 
   agentStatus: "idle",
   setAgentStatus: (agentStatus) => set({ agentStatus }),
   agentStepCount: 0,
   setAgentStepCount: (agentStepCount) => set({ agentStepCount }),
   agentMaxSteps: 20,
+  setAgentMaxSteps: (agentMaxSteps) => set({ agentMaxSteps }),
 
   fileTree: [],
   setFileTree: (fileTree) => set({ fileTree }),
@@ -256,13 +306,6 @@ export const useAppStore = create<Store>((set, get) => ({
 
   errors: [],
   setErrors: (errors) => set({ errors }),
-
-  spawnConfig: null,
-  setSpawnConfig: (spawnConfig) => set({ spawnConfig }),
-
-  isDarkMode: true,
-  toggleDarkMode: () =>
-    set((state) => ({ isDarkMode: !state.isDarkMode })),
 
   vitePort: 5173,
   setVitePort: (vitePort) => set({ vitePort }),
@@ -280,6 +323,44 @@ export const useAppStore = create<Store>((set, get) => ({
   setProjects: (projects) => set({ projects }),
   addProject: (project) =>
     set((state) => ({ projects: [...state.projects, project] })),
+  removeProject: (id) =>
+    set((state) => ({ projects: state.projects.filter((p) => p.id !== id) })),
   projectSwitching: false,
   setProjectSwitching: (projectSwitching) => set({ projectSwitching }),
+  appLoading: false,
+  setAppLoading: (appLoading) => set({ appLoading }),
+
+  // Checkpoints
+  checkpoints: [],
+  setCheckpoints: (checkpoints) => set({ checkpoints }),
+  currentCheckpointIndex: -1,
+  setCurrentCheckpointIndex: (currentCheckpointIndex) => set({ currentCheckpointIndex }),
+  fetchCheckpoints: async () => {
+    try {
+      const res = await fetch(`${SIDECAR_BASE}/projects/checkpoints`);
+      if (!res.ok) return;
+      const data = await res.json();
+      const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
+        id: cp.id,
+        createdAt: new Date(cp.createdAt),
+      }));
+      set({ checkpoints: cps });
+    } catch {
+      // sidecar not available
+    }
+  },
+
+  // How many messages to show in chat (-1 = all)
+  visibleMessageCount: -1,
+  setVisibleMessageCount: (visibleMessageCount) => set({ visibleMessageCount }),
+
+  // Preview maximized
+  previewMaximized: false,
+  setPreviewMaximized: (previewMaximized) => set({ previewMaximized }),
+  togglePreviewMaximized: () =>
+    set((state) => ({ previewMaximized: !state.previewMaximized })),
+
+  // Generation reload trigger
+  reloadCounter: 0,
+  triggerReload: () => set((state) => ({ reloadCounter: state.reloadCounter + 1 })),
 }));
