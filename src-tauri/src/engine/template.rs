@@ -60,7 +60,7 @@ fn sql_to_rust_type(sql_type: &str) -> &str {
         "real" | "float" | "double" | "float8" => "f64",
         "blob" | "bytea" => "Vec<u8>",
         "date" | "timestamp" | "datetime" | "timestamptz" => "chrono::NaiveDateTime",
-        "uuid" => "uuid::Uuid",
+        "uuid" => "String",
         "json" | "jsonb" => "serde_json::Value",
         _ => "String",
     }
