@@ -11,6 +11,7 @@ src-tauri/gen/
 # Build artifacts
 .vite/
 *.tsbuildinfo
+sidecar/dist/
 
 # Runtime data
 projects/
