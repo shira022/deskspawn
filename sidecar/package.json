@@ -16,7 +16,7 @@
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "pixelmatch": "^6.0.0",
-    "puppeteer-core": "^24.0.0",
+    "puppeteer-core": "^25.1.0",
     "sharp": "^0.34.5",
     "zod": "^3.23.0"
   },
