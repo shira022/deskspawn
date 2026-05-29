@@ -7,6 +7,17 @@ Our mission: build DeskSpawn — an AI-powered Windows native app development pl
 
 **Tech stack**: Tauri v2 (Rust) + Vite + React 18 + TypeScript + Tailwind CSS + shadcn/ui + SQLite (sqlx).
 
+## Context Note
+
+This AGENTS.md governs **two distinct contexts**:
+
+| Context | What it is | Tech Stack |
+|---------|-----------|------------|
+| **DeskSpawn (the tool)** | The IDE/tool being built. Agents modify this repo's source code. | Tauri v2 (Rust) + Vite + React 18 + TypeScript + SQLite |
+| **Generated apps** | The web apps that DeskSpawn creates for users. Agents generate code for these via the sidecar AI. | Vite + React 18 + TypeScript + IndexedDB (no Rust, no Tauri) |
+
+When working on a task, identify which context applies. For DeskSpawn itself, Rust/Tauri/cargo rules apply. For generated app code generation, the web-only stack (no cargo, no Rust) applies.
+
 ## Orchestration Model
 
 ### Hybrid Architecture
