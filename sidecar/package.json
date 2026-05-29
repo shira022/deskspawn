@@ -8,11 +8,11 @@
     "build": "tsc"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "^3.0.78",
-    "@ai-sdk/google": "^3.0.78",
-    "@ai-sdk/openai": "^3.0.64",
-    "@ai-sdk/openai-compatible": "^2.0.47",
-    "ai": "^6.0.188",
+    "@ai-sdk/anthropic": "^3.0.81",
+    "@ai-sdk/google": "^3.0.80",
+    "@ai-sdk/openai": "^3.0.66",
+    "@ai-sdk/openai-compatible": "^2.0.48",
+    "ai": "^6.0.193",
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "pixelmatch": "^6.0.0",
