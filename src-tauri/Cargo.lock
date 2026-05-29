@@ -698,7 +698,6 @@ dependencies = [
  "tauri-plugin-store",
  "tiny_http",
  "tokio",
- "uuid",
 ]
 
 [[package]]
