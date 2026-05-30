@@ -42,10 +42,30 @@ pub fn run() {
 
             // Initialize and start the sidecar manager (pass security port)
             let sidecar_manager = SidecarManager::new(workspace_path.clone(), security_port);
-            if let Err(e) = sidecar_manager.start() {
-                log::warn!("Failed to start sidecar on launch: {}", e);
-            } else {
-                log::info!("Sidecar started successfully.");
+            let mut sidecar_started = false;
+            for attempt in 1..=3 {
+                match sidecar_manager.start() {
+                    Ok(()) => {
+                        log::info!("Sidecar started successfully.");
+                        sidecar_started = true;
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to start sidecar (attempt {}/3): {}", attempt, e);
+                        if attempt < 3 {
+                            std::thread::sleep(std::time::Duration::from_millis(1000 * attempt));
+                        }
+                    }
+                }
+            }
+            if sidecar_started {
+
+                // Push stored API key to sidecar (in-memory, never exposed to frontend)
+                if let Some(api_key) = commands::ai_config::load_full_config_for_sidecar() {
+                    commands::ai_config::push_api_key_to_sidecar(&api_key);
+                    // Clear the key from Rust's stack after pushing
+                    drop(api_key);
+                }
             }
             app.manage(sidecar_manager);
 

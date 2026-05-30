@@ -3,14 +3,25 @@ use serde::{Deserialize, Serialize};
 // ── AI Configuration ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiConfig {
     pub provider: String,
+    #[serde(alias = "api_key")]
     pub api_key: String,
     pub model: String,
+    #[serde(alias = "custom_endpoint")]
     pub custom_endpoint: Option<String>,
+    #[serde(alias = "api_version")]
     pub api_version: Option<String>,
     pub temperature: f64,
+    #[serde(alias = "max_tokens")]
     pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub max_steps: Option<u32>,
+    /// True when the API key is stored in the OS keychain.
+    /// The frontend uses this flag instead of the actual key value.
+    #[serde(default)]
+    pub api_key_configured: bool,
 }
 
 // ── Environment Check ─────────────────────────────────────────────────────────
