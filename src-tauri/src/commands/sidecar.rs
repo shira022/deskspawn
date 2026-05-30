@@ -1,6 +1,8 @@
+use std::io::BufRead;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::path::PathBuf;
+use std::thread;
 use tauri::State;
 
 /// Manages the sidecar Node.js process lifecycle.
@@ -66,7 +68,7 @@ impl SidecarManager {
         let script_str = self.sidecar_script.to_string_lossy().to_string();
         log::info!("Starting sidecar script: {:?} (workspace: {:?}, security port: {})", script_str, self.project_root, self.security_port);
 
-        let child = Command::new("npx")
+        let mut child = Command::new("npx")
             .args(["tsx", &script_str])
             .env("DESKSPAWN_SECURITY_PORT", self.security_port.to_string())
             .current_dir(&self.project_root)
@@ -74,6 +76,35 @@ impl SidecarManager {
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| format!("Failed to start sidecar: {}", e))?;
+
+        // Drain stdout/stderr pipes in background threads to prevent
+        // the child process from blocking when the pipe buffer fills up.
+        if let Some(stdout) = child.stdout.take() {
+            thread::spawn(|| {
+                let mut buf = String::new();
+                let mut reader = std::io::BufReader::new(stdout);
+                loop {
+                    buf.clear();
+                    match reader.read_line(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {},
+                    }
+                }
+            });
+        }
+        if let Some(stderr) = child.stderr.take() {
+            thread::spawn(|| {
+                let mut buf = String::new();
+                let mut reader = std::io::BufReader::new(stderr);
+                loop {
+                    buf.clear();
+                    match reader.read_line(&mut buf) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) => {},
+                    }
+                }
+            });
+        }
 
         log::info!("Sidecar started (PID: {})", child.id());
         *guard = Some(child);
