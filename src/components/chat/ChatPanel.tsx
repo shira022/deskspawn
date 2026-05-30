@@ -162,7 +162,7 @@ export function ChatPanel() {
         return;
       }
 
-      if (cfg.provider !== "ollama" && !cfg.apiKey) {
+      if (cfg.provider !== "ollama" && !cfg.apiKey && !cfg.apiKeyConfigured) {
         addMessage({
           id: `msg-err-${Date.now()}`,
           role: "assistant",

@@ -164,10 +164,33 @@ export const useAppStore = create<Store>((set, get) => ({
       try {
         const config = await callBackend<AiConfig | null>("load_ai_config");
         if (config) {
-          set({ aiConfig: config, phase: "main" });
+          const isTauri =
+            typeof window !== "undefined" &&
+            !!(window as any).__TAURI_INTERNALS__;
+
+          // Tauri mode: apiKey is "" (stored in keychain, never in frontend).
+          //   Check apiKeyConfigured flag or Ollama (no key needed).
+          // Browser mode: apiKey comes from localStorage.
+          //   Check actual apiKey value.
+          const hasAccessibleKey =
+            !!(config.apiKey || config.apiKeyConfigured || config.provider === "ollama");
+
+          if (config.provider && config.model && hasAccessibleKey) {
+            // In Tauri mode, strip apiKey for zero frontend exposure
+            if (isTauri) {
+              config.apiKey = "";
+            }
+            set({ aiConfig: config, phase: "main" });
+          } else {
+            console.warn(
+              "[initialize] Stored AI config is incomplete; staying on setup screen.",
+              config,
+            );
+          }
         }
-      } catch {
-        // No stored config — stay on ai-config phase
+      } catch (e) {
+        console.warn("[initialize] Failed to load AI config:", e);
+        // Stay on ai-config phase — user will see the setup screen
       }
 
       // Load projects on init
@@ -238,10 +261,19 @@ export const useAppStore = create<Store>((set, get) => ({
 
   aiConfig: null,
   setAiConfig: (aiConfig) => {
-    set({ aiConfig });
+    // Always save the full config (including apiKey) to backend.
+    // In Tauri mode, Rust stores the key in OS keychain + sidecar.
     callBackend("save_ai_config", { config: aiConfig }).catch((e) =>
       console.warn("Failed to save AI config:", e),
     );
+
+    // In Tauri mode, strip apiKey from frontend state for zero exposure.
+    // The key lives only in: OS keychain + sidecar process memory.
+    const isTauri =
+      typeof window !== "undefined" &&
+      !!(window as any).__TAURI_INTERNALS__;
+    const safeConfig = isTauri ? { ...aiConfig, apiKey: "" } : aiConfig;
+    set({ aiConfig: safeConfig });
   },
 
   envChecks: defaultEnvChecks,

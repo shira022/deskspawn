@@ -14,6 +14,12 @@ export interface AiConfig {
   maxTokens?: number;
   /** エージェントの最大ステップ数（動的ステップ管理のベース値として使用） */
   maxSteps?: number;
+  /**
+   * Tauri 実環境で API キーが OS キーチェーンに保存されている場合 true。
+   * フロントエンドはキーの実際の値にアクセスできず、このフラグでのみ
+   * 設定済みかどうかを判断する。
+   */
+  apiKeyConfigured?: boolean;
 }
 
 // ── Model Discovery ─────────────────────────────────────────────────────────

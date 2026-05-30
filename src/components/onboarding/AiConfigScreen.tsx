@@ -17,6 +17,7 @@ import {
   Server,
   Loader2,
   AlertCircle,
+  CheckCircle2,
 } from "lucide-react";
 
 const providers: { id: ProviderKind; name: string; icon: React.ReactNode; description: string }[] = [
@@ -30,14 +31,30 @@ const providers: { id: ProviderKind; name: string; icon: React.ReactNode; descri
 const providerNeedsApiKey = (p: ProviderKind) => p !== "ollama";
 
 export function AiConfigScreen() {
-  const { setPhase, setAiConfig } = useAppStore();
-  const [provider, setProvider] = useState<ProviderKind>("openai");
-  const [apiKey, setApiKey] = useState("");
-  const [model, setModel] = useState("");
-  const [customEndpoint, setCustomEndpoint] = useState("");
-  const [temperature, setTemperature] = useState("0.2");
-  const [maxTokens, setMaxTokens] = useState("");
+  const { setPhase, setAiConfig, aiConfig: existingConfig } = useAppStore();
+  const [provider, setProvider] = useState<ProviderKind>(
+    existingConfig?.provider ?? "openai",
+  );
+  const [apiKey, setApiKey] = useState(
+    // In browser mode, existing apiKey may already be in the store.
+    // In Tauri mode, it's empty (keychain) — user must re-enter to change.
+    existingConfig?.apiKey ?? "",
+  );
+  const [model, setModel] = useState(existingConfig?.model ?? "");
+  const [customEndpoint, setCustomEndpoint] = useState(
+    existingConfig?.customEndpoint ?? "",
+  );
+  const [temperature, setTemperature] = useState(
+    String(existingConfig?.temperature ?? 0.2),
+  );
+  const [maxTokens, setMaxTokens] = useState(
+    existingConfig?.maxTokens ? String(existingConfig.maxTokens) : "",
+  );
   const [error, setError] = useState("");
+  const [showApiKeyInput, setShowApiKeyInput] = useState(
+    // Show input if we need a key but don't have one accessible
+    !existingConfig?.apiKeyConfigured || !!(existingConfig?.apiKey),
+  );
 
   // Model discovery
   const { models, loading: modelsLoading, error: modelsError, fetchModels } = useModels({
@@ -75,7 +92,12 @@ export function AiConfigScreen() {
     setProvider(p);
     setModel("");
     setSelectedModelInfo(null);
-    if (p === "ollama") setApiKey("");
+    if (p === "ollama") {
+      setApiKey("");
+      setShowApiKeyInput(false);
+    } else {
+      setShowApiKeyInput(true);
+    }
   };
 
   const handleModelChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -91,7 +113,13 @@ export function AiConfigScreen() {
   const handleNext = () => {
     setError("");
 
-    if (showApiKey && !apiKey.trim()) {
+    // If the key is managed by keychain and user didn't change it,
+    // send empty apiKey with apiKeyConfigured=true so the Rust backend
+    // keeps the existing keychain entry.
+    const hasExistingKey = existingConfig?.apiKeyConfigured && !showApiKeyInput;
+    const resolvedApiKey = hasExistingKey ? "" : apiKey.trim();
+
+    if (showApiKey && !resolvedApiKey && !hasExistingKey) {
       setError("API キーを入力してください");
       return;
     }
@@ -106,11 +134,12 @@ export function AiConfigScreen() {
 
     const config: AiConfig = {
       provider,
-      apiKey: apiKey.trim(),
+      apiKey: resolvedApiKey,
       model: model.trim(),
       customEndpoint: customEndpoint.trim() || undefined,
       temperature: parseFloat(temperature) || 0.2,
       maxTokens: maxTokens ? parseInt(maxTokens) : undefined,
+      apiKeyConfigured: hasExistingKey || !!resolvedApiKey,
     };
 
     setAiConfig(config);
@@ -155,20 +184,41 @@ export function AiConfigScreen() {
             {showApiKey && (
               <div className="space-y-2">
                 <Label>API キー</Label>
-                <Input
-                  type="password"
-                  placeholder="sk-..."
-                  value={apiKey}
-                  onChange={(e) => setApiKey(e.target.value)}
-                  autoComplete="off"
-                />
-                <p className="text-xs text-muted-foreground">
-                  {provider === "openai"
-                    ? "OpenAI の API キー（https://platform.openai.com/api-keys）"
-                    : provider === "anthropic"
-                      ? "Anthropic の API キー（Console → API Keys）"
-                      : "Google AI Studio の API キー"}
-                </p>
+
+                {!showApiKeyInput && existingConfig?.apiKeyConfigured ? (
+                  /* Tauri mode: key is stored in OS keychain, never shown */
+                  <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
+                    <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                    <span className="flex-1">
+                      API キーは OS キーチェーンに安全に保存されています
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-6 text-xs"
+                      onClick={() => setShowApiKeyInput(true)}
+                    >
+                      変更
+                    </Button>
+                  </div>
+                ) : (
+                  <>
+                    <Input
+                      type="password"
+                      placeholder="sk-..."
+                      value={apiKey}
+                      onChange={(e) => setApiKey(e.target.value)}
+                      autoComplete="off"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      {provider === "openai"
+                        ? "OpenAI の API キー（https://platform.openai.com/api-keys）"
+                        : provider === "anthropic"
+                          ? "Anthropic の API キー（Console → API Keys）"
+                          : "Google AI Studio の API キー"}
+                    </p>
+                  </>
+                )}
               </div>
             )}
 
@@ -199,9 +249,9 @@ export function AiConfigScreen() {
                     <option
                       key={m.id}
                       value={m.id}
-                      title={m.supportsImageInput ? '📷 画像レビュー対応' : 'テキストベースの画面確認のみ'}
+                      title={m.supportsImageInput ? '画像レビュー対応' : 'テキストベースの画面確認のみ'}
                     >
-                      {m.supportsImageInput ? '📷 ' : '   '}{m.name}
+                      {m.supportsImageInput ? '✦ ' : '   '}{m.name}
                     </option>
                   ))}
                   <option disabled>──────────</option>
@@ -242,6 +292,12 @@ export function AiConfigScreen() {
                   {selectedModelInfo.supportsReasoning && (
                     <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                       Reasoning
+                    </span>
+                  )}
+                  {selectedModelInfo.supportsImageInput && (
+                    <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                      <Sparkles className="h-3 w-3" />
+                      画像レビュー
                     </span>
                   )}
                 </div>

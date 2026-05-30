@@ -84,7 +84,13 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
       onOpenChange(false);
       setAppName("");
     } catch (e: any) {
-      setError(e.message || "アプリの作成に失敗しました");
+      const msg = String(e.message || e);
+      // Network errors (sidecar not running) → friendly message
+      if (/Load failed|fetch|NetworkError|Failed to fetch|connect.*refused|ECONNREFUSED/i.test(msg)) {
+        setError("サイドカーサーバーに接続できません。\n`npm run sidecar` を実行してから再試行してください。");
+      } else {
+        setError(msg);
+      }
       setProjectSwitching(false);
       setAppLoading(false);
     } finally {

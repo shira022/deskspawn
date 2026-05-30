@@ -202,12 +202,6 @@ export function MainLayout() {
                 <>
                   {providerIcons[currentProvider]}
                   <span className="text-xs max-w-[80px] truncate">{currentModel || "未選択"}</span>
-                  {(() => {
-                    const info = toolbarModels.find((m) => m.id === currentModel);
-                    return info?.supportsImageInput ? (
-                      <span className="text-[10px]" title="📷 スクリーンショットレビュー対応">📷</span>
-                    ) : null;
-                  })()}
                 </>
               ) : (
                 <>
@@ -295,9 +289,9 @@ export function MainLayout() {
                                 <option
                                   key={m.id}
                                   value={m.id}
-                                  title={m.supportsImageInput ? '📷 画像レビュー対応' : 'テキストベースの画面確認のみ'}
+                                  title={m.supportsImageInput ? '画像レビュー対応' : 'テキストベースの画面確認のみ'}
                                 >
-                                  {m.supportsImageInput ? '📷 ' : '   '}{m.name}
+                                  {m.supportsImageInput ? '✦ ' : '   '}{m.name}
                                 </option>
                               ))}
                               <option disabled>──────────</option>
