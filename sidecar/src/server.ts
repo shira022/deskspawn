@@ -24,6 +24,9 @@ import { withRateLimitRetry } from './retry.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+
+// ── In-memory API key store (received from Rust backend, never from frontend) ─
+let storedApiKey: string | null = null;
 const PROJECTS_DIR = path.join(PROJECT_ROOT, 'projects');
 const PROJECTS_JSON = path.join(PROJECTS_DIR, 'projects.json');
 const TEMPLATE_DIR = path.join(PROJECT_ROOT, 'templates', 'react-template');
@@ -877,6 +880,24 @@ app.post('/chat/history', (req, res) => {
   }
 });
 
+// ── API key management (from Rust backend, never from frontend) ───────────────
+
+/**
+ * Receive API key from the Rust backend (after keychain save or on startup).
+ * The key is stored only in process memory — never written to disk.
+ * The frontend NEVER has access to this endpoint.
+ */
+app.post('/api/config', (req, res) => {
+  const { apiKey } = req.body || {};
+  if (typeof apiKey === 'string') {
+    storedApiKey = apiKey;
+    console.log('[api/config] API key updated in sidecar memory');
+    res.json({ success: true });
+  } else {
+    res.status(400).json({ error: 'apiKey string required' });
+  }
+});
+
 // ── Health check ─────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => {
@@ -889,7 +910,8 @@ app.get('/api/models', async (req, res) => {
   try {
     const provider = (req.query.provider as string) || 'openai';
     const customEndpoint = req.query.customEndpoint as string | undefined;
-    const apiKey = req.query.apiKey as string | undefined;
+    // Use stored key when frontend doesn't provide one
+    const apiKey = (req.query.apiKey as string) || storedApiKey || undefined;
 
     const models = await getModelsForProvider(provider, customEndpoint, apiKey);
     res.json({ models });
@@ -913,10 +935,14 @@ app.post('/chat', async (req, res) => {
     // if project is switched mid-generation.
     const workspaceDir = executors.getWorkspaceDir();
 
+    // Use stored API key (from Rust backend) when frontend doesn't send one.
+    // This ensures the frontend NEVER needs to hold the raw API key.
+    const resolvedApiKey = config?.apiKey || storedApiKey || '';
+
     const model = getModel({
       provider: config?.provider || 'ollama',
       model: config?.model || 'qwen3.5:4b',
-      apiKey: config?.apiKey || '',
+      apiKey: resolvedApiKey,
       customEndpoint: config?.customEndpoint,
       temperature: config?.temperature ?? 0.2,
       maxTokens: config?.maxTokens,
