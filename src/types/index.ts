@@ -166,6 +166,12 @@ export interface StepLogEntry {
   toolLabel?: string;
 }
 
+export interface PhaseOutput {
+  phase: string;
+  label: string;
+  text: string;
+}
+
 export interface ChatMessage {
   id: string;
   role: MessageRole;
@@ -176,6 +182,8 @@ export interface ChatMessage {
   checkpointId?: string;
   /** AIエージェントの各ステップ実行ログ（折りたたみ表示用） */
   stepLogs?: StepLogEntry[];
+  /** 各フェーズの詳細出力（planner/coder/verifier/visual_qa） */
+  phaseOutputs?: PhaseOutput[];
 }
 
 // ============================================================

@@ -4,6 +4,7 @@ import { ChatMessage } from "@/components/chat/ChatMessage";
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StepLogPanel } from "@/components/chat/StepLogPanel";
+import { PhaseDetailPanel } from "@/components/chat/PhaseDetailPanel";
 import { MessageSquare, Bot, Loader2, ChevronDown, ChevronLeft, ChevronRight, History, Clock } from "lucide-react";
 import type { ChatMessage as ChatMessageType, AiConfig, StepLogEntry } from "@/types";
 import { getMessageCountForCheckpoint, restoreCheckpoint } from "@/lib/checkpoint-utils";
@@ -62,6 +63,18 @@ export function ChatPanel() {
   const currentProjectId = useAppStore((s) => s.currentProjectId);
   const projects = useAppStore((s) => s.projects);
   const projectSwitching = useAppStore((s) => s.projectSwitching);
+  const fetchChatHistory = useAppStore((s) => s.fetchChatHistory);
+  const initialized = useAppStore((s) => s.initialized);
+
+  // ── Load chat history when project is confirmed ─────────────
+  // History is persisted per-project on the sidecar.  We must load it AFTER
+  // the project workspace has been set (on initial load, project switch, etc.)
+  // so the sidecar reads from the correct project directory.
+  useEffect(() => {
+    if (initialized && currentProjectId) {
+      fetchChatHistory();
+    }
+  }, [initialized, currentProjectId, fetchChatHistory]);
 
   // When the preview slider has navigated back, only show the messages that
   // existed at that checkpoint.  visibleMessageCount = -1 means "show all".
@@ -73,6 +86,7 @@ export function ChatPanel() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const [liveStepLogs, setLiveStepLogs] = useState<StepLogEntry[]>([]);
+  const [phaseOutputs, setPhaseOutputs] = useState<Record<string, { label: string; text: string }>>({});
   const [continuationRound, setContinuationRound] = useState(0);
   const [maxContinuations, setMaxContinuations] = useState(0);
   const [rateLimitInfo, setRateLimitInfo] = useState<{ retryCount: number; maxRetries: number; waitMs: number } | null>(null);
@@ -178,13 +192,14 @@ export function ChatPanel() {
       setAgentStepCount(0);
       setAgentMaxSteps(estimatedMaxSteps);
       setLiveStepLogs([]);
+      setPhaseOutputs({});
       setContinuationRound(0);
       setMaxContinuations(0);
       setRateLimitInfo(null);
       scrollToBottom(true);
 
       try {
-        const producedOutput = await callSidecar(history, addMessage, setAgentStepCount, setAgentMaxSteps, setLiveStepLogs, setWorkspaceReady, cfg, abortControllerRef, estimatedMaxSteps, setContinuationRound, setMaxContinuations, setRateLimitInfo);
+        const producedOutput = await callSidecar(history, addMessage, setAgentStepCount, setAgentMaxSteps, setLiveStepLogs, setWorkspaceReady, cfg, abortControllerRef, estimatedMaxSteps, setContinuationRound, setMaxContinuations, setRateLimitInfo, setPhaseOutputs);
         if (!producedOutput) {
           setAgentStatus("error");
           setWorkspaceReady(true);
@@ -249,22 +264,24 @@ export function ChatPanel() {
       if (idx === -1) return;
 
       // Restore project files to the state just before the edited message:
-      // find the last assistant message before this user message and use its checkpoint
+      // find the last assistant message before this user message and use its checkpoint.
+      // If no previous assistant message (first message), skip restore — nothing to revert to.
       const prevAssistantMsg = msgs.slice(0, idx).reverse().find((m) => m.role === "assistant");
-      const checkpointId = prevAssistantMsg?.checkpointId ?? "initial";
-      try {
-        setWorkspaceReady(false);
-        await restoreCheckpoint(checkpointId);
-      } catch (e) {
-        console.warn("[chat] Failed to restore checkpoint:", e);
-        setWorkspaceReady(true);
-        addMessage({
-          id: `msg-err-${Date.now()}`,
-          role: "assistant",
-          content: `⚠️ チェックポイントの復元に失敗しました。\n\n${e instanceof Error ? e.message : String(e)}\n\nプレビューを最新の状態に戻します。`,
-          timestamp: Date.now(),
-        });
-        return;
+      if (prevAssistantMsg?.checkpointId) {
+        try {
+          setWorkspaceReady(false);
+          await restoreCheckpoint(prevAssistantMsg.checkpointId);
+        } catch (e) {
+          console.warn("[chat] Failed to restore checkpoint:", e);
+          setWorkspaceReady(true);
+          addMessage({
+            id: `msg-err-${Date.now()}`,
+            role: "assistant",
+            content: `⚠️ チェックポイントの復元に失敗しました。\n\n${e instanceof Error ? e.message : String(e)}\n\nプレビューを最新の状態に戻します。`,
+            timestamp: Date.now(),
+          });
+          return;
+        }
       }
 
       updateMessage(id, { content: newContent });
@@ -290,22 +307,24 @@ export function ChatPanel() {
       const idx = msgs.findIndex((m) => m.id === id);
       if (idx === -1) return;
 
-      // Restore project files to the state just before this user message
+      // Restore project files to the state just before this user message.
+      // If no previous assistant message (first message), skip restore — nothing to revert to.
       const prevAssistantMsg = msgs.slice(0, idx).reverse().find((m) => m.role === "assistant");
-      const checkpointId = prevAssistantMsg?.checkpointId ?? "initial";
-      try {
-        setWorkspaceReady(false);
-        await restoreCheckpoint(checkpointId);
-      } catch (e) {
-        console.warn("[chat] Failed to restore checkpoint:", e);
-        setWorkspaceReady(true);
-        addMessage({
-          id: `msg-err-${Date.now()}`,
-          role: "assistant",
-          content: `⚠️ チェックポイントの復元に失敗しました。\n\n${e instanceof Error ? e.message : String(e)}\n\nプレビューを最新の状態に戻します。`,
-          timestamp: Date.now(),
-        });
-        return;
+      if (prevAssistantMsg?.checkpointId) {
+        try {
+          setWorkspaceReady(false);
+          await restoreCheckpoint(prevAssistantMsg.checkpointId);
+        } catch (e) {
+          console.warn("[chat] Failed to restore checkpoint:", e);
+          setWorkspaceReady(true);
+          addMessage({
+            id: `msg-err-${Date.now()}`,
+            role: "assistant",
+            content: `⚠️ チェックポイントの復元に失敗しました。\n\n${e instanceof Error ? e.message : String(e)}\n\nプレビューを最新の状態に戻します。`,
+            timestamp: Date.now(),
+          });
+          return;
+        }
       }
 
       // Truncate messages after the user message (remove AI response and beyond)
@@ -571,18 +590,34 @@ export function ChatPanel() {
           ) : (
             <div className="max-w-3xl mx-auto space-y-4 py-4">
               {messagesWithGrouping.map((msg, i) => (
-                <ChatMessage
-                  key={msg.id}
-                  message={msg}
-                  showAvatar={msg.showAvatar}
-                  onEdit={msg.role === "user" ? handleEdit : undefined}
-                  onRegenerate={msg.role === "user" && i === lastUserMsgIndex ? () => handleRetry(msg.id) : undefined}
-                  checkpointLabel={(msg as any).checkpointLabel}
-                  checkpointIndex={(msg as any).checkpointIndex}
-                  checkpointCount={(msg as any).checkpointCount}
-                  onNavigateToCheckpoint={handleNavigateToCheckpoint}
-                />
+                <div key={msg.id}>
+                  <ChatMessage
+                    message={msg}
+                    showAvatar={msg.showAvatar}
+                    onEdit={msg.role === "user" ? handleEdit : undefined}
+                    onRegenerate={msg.role === "user" && i === lastUserMsgIndex ? () => handleRetry(msg.id) : undefined}
+                    checkpointLabel={(msg as any).checkpointLabel}
+                    checkpointIndex={(msg as any).checkpointIndex}
+                    checkpointCount={(msg as any).checkpointCount}
+                    onNavigateToCheckpoint={handleNavigateToCheckpoint}
+                  />
+                  {/* Phase detail collapsible sections */}
+                  {msg.phaseOutputs && msg.phaseOutputs.length > 0 && (
+                    <PhaseDetailPanel phaseOutputs={msg.phaseOutputs} />
+                  )}
+                </div>
               ))}
+
+              {/* Phase detail (live during generation) */}
+              {Object.keys(phaseOutputs).length > 0 && (
+                <div className="pl-11">
+                  <PhaseDetailPanel
+                    phaseOutputs={Object.entries(phaseOutputs).map(([phase, { label, text }]) => ({
+                      phase, label, text,
+                    }))}
+                  />
+                </div>
+              )}
 
               {/* Step log (live during generation) */}
               {liveStepLogs.length > 0 && (
@@ -638,7 +673,7 @@ export function ChatPanel() {
 // ── Actual sidecar call via SSE ──────────────────────────────────────────────
 
 interface SSEMessage {
-  type: "tool_call" | "tool_result" | "text" | "error" | "done" | "step_progress" | "checkpoint" | "continuation" | "rate_limit";
+  type: "tool_call" | "tool_result" | "text" | "error" | "done" | "step_progress" | "checkpoint" | "continuation" | "rate_limit" | "triage_start" | "triage_result" | "phase_detail";
   id?: string;
   step?: number;
   maxSteps?: number;
@@ -658,6 +693,12 @@ interface SSEMessage {
   retryCount?: number;
   maxRetries?: number;
   waitMs?: number;
+  // triage fields
+  mode?: "single" | "multi";
+  reason?: string;
+  label?: string;
+  // phase_detail fields
+  phase?: string;
 }
 
 /**
@@ -676,6 +717,7 @@ async function callSidecar(
   setContinuationRound?: (round: number) => void,
   setMaxContinuations?: (max: number) => void,
   setRateLimitInfo?: (info: { retryCount: number; maxRetries: number; waitMs: number } | null) => void,
+  setPhaseOutputs?: (outputs: Record<string, { label: string; text: string }>) => void,
 ): Promise<boolean> {
   const provider = config?.provider ?? "ollama";
   const model = config?.model ?? "";
@@ -723,6 +765,9 @@ async function callSidecar(
   // tool_result は tool_call より先に到着するので、いったんバッファして突き合わせる
   const pendingResults: Array<{ toolName: string; result: string; detail?: Record<string, unknown> }> = [];
 
+  // ── フェーズ詳細出力追跡 ────────────────────────────────────────
+  const localPhaseOutputs: Record<string, { label: string; text: string }> = {};
+
   /** 最新の stepLogs で React 状態を更新 */
   const flushStepLogs = () => {
     setLiveStepLogs([...stepLogs]);
@@ -742,7 +787,15 @@ async function callSidecar(
       try {
         const msg: SSEMessage = JSON.parse(jsonStr);
 
-        if (msg.type === "checkpoint") {
+        if (msg.type === "triage_start") {
+          // トリアージ開始 — 要求分析中
+          // ステータスは既に "running" なので何もしない
+        } else if (msg.type === "triage_result") {
+          // トリアージ完了 — 実行モードが決定
+          // mode: single | multi
+          // reason: 判定理由（日本語）
+          // この情報はパイプラインの進行に影響しない（バックエンドが制御）
+        } else if (msg.type === "checkpoint") {
           lastCheckpointId = msg.id as string;
         } else if (msg.type === "rate_limit") {
           // レートリミット待機中 — フロントエンドに状況表示
@@ -812,6 +865,16 @@ async function callSidecar(
           fullText = msg.text ?? "";
           // Clear rate limit indicator since generation produced output
           if (setRateLimitInfo) setRateLimitInfo(null);
+        } else if (msg.type === "phase_detail") {
+          const phase = msg.phase;
+          const text = msg.text;
+          const label = msg.label;
+          if (phase && text) {
+            const entry = { label: label || phase, text };
+            localPhaseOutputs[phase] = entry;
+            // Live-update the parent state for collapsible UI during generation
+            if (setPhaseOutputs) setPhaseOutputs({ ...localPhaseOutputs });
+          }
         } else if (msg.type === "error") {
           // If the abort was already triggered (stop button / unmount),
           // the server's "aborted" error event is a race condition artifact.
@@ -847,6 +910,11 @@ async function callSidecar(
   }
   if (hasStaleRunning) flushStepLogs();
 
+  // Convert local phase outputs to array for message attachment
+  const phaseOutputsArray = Object.keys(localPhaseOutputs).length > 0
+    ? Object.entries(localPhaseOutputs).map(([phase, { label, text }]) => ({ phase, label, text }))
+    : undefined;
+
   if (fullText) {
     addMessage({
       id: `msg-bot-${Date.now()}`,
@@ -855,6 +923,7 @@ async function callSidecar(
       timestamp: Date.now(),
       checkpointId: lastCheckpointId,
       stepLogs,
+      phaseOutputs: phaseOutputsArray,
     });
     setLiveStepLogs([]);
     setWorkspaceReady(true);

@@ -36,7 +36,9 @@ type BackendCommand =
   | "install_with_winget"
   | "restart_sidecar"
   | "restart_tauri"
-  | "open_url";
+  | "open_url"
+  | "sidecar_port"
+  | "sidecar_status";
 
 // ── Unified call ─────────────────────────────────────────────────────────────
 
@@ -201,6 +203,13 @@ async function browserFallback<T>(
           "Run `tauri dev` to restart the Tauri app.",
       );
       return undefined as T;
+
+    // ── Sidecar status ────────────────────────────────────────────────────
+    case "sidecar_port":
+      return 3001 as T;
+
+    case "sidecar_status":
+      return { running: true, ready: true, pid: null, port: 3001 } as T;
 
     // ── Open URL ───────────────────────────────────────────────────────────
     case "open_url":

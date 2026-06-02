@@ -15,7 +15,7 @@ import {
   ChevronsUpDown,
 } from "lucide-react";
 import { callBackend } from "@/lib/backend";
-import { SIDECAR_HEALTH_URL } from "@/lib/constants";
+import { sidecarHealthUrl, setSidecarPort } from "@/lib/constants";
 
 export function StatusBar() {
   const { agentStatus, agentStepCount, agentMaxSteps, errors, vitePort } =
@@ -27,11 +27,25 @@ export function StatusBar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Poll sidecar health
+  // Initialize sidecar port from Rust backend (Tauri only)
+  useEffect(() => {
+    (async () => {
+      try {
+        const port = await callBackend<number>("sidecar_port");
+        if (typeof port === "number" && port > 0) {
+          setSidecarPort(port);
+        }
+      } catch {
+        // browser mode — use default port 3001
+      }
+    })();
+  }, []);
+
+  // Poll sidecar health (uses dynamic port)
   useEffect(() => {
     const check = async () => {
       try {
-        const res = await fetch(SIDECAR_HEALTH_URL, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(sidecarHealthUrl(), { signal: AbortSignal.timeout(2000) });
         setSidecarOnline(res.ok);
       } catch {
         setSidecarOnline(false);

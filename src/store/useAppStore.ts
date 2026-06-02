@@ -81,6 +81,7 @@ interface Store {
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
   truncateMessages: (fromIndex: number) => void;
   clearMessages: () => void;
+  fetchChatHistory: () => Promise<void>;
 
   // Editing
   editingMessageId: string | null;
@@ -236,19 +237,6 @@ export const useAppStore = create<Store>((set, get) => ({
       } catch {
         // Sidecar not running yet
       }
-
-      // Try loading chat history (so it survives page reload)
-      try {
-        const res = await fetch(`${SIDECAR_BASE}/chat/history`);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.messages) && data.messages.length > 0) {
-            set({ messages: data.messages });
-          }
-        }
-      } catch {
-        // Sidecar not running yet
-      }
     } catch (e) {
       console.warn("Failed to load stored config:", e);
     } finally {
@@ -320,6 +308,22 @@ export const useAppStore = create<Store>((set, get) => ({
     persistMessages(get().messages);
   },
   clearMessages: () => set({ messages: [] }),
+  fetchChatHistory: async () => {
+    try {
+      const res = await fetch(`${SIDECAR_BASE}/chat/history`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.messages) && data.messages.length > 0) {
+          set({ messages: data.messages });
+        } else {
+          // Sidecar returned empty — ensure local state is clean
+          set({ messages: [] });
+        }
+      }
+    } catch {
+      // Sidecar not available — keep current messages
+    }
+  },
 
   editingMessageId: null,
   setEditingMessageId: (editingMessageId) => set({ editingMessageId }),

@@ -5,13 +5,43 @@
  * 各コンポーネントはこのファイルからインポートすること。
  */
 
-/** サイドカーサーバーのベースURL */
-export const SIDECAR_BASE = "http://localhost:3001";
+let _sidecarPort = 3001;
 
-/** サイドカーチャットエンドポイント */
+/** 現在のサイドカーポートを設定する（Rust backendから通知された場合） */
+export function setSidecarPort(port: number) {
+  if (port > 0 && port !== _sidecarPort) {
+    console.log(`[sidecar] Port updated: ${_sidecarPort} → ${port}`);
+    _sidecarPort = port;
+  }
+}
+
+/** 現在のサイドカーポートを取得する */
+export function getSidecarPort(): number {
+  return _sidecarPort;
+}
+
+/** サイドカーサーバーのベースURL（動的） */
+export function sidecarBase(): string {
+  return `http://localhost:${_sidecarPort}`;
+}
+
+/** サイドカーチャットエンドポイント（動的） */
+export function sidecarChatUrl(): string {
+  return `${sidecarBase()}/chat`;
+}
+
+/** サイドカーヘルスチェックURL（動的） */
+export function sidecarHealthUrl(): string {
+  return `${sidecarBase()}/health`;
+}
+
+/**
+ * Legacy constants (keep for backward compatibility).
+ * Note: these are evaluated ONCE at import time.
+ * For dynamic resolution, use the function versions instead.
+ */
+export const SIDECAR_BASE = `http://localhost:${_sidecarPort}`;
 export const SIDECAR_CHAT_URL = `${SIDECAR_BASE}/chat`;
-
-/** サイドカーヘルスチェックURL */
 export const SIDECAR_HEALTH_URL = `${SIDECAR_BASE}/health`;
 
 import type { ProviderKind } from "@/types";
