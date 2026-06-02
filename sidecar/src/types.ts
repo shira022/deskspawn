@@ -202,3 +202,20 @@ export interface ShellAction {
 }
 
 export type Action = FileAction | DiffAction | TemplateAction | ShellAction;
+
+// ─── Multi-Agent Orchestrator Types ─────────────────────────────────────────────
+
+/** Available agent phases in the multi-agent pipeline */
+export type Phase = 'planner' | 'coder' | 'verifier' | 'visual_qa';
+
+/** Token usage tracking */
+export interface Usage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/** Triage result — リクエスト複雑性の分類結果 */
+export interface TriageResult {
+  mode: 'single' | 'multi';
+  reason: string;
+}
