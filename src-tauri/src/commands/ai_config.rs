@@ -6,8 +6,9 @@ use std::path::PathBuf;
 const KEYRING_SERVICE: &str = "com.deskspawn";
 const KEYRING_USER: &str = "api_key";
 
-/// Sidecar base URL.
-const SIDECAR_BASE: &str = "http://localhost:3001";
+/// Default sidecar port (used unless fallback is needed).
+/// The actual port is provided at runtime by SidecarManager.
+pub const DEFAULT_SIDECAR_PORT: u16 = 3001;
 
 /// ── Path helpers ─────────────────────────────────────────────────────────────
 
@@ -102,8 +103,16 @@ fn delete_api_key_from_keychain() {
 /// This is called:
 /// 1. After every `save_ai_config` (key may have changed)
 /// 2. On app startup after the sidecar is ready
+///
+/// `port` defaults to 3001 if not provided (or 0).
 pub fn push_api_key_to_sidecar(api_key: &str) {
-    let url = format!("{}/api/config", SIDECAR_BASE);
+    push_api_key_to_sidecar_on_port(api_key, DEFAULT_SIDECAR_PORT);
+}
+
+/// Same as `push_api_key_to_sidecar` but to a specific sidecar port.
+pub fn push_api_key_to_sidecar_on_port(api_key: &str, port: u16) {
+    let port = if port == 0 { DEFAULT_SIDECAR_PORT } else { port };
+    let url = format!("http://127.0.0.1:{}/api/config", port);
     let body = serde_json::json!({ "apiKey": api_key });
 
     for attempt in 0..5 {

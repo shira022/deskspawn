@@ -46,7 +46,7 @@ pub fn run() {
             for attempt in 1..=3 {
                 match sidecar_manager.start() {
                     Ok(()) => {
-                        log::info!("Sidecar started successfully.");
+                        log::info!("Sidecar started successfully (port {}).", sidecar_manager.actual_port());
                         sidecar_started = true;
                         break;
                     }
@@ -59,13 +59,19 @@ pub fn run() {
                 }
             }
             if sidecar_started {
+                let sidecar_port = sidecar_manager.actual_port();
 
                 // Push stored API key to sidecar (in-memory, never exposed to frontend)
                 if let Some(api_key) = commands::ai_config::load_full_config_for_sidecar() {
-                    commands::ai_config::push_api_key_to_sidecar(&api_key);
+                    commands::ai_config::push_api_key_to_sidecar_on_port(&api_key, sidecar_port);
                     // Clear the key from Rust's stack after pushing
                     drop(api_key);
                 }
+            } else {
+                log::error!(
+                    "Sidecar failed to start after 3 attempts. The frontend will show 'Sidecar Offline'. \
+                     Use the restart button or run 'npm run sidecar' manually."
+                );
             }
             app.manage(sidecar_manager);
 
@@ -104,6 +110,7 @@ pub fn run() {
             commands::sidecar::restart_sidecar,
             commands::sidecar::kill_sidecar,
             commands::sidecar::sidecar_status,
+            commands::sidecar::sidecar_port,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
