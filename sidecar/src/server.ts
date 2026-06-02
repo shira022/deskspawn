@@ -10,15 +10,12 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { ChildProcess, spawn, execSync, execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { generateText } from 'ai';
 import { getModel } from './providers.js';
 import { tools } from './tools.js';
-import { buildSystemPrompt } from './system-prompt.js';
 import * as executors from './tool-executors.js';
 import { getModelsForProvider } from './models-fetcher.js';
 import { takeScreenshot } from './screenshot.js';
-import { StepManager } from './step-limits.js';
-import { withRateLimitRetry } from './retry.js';
+import { runWithTriage, getPhaseLabel } from './orchestrator.js';
 // preview import removed — no longer needed (no Tauri backend)
 
 const __filename = fileURLToPath(import.meta.url);
@@ -37,7 +34,17 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
+// ── Port resolution with fallback ────────────────────────────────────────────
+const DESIRED_PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
+let ACTUAL_PORT = DESIRED_PORT;
+
+// ── Unhandled error resilience ───────────────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[sidecar] UNCAUGHT EXCEPTION — sidecar continuing:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[sidecar] UNHANDLED REJECTION — sidecar continuing:', reason);
+});
 
 // ── Workspace dev server process management ─────────────────────────────────
 
@@ -948,8 +955,6 @@ app.post('/chat', async (req, res) => {
       maxTokens: config?.maxTokens,
     });
 
-    const systemPrompt = buildSystemPrompt();
-    
     // Build message history (system message goes to `system` param, not in messages array)
     const aiMessages = messages.map((m: any) => ({
       role: m.role as 'user' | 'assistant' | 'tool',
@@ -984,15 +989,9 @@ app.post('/chat', async (req, res) => {
       }
     });
 
-    const stepManager = new StepManager(config?.maxSteps || 20);
-    let lastCheckpointId: string | null = null;
-
-    // Note: No pre-generation checkpoint here. Checkpoints are created ONLY after
-    // successful AI generation with non-empty output. This prevents checkpoint
-    // counter inflation when AI fails or returns empty.
-
-    // Create tools with execute functions that emit results via SSE
-    const toolsWithExec = {
+    // ── Build all tool execute functions ──────────────────────────────────
+    // These are later filtered by phase in the multi-agent pipeline.
+    const allToolExecs: Record<string, any> = {
       read_file: {
         ...tools.read_file,
         execute: async ({ path: filePath }: { path: string }) => {
@@ -1045,8 +1044,6 @@ app.post('/chat', async (req, res) => {
       apply_artifact: {
         ...tools.apply_artifact,
         execute: async (input: { id: string; title: string; actions: unknown[] }) => {
-          // input is already a structured object (no JSON string nesting).
-          // The AI SDK handles all serialization, so escaping issues are eliminated.
           const artifact: import('./types.js').Artifact = {
             id: input.id,
             title: input.title,
@@ -1105,7 +1102,6 @@ app.post('/chat', async (req, res) => {
             const summary = errors.length === 0
               ? 'No errors found'
               : `${errors.length} errors found`;
-            // Build a concise, actionable list for the AI
             const details = errors.map((e: any) => ({
               type: e.type,
               pattern: e.pattern,
@@ -1179,7 +1175,6 @@ app.post('/chat', async (req, res) => {
               `, errors=${result.layer2.consoleErrors.length}`,
             );
 
-            // Build SSE notification text (trimmed for log)
             let sseResult = isResponsive
               ? `📱 Responsive: ${result.responsive!.length} viewports captured`
               : `📸 Screenshot captured (${imageSizeKb}KB)`;
@@ -1197,7 +1192,6 @@ app.post('/chat', async (req, res) => {
               result: sseResult,
             });
 
-            // Return full result to the AI model
             return JSON.stringify(result);
           } catch (e: any) {
             const errMsg = `Screenshot failed: ${e?.message || e}`;
@@ -1214,172 +1208,124 @@ app.post('/chat', async (req, res) => {
       },
     };
 
-    // ── Auto-continuation loop ──────────────────────────────────────────
-    // Runs generateText in a loop, automatically starting a new round when
-    // the step limit is hit and the agent is still making progress.
-    let roundMessages = [...aiMessages];
-    let allResultText = '';
-    // Accumulate usage info across rounds
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-
+    // ── Triage + Multi-Agent Pipeline ────────────────────────────────────
+    // Phase 0: Lightweight triage classifies request complexity.
+    //   - "single": runs only Coder phase (fast path)
+    //   - "multi":  runs full pipeline (Planner → Coder → Verifier → Visual QA)
+    //
+    // Tool builder: filters allToolExecs to only the tools allowed per phase.
+    // Pipeline hooks: translate orchestrator events to SSE for the frontend.
+    //
     try {
-      do {
-        // Wrap generateText with rate-limit-aware retry.
-        // If the provider returns a rate-limit error, we wait and retry
-        // (up to maxRetries times), sending progress SSE events so the
-        // frontend can show the user what's happening.
-        const result = await withRateLimitRetry(
-          () => generateText({
-            model,
-            system: systemPrompt,
-            messages: roundMessages as any,
-            tools: toolsWithExec as any,
-            abortSignal: signal,
-            stopWhen: (opts) => stepManager.shouldStop(opts),
-            temperature: config?.temperature ?? 0.2,
-            maxOutputTokens: config?.maxTokens ?? 16384,
-            onStepFinish: (event: any) => {
-              // Record tool calls for progress tracking & loop detection
-              const toolCalls = event.toolCalls || [];
-              stepManager.recordStep(
-                toolCalls.map((tc: any) => ({
-                  toolName: tc.toolName,
-                  args: tc.input || tc.args || {},
-                })),
-              );
+      // Notify frontend that triage is starting
+      sendSSE({ type: 'triage_start', label: '要求を分析中...' });
 
-              const { step, maxSteps, continuationRound, maxContinuations } = stepManager.getProgress();
-              console.log(`[step ${step}] toolCalls=${toolCalls.length} textLen=${event.text?.length || 0} maxSteps=${maxSteps} round=${continuationRound}`);
-
-              // Send step progress with dynamically-computed maxSteps & continuation info
-              sendSSE({
-                type: 'step_progress',
-                step,
-                maxSteps,
-                continuationRound,
-                maxContinuations,
-              });
-
-              // Forward tool calls to the frontend
-              if (toolCalls.length > 0) {
-                for (const call of toolCalls) {
-                  sendSSE({
-                    type: 'tool_call',
-                    step,
-                    toolName: call.toolName,
-                    args: call.input || call.args || {},
-                  });
-                }
-              }
-            },
-          }),
-          // onRetry callback: notify the frontend about the rate limit wait
-          (retryEvent) => {
+      const pipelineResult = await runWithTriage(
+        model,
+        aiMessages,
+        // Build filtered tool set for each phase
+        (toolNames: string[]) => {
+          const subset: Record<string, any> = {};
+          for (const name of toolNames) {
+            if (allToolExecs[name]) {
+              subset[name] = allToolExecs[name];
+            }
+          }
+          return subset;
+        },
+        signal,
+        // Pipeline lifecycle hooks → SSE events
+        {
+          onPhaseStart: (phase) => {
+            console.log(`[pipeline] Starting phase: ${phase}`);
             sendSSE({
-              type: 'rate_limit',
-              retryCount: retryEvent.retryCount,
-              maxRetries: retryEvent.maxRetries,
-              waitMs: retryEvent.waitMs,
+              type: 'phase_start',
+              phase,
+              label: getPhaseLabel(phase),
             });
           },
-        );
 
-        allResultText += (result.text || '');
-        totalInputTokens += result.usage?.inputTokens ?? 0;
-        totalOutputTokens += result.usage?.outputTokens ?? 0;
-
-        // Create checkpoint after each round if AI produced meaningful output
-        if (result.text && result.text.trim().length > 0) {
-          try {
-            lastCheckpointId = await executors.createCheckpoint(workspaceDir);
+          onPhaseEnd: (phase, result) => {
+            console.log(`[pipeline] Phase ${phase} done: steps=${result.stepCount} textLen=${result.text?.length || 0}`);
             sendSSE({
-              type: 'checkpoint',
-              id: lastCheckpointId,
+              type: 'phase_end',
+              phase,
+              steps: result.stepCount,
+              usage: result.usage,
             });
-          } catch (e) {
-            console.warn('[chat] Failed to create checkpoint:', e);
-          }
-        }
+          },
 
-        // Check if we should auto-continue to another round
-        if (stepManager.canAutoContinue()) {
-          stepManager.prepareForContinuation();
+          onPhaseDetail: (phase, text) => {
+            sendSSE({
+              type: 'phase_detail',
+              phase,
+              text,
+              label: getPhaseLabel(phase),
+            });
+          },
 
-          sendSSE({
-            type: 'continuation',
-            round: stepManager.continuationCount,
-            maxRounds: stepManager.maxContinuations,
-          });
-          console.log(`[chat] Auto-continuation round ${stepManager.continuationCount}/${stepManager.maxContinuations}`);
+          onToolCall: (phase, toolName, args) => {
+            console.log(`[pipeline] ${phase}: ${toolName}()`, JSON.stringify(args).substring(0, 100));
+            sendSSE({ type: 'tool_call', phase, toolName, args });
+          },
 
-          // Build continuation prompt
-          roundMessages.push({
-            role: 'user' as const,
-            content: '【自動継続】前回のコード生成がステップ上限に達したため、自動的に次のラウンドに移行しました。現在のプロジェクトの状態を確認し、未完了の実装を続けてください。既に全て完了している場合は、完了報告をしてください。',
-          });
-          continue;
-        }
-        break;
-      } while (true);
+          onStepProgress: (phase, { step, maxSteps }) => {
+            sendSSE({ type: 'step_progress', phase, step, maxSteps });
+          },
 
-      // ── Post-loop: determine final text ─────────────────────────────
-      const finalState = stepManager.getFinalState();
-      const { step: stepCount, maxSteps: effectiveMaxSteps, hitLimit, stoppedReason } = finalState;
+          onRateLimit: (phase, retryCount, maxRetries, waitMs) => {
+            console.log(`[pipeline] ${phase}: rate limit (${retryCount}/${maxRetries}), waiting ${waitMs}ms`);
+            sendSSE({ type: 'rate_limit', phase, retryCount, maxRetries, waitMs });
+          },
 
-      let finalText: string;
-      if (allResultText && allResultText.trim().length > 0) {
-        finalText = allResultText;
-      } else {
-        if (hitLimit) {
-          if (stoppedReason === 'loop_detected') {
-            finalText = `⚠️ 同じ処理を繰り返していると判断されたため、生成を終了しました。「続けて」と送信することで続きの生成を試みます。`;
-            console.log(`[chat] Loop detected, stopped early (step ${stepCount}/${effectiveMaxSteps})`);
-          } else {
-            finalText = `⚠️ 最大ステップ数（${effectiveMaxSteps}）に達したため、生成を終了しました。「続けて」と送信することで続きの生成を試みます。`;
-            console.log(`[chat] Step limit reached (${effectiveMaxSteps}), sent fallback message`);
-          }
-        } else {
-          finalText = '⚠️ 応答の生成に失敗しました。もう一度お試しください。';
-          console.log(`[chat] Empty output (not from step limit).`);
-        }
+          onContinuation: (phase, round, maxRounds) => {
+            console.log(`[pipeline] ${phase}: auto-continuation ${round}/${maxRounds}`);
+            sendSSE({ type: 'continuation', phase, round, maxRounds });
+          },
+
+          onTriageResult: (result) => {
+            console.log(`[triage] mode=${result.mode} reason="${result.reason}"`);
+            sendSSE({ type: 'triage_result', mode: result.mode, reason: result.reason });
+          },
+        },
+      );
+
+      // ── Send final result ────────────────────────────────────────────
+      generationDone = true;
+
+      const { text: finalText, usage: totalUsage, phases } = pipelineResult;
+
+      // ── Create single checkpoint after pipeline completes ──────────
+      if (workspaceDir && phases.length > 0) {
+        executors.createCheckpoint(workspaceDir)
+          .then((id: string) => {
+            sendSSE({ type: 'checkpoint', phase: 'all', id });
+          })
+          .catch((e: any) => console.warn('[pipeline] Failed to create final checkpoint:', e));
       }
 
       sendSSE({
         type: 'text',
-        text: finalText,
-        usage: {
-          inputTokens: totalInputTokens,
-          outputTokens: totalOutputTokens,
-        },
-        steps: stepCount,
-        continuationRound: stepManager.continuationCount,
-        maxContinuations: stepManager.maxContinuations,
+        text: finalText || '⚠️ 応答の生成に失敗しました。もう一度お試しください。',
+        usage: totalUsage,
+        phases,
       });
-      console.log(`[done] textLen=${finalText?.length || 0} totalSteps=${stepCount} continuationRounds=${stepManager.continuationCount}/${stepManager.maxContinuations}`);
-      generationDone = true;
+      console.log(`[done] textLen=${finalText?.length || 0} phases=${phases.join(',')} usage=${JSON.stringify(totalUsage)}`);
     } catch (error: any) {
       generationDone = true;
-      // If the error is from the client disconnecting (AbortError), don't
-      // bother sending an SSE error — the response is already half-closed
-      // and writing would throw. The client will detect the stream ending.
       if (error?.name === 'AbortError' || error?.message === 'This operation was aborted') {
-        console.log('[chat] Generation aborted (client disconnected)');
+        console.log('[pipeline] Generation aborted (client disconnected)');
       } else {
         try {
-          // Provide a friendlier message when rate-limit retries are exhausted
           const isRateLimit = /rate limit|rate_limit|429|too many requests/i.test(
             String(error?.message || error),
           );
           const errorMsg = isRateLimit
             ? `レート制限に達しました。${error?.message || ''}`
             : `Generation failed: ${error?.message || error}`;
-          sendSSE({
-            type: 'error',
-            error: errorMsg,
-          });
+          sendSSE({ type: 'error', error: errorMsg });
         } catch {
-          // Best-effort: client may have already disconnected
+          // Best-effort
         }
       }
     }
@@ -1599,7 +1545,61 @@ app.post('/projects/import', async (req, res) => {
 process.on('SIGTERM', () => { stopWorkspaceDevServer(); process.exit(0); });
 process.on('SIGINT', () => { stopWorkspaceDevServer(); process.exit(0); });
 
-app.listen(PORT, () => {
-  console.log(`DeskSpawn sidecar HTTP server on port ${PORT}`);
-  console.log(`Workspace: ${executors.getWorkspaceDir()}`);
+/**
+ * Kill any process holding a given port (macOS/Linux).
+ * Uses lsof + kill -9. Best-effort; errors are silently swallowed.
+ */
+function killPortProcess(port: number) {
+  try {
+    const pid = execSync(`lsof -ti:${port} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim();
+    if (pid) {
+      console.log(`[sidecar] Killing process on port ${port} (PID: ${pid})...`);
+      execSync(`kill -9 ${pid} 2>/dev/null`, { timeout: 3000 });
+      execSync(`sleep 0.3`, { timeout: 3000 });
+    }
+  } catch {
+    // No process holding the port — good
+  }
+}
+
+/**
+ * Start the HTTP server with port fallback.
+ * First tries to free DESIRED_PORT, then binds; if still busy, tries fallback ports.
+ * Emits "sidecar-ready:PORT" on stdout so the Rust backend can detect the actual port.
+ */
+function startServer(port: number): Promise<void> {
+  // Try to free the first port before binding
+  if (port === DESIRED_PORT) {
+    killPortProcess(port);
+  }
+
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, () => {
+      ACTUAL_PORT = port;
+      // Signal readiness to Rust backend (parses this from stdout)
+      console.log(`sidecar-ready:${ACTUAL_PORT}`);
+      console.log(`DeskSpawn sidecar HTTP server on port ${ACTUAL_PORT}`);
+      console.log(`Workspace: ${executors.getWorkspaceDir()}`);
+      resolve();
+    });
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        const nextPort = port + 1;
+        const maxPort = DESIRED_PORT + 9;
+        if (nextPort <= maxPort) {
+          console.warn(`[sidecar] Port ${port} in use, trying ${nextPort}...`);
+          server.close(() => startServer(nextPort).then(resolve, reject));
+        } else {
+          reject(new Error(`All ports ${DESIRED_PORT}-${maxPort} in use`));
+        }
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
+
+startServer(DESIRED_PORT).catch((err) => {
+  console.error('[sidecar] Failed to start HTTP server:', err);
+  process.exit(1);
 });
