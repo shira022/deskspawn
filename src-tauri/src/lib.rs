@@ -27,13 +27,9 @@ pub fn run() {
                 .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)?;
             log::info!("Workspace path: {:?}", workspace_path);
 
-            // Initialize the error monitor
-            let error_monitor = engine::monitor::ErrorMonitor::new();
-
             // Store in managed state
             app.manage(AppState {
                 workspace_path: workspace_path.clone(),
-                error_monitor,
             });
 
             // Start the security HTTP server (Rust-backed file ops for sidecar)
@@ -61,12 +57,18 @@ pub fn run() {
             if sidecar_started {
                 let sidecar_port = sidecar_manager.actual_port();
 
-                // Push stored API key to sidecar (in-memory, never exposed to frontend)
-                if let Some(api_key) = commands::ai_config::load_full_config_for_sidecar() {
-                    commands::ai_config::push_api_key_to_sidecar_on_port(&api_key, sidecar_port);
-                    // Clear the key from Rust's stack after pushing
-                    drop(api_key);
-                }
+                // Push stored API key to sidecar in a background thread so it
+                // cannot block setup() (macOS Keychain access may prompt the
+                // user or hang, and the Tauri window won't appear until setup
+                // returns).
+                let key_port = sidecar_port;
+                std::thread::spawn(move || {
+                    if let Some(api_key) = commands::ai_config::load_full_config_for_sidecar() {
+                        commands::ai_config::push_api_key_to_sidecar_on_port(&api_key, key_port);
+                        // Clear the key from Rust's stack after pushing
+                        drop(api_key);
+                    }
+                });
             } else {
                 log::error!(
                     "Sidecar failed to start after 3 attempts. The frontend will show 'Sidecar Offline'. \
@@ -95,6 +97,7 @@ pub fn run() {
             commands::harness::get_errors,
             commands::harness::get_workspace_path,
             commands::harness::initialize_workspace,
+            commands::harness::open_in_vscode,
             // Environment check commands
             commands::env_check::check_environment,
             commands::env_check::check_winget,

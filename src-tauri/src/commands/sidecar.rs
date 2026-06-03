@@ -153,6 +153,9 @@ impl SidecarManager {
         }
 
         *guard = Some(child);
+        // Drop the guard before wait_for_ready — otherwise is_running()
+        // inside the loop will deadlock on the same mutex.
+        drop(guard);
 
         // Wait for the sidecar to be ready
         self.wait_for_ready()
