@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -6,8 +7,9 @@ import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import type { ProviderKind, AiConfig, ModelInfo } from "@/types";
+import type { ProviderKind, AiConfig, ModelInfo, StorageMethod } from "@/types";
 import { useModels } from "@/hooks/useModels";
+import { isTauri } from "@/lib/tauri";
 import {
   Sparkles,
   ChevronRight,
@@ -18,20 +20,22 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
+  Lock,
+  FileText,
 } from "lucide-react";
-
-const providers: { id: ProviderKind; name: string; icon: React.ReactNode; description: string }[] = [
-  { id: "openai", name: "OpenAI", icon: <Sparkles className="h-5 w-5" />, description: "GPT" },
-  { id: "anthropic", name: "Anthropic", icon: <Cloud className="h-5 w-5" />, description: "Claude" },
-  { id: "google", name: "Google", icon: <Globe className="h-5 w-5" />, description: "Gemini" },
-  { id: "ollama", name: "Ollama", icon: <Cpu className="h-5 w-5" />, description: "ローカルLLM" },
-  { id: "custom", name: "カスタム", icon: <Server className="h-5 w-5" />, description: "OpenAI 互換" },
-];
 
 const providerNeedsApiKey = (p: ProviderKind) => p !== "ollama";
 
 export function AiConfigScreen() {
   const { setPhase, setAiConfig, aiConfig: existingConfig } = useAppStore();
+  const { t } = useTranslation();
+  const providers: { id: ProviderKind; name: string; icon: React.ReactNode; description: string }[] = [
+    { id: "openai", name: "OpenAI", icon: <Sparkles className="h-5 w-5" />, description: "GPT" },
+    { id: "anthropic", name: "Anthropic", icon: <Cloud className="h-5 w-5" />, description: "Claude" },
+    { id: "google", name: "Google", icon: <Globe className="h-5 w-5" />, description: "Gemini" },
+    { id: "ollama", name: "Ollama", icon: <Cpu className="h-5 w-5" />, description: t('ai.providerOllamaDesc') },
+    { id: "custom", name: t('ai.providerCustom'), icon: <Server className="h-5 w-5" />, description: t('ai.providerCustomDesc') },
+  ];
   const [provider, setProvider] = useState<ProviderKind>(
     existingConfig?.provider ?? "openai",
   );
@@ -55,6 +59,9 @@ export function AiConfigScreen() {
     // Show input if we need a key but don't have one accessible
     !existingConfig?.apiKeyConfigured || !!(existingConfig?.apiKey),
   );
+  const [storageMethod, setStorageMethod] = useState<StorageMethod>(
+    existingConfig?.storageMethod ?? "keychain",
+  );
 
   // Model discovery
   const { models, loading: modelsLoading, error: modelsError, fetchModels } = useModels({
@@ -65,6 +72,7 @@ export function AiConfigScreen() {
   const [selectedModelInfo, setSelectedModelInfo] = useState<ModelInfo | null>(null);
 
   const showApiKey = providerNeedsApiKey(provider);
+  const isTauriEnv = isTauri();
 
   // Fetch models when provider or custom endpoint changes
   useEffect(() => {
@@ -113,22 +121,22 @@ export function AiConfigScreen() {
   const handleNext = () => {
     setError("");
 
-    // If the key is managed by keychain and user didn't change it,
+    // If the key is managed by storage and user didn't change it,
     // send empty apiKey with apiKeyConfigured=true so the Rust backend
-    // keeps the existing keychain entry.
+    // keeps the existing entry.
     const hasExistingKey = existingConfig?.apiKeyConfigured && !showApiKeyInput;
     const resolvedApiKey = hasExistingKey ? "" : apiKey.trim();
 
     if (showApiKey && !resolvedApiKey && !hasExistingKey) {
-      setError("API キーを入力してください");
+      setError(t('ai.error.apiKeyRequired'));
       return;
     }
     if (!model.trim()) {
-      setError("モデルを選択または入力してください");
+      setError(t('ai.error.modelRequired'));
       return;
     }
     if (provider === "custom" && !customEndpoint.trim()) {
-      setError("カスタムエンドポイントを入力してください");
+      setError(t('ai.error.customEndpointRequired'));
       return;
     }
 
@@ -140,6 +148,7 @@ export function AiConfigScreen() {
       temperature: parseFloat(temperature) || 0.2,
       maxTokens: maxTokens ? parseInt(maxTokens) : undefined,
       apiKeyConfigured: hasExistingKey || !!resolvedApiKey,
+      storageMethod: isTauriEnv ? storageMethod : undefined,
     };
 
     setAiConfig(config);
@@ -158,10 +167,10 @@ export function AiConfigScreen() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             <Sparkles className="h-6 w-6 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">DeskSpawn へようこそ</h1>
-          <p className="text-sm text-muted-foreground">
-            使用する AI モデルを設定してください。API キーは OS のキーチェーンに安全に保存されます。
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight">{t('ai.welcome')}</h1>
+           <p className="text-sm text-muted-foreground">
+             {t('ai.welcomeDescription')}
+           </p>
         </div>
 
         <Separator />
@@ -170,7 +179,7 @@ export function AiConfigScreen() {
           <div className="space-y-5 px-1">
             {/* Provider Selection */}
             <div className="space-y-2">
-              <Label>AI プロバイダー</Label>
+              <Label>{t('ai.provider')}</Label>
               <Select value={provider} onChange={handleProviderChange}>
                 {providers.map((p) => (
                   <option key={p.id} value={p.id}>
@@ -183,14 +192,16 @@ export function AiConfigScreen() {
             {/* API Key */}
             {showApiKey && (
               <div className="space-y-2">
-                <Label>API キー</Label>
+                <Label>{t('ai.apiKey')}</Label>
 
                 {!showApiKeyInput && existingConfig?.apiKeyConfigured ? (
-                  /* Tauri mode: key is stored in OS keychain, never shown */
                   <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                     <span className="flex-1">
-                      API キーは OS キーチェーンに安全に保存されています
+                      {t('ai.apiKey')} {t('ai.savedIn')}{' '}
+                      {storageMethod === "keychain"
+                        ? t('ai.keychain')
+                        : "credentials.json"}
                     </span>
                     <Button
                       variant="ghost"
@@ -198,7 +209,7 @@ export function AiConfigScreen() {
                       className="h-6 text-xs"
                       onClick={() => setShowApiKeyInput(true)}
                     >
-                      変更
+                      {t('common.change')}
                     </Button>
                   </div>
                 ) : (
@@ -212,24 +223,82 @@ export function AiConfigScreen() {
                     />
                     <p className="text-xs text-muted-foreground">
                       {provider === "openai"
-                        ? "OpenAI の API キー（https://platform.openai.com/api-keys）"
+                        ? t('ai.apiKeyInstructions.openai')
                         : provider === "anthropic"
-                          ? "Anthropic の API キー（Console → API Keys）"
-                          : "Google AI Studio の API キー"}
+                          ? t('ai.apiKeyInstructions.anthropic')
+                          : t('ai.apiKeyInstructions.google')}
                     </p>
                   </>
+                )}
+
+                {/* Storage method selector (Tauri mode only) */}
+                {isTauriEnv && (
+                  <div className="space-y-2 pt-1">
+                    <Label>{t('ai.storageMethod')}</Label>
+                    <div className="grid grid-cols-2 gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setStorageMethod("keychain")}
+                        className={`flex items-start gap-2.5 rounded-md border p-3 text-left text-sm transition-colors ${
+                          storageMethod === "keychain"
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-muted-foreground/30"
+                        }`}
+                      >
+                        <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0">
+                          <div className="font-medium">{t('ai.keychain')}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {t('common.recommended')}
+                          </div>
+                        </div>
+                        {storageMethod === "keychain" && (
+                          <div className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary">
+                            <div className="h-2 w-2 rounded-full bg-primary-foreground" />
+                          </div>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStorageMethod("file")}
+                        className={`flex items-start gap-2.5 rounded-md border p-3 text-left text-sm transition-colors ${
+                          storageMethod === "file"
+                            ? "border-primary bg-primary/5"
+                            : "border-border hover:border-muted-foreground/30"
+                        }`}
+                      >
+                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                        <div className="min-w-0">
+                          <div className="font-medium">{t('ai.file')}</div>
+                          <div className="text-xs text-muted-foreground">
+                            credentials.json
+                          </div>
+                        </div>
+                        {storageMethod === "file" && (
+                          <div className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary">
+                            <div className="h-2 w-2 rounded-full bg-primary-foreground" />
+                          </div>
+                        )}
+                      </button>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {storageMethod === "keychain"
+                        ? t('ai.keychainDescription')
+                        : t('ai.fileDescription')}
+                    </p>
+                  </div>
                 )}
               </div>
             )}
 
             {/* Model Selection */}
             <div className="space-y-2">
-              <Label>モデル</Label>
+              <Label>{t('ai.model')}</Label>
 
               {modelsLoading ? (
                 <div className="flex items-center gap-2 h-9 px-3 rounded-md border bg-muted/30 text-sm text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  モデル一覧を取得中...
+                  {t('ai.loadingModels')}
                 </div>
               ) : modelsError ? (
                 <div className="space-y-2">
@@ -238,7 +307,7 @@ export function AiConfigScreen() {
                     {modelsError}
                   </div>
                   <Input
-                    placeholder="モデル名を手動入力"
+                    placeholder={t('ai.manualModelPlaceholder')}
                     value={model}
                     onChange={(e) => setModel(e.target.value)}
                   />
@@ -249,27 +318,27 @@ export function AiConfigScreen() {
                     <option
                       key={m.id}
                       value={m.id}
-                      title={m.supportsImageInput ? '画像レビュー対応' : 'テキストベースの画面確認のみ'}
+                      title={m.supportsImageInput ? t('ai.supportsImageReview') : t('ai.textOnlyReview')}
                     >
                       {m.supportsImageInput ? '✦ ' : '   '}{m.name}
                     </option>
                   ))}
                   <option disabled>──────────</option>
-                  <option value="__custom__">その他（手動入力）...</option>
+                  <option value="__custom__">{t('ai.otherManual')}</option>
                 </Select>
               ) : (
                 <Input
-                  placeholder={`モデル名を入力（例: gpt-4o）`}
+                  placeholder={t('ai.modelPlaceholderWithExample')}
                   value={model}
                   onChange={(e) => setModel(e.target.value)}
                 />
               )}
 
-              {/* Manual input fallback when "その他" selected */}
+              {/* Manual input fallback */}
               {model === "" && hasModels && (
                 <Input
                   className="mt-2"
-                  placeholder="モデルIDを手動入力"
+                  placeholder={t('ai.manualModelId')}
                   value=""
                   onChange={(e) => setModel(e.target.value)}
                 />
@@ -279,10 +348,10 @@ export function AiConfigScreen() {
               {selectedModelInfo && (
                 <div className="flex flex-wrap gap-1.5 mt-1">
                   <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    コンテキスト: {formatTokens(selectedModelInfo.contextLimit)}
+                    {t('ai.context')} {formatTokens(selectedModelInfo.contextLimit)}
                   </span>
                   <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
-                    出力上限: {formatTokens(selectedModelInfo.maxOutput)}
+                    {t('ai.maxOutput')} {formatTokens(selectedModelInfo.maxOutput)}
                   </span>
                   {selectedModelInfo.supportsToolCall && (
                     <span className="inline-flex items-center rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
@@ -297,7 +366,7 @@ export function AiConfigScreen() {
                   {selectedModelInfo.supportsImageInput && (
                     <span className="inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
                       <Sparkles className="h-3 w-3" />
-                      画像レビュー
+                      {t('ai.supportsImageReview')}
                     </span>
                   )}
                 </div>
@@ -307,7 +376,7 @@ export function AiConfigScreen() {
             {/* Custom Endpoint */}
             {provider === "custom" && (
               <div className="space-y-2">
-                <Label>カスタムエンドポイント</Label>
+                <Label>{t('ai.customEndpoint')}</Label>
                 <Input
                   placeholder="https://your-api.example.com/v1"
                   value={customEndpoint}
@@ -318,7 +387,7 @@ export function AiConfigScreen() {
 
             {/* Advanced Options */}
             <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-              <p className="text-xs font-medium text-muted-foreground">詳細設定（任意）</p>
+              <p className="text-xs font-medium text-muted-foreground">{t('ai.advancedSettings')}</p>
               <div className={`grid gap-3 ${showTemperature ? "grid-cols-2" : "grid-cols-1"}`}>
                 {showTemperature && (
                   <div className="space-y-1.5">
@@ -339,7 +408,7 @@ export function AiConfigScreen() {
                     type="number"
                     min="1"
                     max="200000"
-                    placeholder="自動"
+                    placeholder={t('common.auto')}
                     value={maxTokens}
                     onChange={(e) => setMaxTokens(e.target.value)}
                   />
@@ -347,7 +416,7 @@ export function AiConfigScreen() {
               </div>
               {!showTemperature && (
                 <p className="text-[10px] text-muted-foreground">
-                  ※ このモデルは Temperature パラメータに対応していません
+                  {t('ai.temperatureNotSupported')}
                 </p>
               )}
             </div>
@@ -361,7 +430,7 @@ export function AiConfigScreen() {
         <Separator />
 
         <Button onClick={handleNext} className="w-full" size="lg">
-          次へ：環境チェック
+          {t('ai.nextEnvCheck')}
           <ChevronRight className="h-4 w-4" />
         </Button>
       </div>

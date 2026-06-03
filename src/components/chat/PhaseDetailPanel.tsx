@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { PhaseOutput } from "@/types";
 import { ChevronDown, ChevronRight, FileJson, Code, Bug, Eye } from "lucide-react";
@@ -27,6 +28,7 @@ const PHASE_COLORS: Record<string, string> = {
  */
 export function PhaseDetailPanel({ phaseOutputs }: PhaseDetailPanelProps) {
   const [panelOpen, setPanelOpen] = useState(false);
+  const { t } = useTranslation();
   const phases = phaseOutputs.filter((p) => p.text?.trim());
 
   // Phase order (from pipeline sequence)
@@ -56,7 +58,7 @@ export function PhaseDetailPanel({ phaseOutputs }: PhaseDetailPanelProps) {
           )}
         </span>
         <span className="text-[11px] font-medium text-muted-foreground/70">
-          フェーズ詳細
+          {t('phase.detail')}
         </span>
         <div className="flex items-center gap-1">
           {sorted.map((p) => (
@@ -66,14 +68,14 @@ export function PhaseDetailPanel({ phaseOutputs }: PhaseDetailPanelProps) {
                 "inline-flex h-5 w-5 items-center justify-center rounded-full",
                 PHASE_COLORS[p.phase] || "bg-muted-foreground/10 text-muted-foreground",
               )}
-              title={p.label}
+              title={t(`phase.${p.phase}` as any, { defaultValue: p.label })}
             >
               {PHASE_ICONS[p.phase] || null}
             </span>
           ))}
         </div>
         <span className="text-[10px] text-muted-foreground/50 ml-auto tabular-nums">
-          {sorted.length} フェーズ
+          {t('phase.count', { count: sorted.length })}
         </span>
       </button>
 
@@ -91,6 +93,7 @@ export function PhaseDetailPanel({ phaseOutputs }: PhaseDetailPanelProps) {
 
 function PhaseSection({ phase }: { phase: PhaseOutput }) {
   const [open, setOpen] = useState(false);
+  const { t } = useTranslation();
 
   return (
     <div
@@ -123,10 +126,10 @@ function PhaseSection({ phase }: { phase: PhaseOutput }) {
           {PHASE_ICONS[phase.phase] || null}
         </span>
         <span className="min-w-0 flex-1 text-xs font-medium text-foreground/80 truncate">
-          {phase.label}
+          {t(`phase.${phase.phase}` as any, { defaultValue: phase.label })}
         </span>
         <span className="text-[10px] text-muted-foreground/50 tabular-nums">
-          {phase.text.length} 文字
+          {t('phase.charCount', { count: phase.text.length })}
         </span>
       </button>
 
