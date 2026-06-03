@@ -1,22 +1,18 @@
 /**
- * Triage Agent — リクエスト複雑性の軽量分類
+ * Triage Agent — Lightweight request complexity classification.
  *
- * 本処理の前に最小コストの LLM 呼び出しでリクエストを分析し、
- * 単一エージェント (single) / マルチエージェント (multi) を判断する。
+ * Analyzes the request with a minimum-cost LLM call before the main processing
+ * to decide between single-agent (simple) or multi-agent (complex) execution.
  *
- * コスト: ~100-200 tokens, <1秒
- * 
- * 「単一で十分なタスクまでマルチパイプラインを回す」という
- * オーバーキルを防ぐためのゲートウェイ。
+ * Cost: ~100-200 tokens, <1 second.
  */
 import { generateText, type LanguageModel } from 'ai';
 
 // ─── Types ─────────────────────────────────────────────────────────────────────
 
 export interface TriageResult {
-  /** 実行モード */
   mode: 'single' | 'multi';
-  /** 判断理由（ユーザー向け、日本語） */
+  /** User-facing reason for the triage decision (short text) */
   reason: string;
 }
 
@@ -49,10 +45,10 @@ Respond with "multi" when:
 
 Always respond with valid JSON only (no markdown, no explanation):
 
-{"mode": "single", "reason": "簡易な修正のためシングルモードで実行します"}
-{"mode": "multi", "reason": "複数のファイル生成が必要なためマルチエージェントモードで実行します"}
+{"mode": "single", "reason": "Simple fix, running in single mode"}
+{"mode": "multi", "reason": "Multiple files needed, running multi-agent mode"}
 
-Keep reasons short (max 50 chars), in Japanese, user-facing.`;
+Keep reasons short (max 50 chars), user-facing.`;
 
 // ─── Triage Function ──────────────────────────────────────────────────────────
 
@@ -76,7 +72,7 @@ export async function triageRequest(
   if (!lastUserMsg) {
     return {
       mode: 'single',
-      reason: 'ユーザーメッセージが見つからないためシングルモード',
+      reason: 'No user message found, running single mode',
     };
   }
 
@@ -94,10 +90,10 @@ export async function triageRequest(
 
     // Fallback: parse failed
     console.warn('[triage] Failed to parse triage response, falling back to single:', result.text);
-    return { mode: 'single', reason: '判断できなかったためシングルモード' };
+    return { mode: 'single', reason: 'Could not determine complexity, running single mode' };
   } catch (error) {
     console.warn('[triage] Triage call failed, falling back to single:', error);
-    return { mode: 'single', reason: '分析エラーのためシングルモード' };
+    return { mode: 'single', reason: 'Analysis error, running single mode' };
   }
 }
 

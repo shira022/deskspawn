@@ -16,6 +16,7 @@ import * as executors from './tool-executors.js';
 import { getModelsForProvider } from './models-fetcher.js';
 import { takeScreenshot } from './screenshot.js';
 import { runWithTriage, getPhaseLabel } from './orchestrator.js';
+import { initMCPClients, getMCPTools, closeMCPClients } from './mcp-client.js';
 // preview import removed — no longer needed (no Tauri backend)
 
 const __filename = fileURLToPath(import.meta.url);
@@ -101,8 +102,8 @@ function App() {
   return <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-8">
     <div className="text-center space-y-4">
       <h1 className="text-2xl font-bold">${name}</h1>
-      <p className="text-muted-foreground">新しいアプリが作成されました。</p>
-      <p className="text-sm text-muted-foreground">AI チャットでアプリを構築してください。</p>
+      <p className="text-muted-foreground">Your new app has been created.</p>
+      <p className="text-sm text-muted-foreground">Use the AI chat to build your app.</p>
     </div>
   </div>;
 }
@@ -110,7 +111,7 @@ function App() {
 ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
 `);
     fs.writeFileSync(path.join(projectDir, 'index.html'), `<!DOCTYPE html>
-<html lang="ja">
+<html lang="en">
   <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${name}</title></head>
   <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
 </html>`);
@@ -709,7 +710,7 @@ app.delete('/projects/:id', (req, res) => {
     // Don't allow deleting the currently active project
     const workspaceDir = executors.getWorkspaceDir();
     if (path.basename(workspaceDir) === id) {
-      res.status(400).json({ error: '現在アクティブなプロジェクトは削除できません。先に別のプロジェクトに切り替えてください。' });
+      res.status(400).json({ error: 'Cannot delete the currently active project. Switch to a different project first.' });
       return;
     }
 
@@ -917,7 +918,8 @@ app.get('/api/models', async (req, res) => {
   try {
     const provider = (req.query.provider as string) || 'openai';
     const customEndpoint = req.query.customEndpoint as string | undefined;
-    // Use stored key when frontend doesn't provide one
+    // Use stored key when frontend doesn't provide one.
+    // undefined lets provider SDKs fall back to environment variables.
     const apiKey = (req.query.apiKey as string) || storedApiKey || undefined;
 
     const models = await getModelsForProvider(provider, customEndpoint, apiKey);
@@ -944,11 +946,13 @@ app.post('/chat', async (req, res) => {
 
     // Use stored API key (from Rust backend) when frontend doesn't send one.
     // This ensures the frontend NEVER needs to hold the raw API key.
-    const resolvedApiKey = config?.apiKey || storedApiKey || '';
+    // API keys come exclusively from keychain/file (Tauri) or localStorage
+    // (browser). Environment variables are NEVER used as fallback.
+    const resolvedApiKey = config?.apiKey || storedApiKey || undefined;
 
     const model = getModel({
       provider: config?.provider || 'ollama',
-      model: config?.model || 'qwen3.5:4b',
+      model: config?.model,
       apiKey: resolvedApiKey,
       customEndpoint: config?.customEndpoint,
       temperature: config?.temperature ?? 0.2,
@@ -1130,6 +1134,16 @@ app.post('/chat', async (req, res) => {
           }
         },
       },
+      // ── MCP tools (grep.app GitHub code search) ────────────────
+      ...(() => {
+        const mcp = getMCPTools();
+        if (mcp) {
+          console.log(`[mcp] Exposing tools: ${Object.keys(mcp).join(', ')}`);
+          return mcp;
+        }
+        return {};
+      })(),
+
       take_screenshot: {
         ...tools.take_screenshot,
         execute: async (input: {
@@ -1218,7 +1232,7 @@ app.post('/chat', async (req, res) => {
     //
     try {
       // Notify frontend that triage is starting
-      sendSSE({ type: 'triage_start', label: '要求を分析中...' });
+      sendSSE({ type: 'triage_start', label: 'Analyzing request...' });
 
       const pipelineResult = await runWithTriage(
         model,
@@ -1306,7 +1320,7 @@ app.post('/chat', async (req, res) => {
 
       sendSSE({
         type: 'text',
-        text: finalText || '⚠️ 応答の生成に失敗しました。もう一度お試しください。',
+        text: finalText || '⚠️ Response generation failed. Please try again.',
         usage: totalUsage,
         phases,
       });
@@ -1320,10 +1334,12 @@ app.post('/chat', async (req, res) => {
           const isRateLimit = /rate limit|rate_limit|429|too many requests/i.test(
             String(error?.message || error),
           );
-          const errorMsg = isRateLimit
-            ? `レート制限に達しました。${error?.message || ''}`
-            : `Generation failed: ${error?.message || error}`;
-          sendSSE({ type: 'error', error: errorMsg });
+          const errorMsg = error?.message || String(error || '');
+          sendSSE({
+            type: 'error',
+            error: errorMsg,
+            errorCode: isRateLimit ? 'RATE_LIMIT' : 'GENERATION_FAILED',
+          });
         } catch {
           // Best-effort
         }
@@ -1542,8 +1558,8 @@ app.post('/projects/import', async (req, res) => {
 // ── Start ────────────────────────────────────────────────────────────────────
 
 // Cleanup on exit
-process.on('SIGTERM', () => { stopWorkspaceDevServer(); process.exit(0); });
-process.on('SIGINT', () => { stopWorkspaceDevServer(); process.exit(0); });
+process.on('SIGTERM', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
+process.on('SIGINT', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
 
 /**
  * Kill any process holding a given port (macOS/Linux).
@@ -1599,7 +1615,10 @@ function startServer(port: number): Promise<void> {
   });
 }
 
-startServer(DESIRED_PORT).catch((err) => {
+startServer(DESIRED_PORT).then(() => {
+  // Initialise MCP clients (non-fatal if grep.app is unreachable)
+  initMCPClients();
+}).catch((err) => {
   console.error('[sidecar] Failed to start HTTP server:', err);
   process.exit(1);
 });

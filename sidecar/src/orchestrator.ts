@@ -27,10 +27,10 @@ import type { Phase, Usage, TriageResult } from './types.js';
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
 const PHASE_LABELS: Record<Phase, string> = {
-  planner: '📋 要件分析と設計',
-  coder: '⚡ コード生成',
-  verifier: '🔍 エラーチェックと修正',
-  visual_qa: '📸 画面確認',
+  planner: 'Planning & Design',
+  coder: 'Code Generation',
+  verifier: 'Error Check & Fix',
+  visual_qa: 'Visual Review',
 };
 
 /** Phase-specific step limits and continuation settings */
@@ -43,8 +43,8 @@ const PHASE_CONFIGS: Record<Phase, { stepLimit: number; maxContinuations: number
 
 /** Tools available per phase */
 const PHASE_TOOLS: Record<Phase, string[]> = {
-  planner:   ['read_file', 'list_files'],
-  coder:     ['read_file', 'list_files', 'apply_artifact', 'run_shell', 'get_errors'],
+  planner:   ['read_file', 'list_files', 'searchGitHub'],
+  coder:     ['read_file', 'list_files', 'apply_artifact', 'run_shell', 'get_errors', 'searchGitHub'],
   verifier:  ['read_file', 'get_errors', 'apply_artifact'],
   visual_qa: ['take_screenshot', 'read_file'],
 };
@@ -311,7 +311,7 @@ export async function runPhase(
         // Build continuation prompt
         roundMessages.push({
           role: 'user' as const,
-          content: '【自動継続】前回のコード生成がステップ上限に達したため、自動的に次のラウンドに移行しました。現在のプロジェクトの状態を確認し、未完了の実装を続けてください。既に全て完了している場合は、完了報告をしてください。',
+          content: '[Auto-continuation] The previous code generation reached the step limit, so the next round has started automatically. Review the current project state and continue with any unfinished implementation. If everything is complete, please report completion.',
         });
         continue;
       }

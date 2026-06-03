@@ -228,15 +228,15 @@ export async function handleChat(
       if (hitLimit) {
         if (stoppedReason === 'loop_detected') {
           finalText = suggestion
-            ? `⚠️ 処理がループしているため終了しました。${suggestion}`
-            : `⚠️ 同じ処理を繰り返していると判断されたため、生成を終了しました。「続けて」と送信することで続きの生成を試みます。`;
+            ? `⚠️ Loop detected, stopping generation. ${suggestion}`
+            : `⚠️ Repeated the same actions. Generation stopped. Send "continue" to resume.`;
         } else {
           finalText = suggestion
-            ? `⚠️ 最大ステップ数（${effectiveMaxSteps}）に達しました。${suggestion}`
-            : `⚠️ 最大ステップ数（${effectiveMaxSteps}）に達したため、生成を終了しました。「続けて」と送信することで続きの生成を試みます。`;
+            ? `⚠️ Reached max steps (${effectiveMaxSteps}). ${suggestion}`
+            : `⚠️ Reached max steps (${effectiveMaxSteps}). Generation stopped. Send "continue" to resume.`;
         }
       } else {
-        finalText = '⚠️ 応答の生成に失敗しました。もう一度お試しください。';
+        finalText = '⚠️ Response generation failed. Please try again.';
       }
     }
 

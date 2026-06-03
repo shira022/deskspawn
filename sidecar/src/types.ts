@@ -214,8 +214,26 @@ export interface Usage {
   outputTokens: number;
 }
 
-/** Triage result — リクエスト複雑性の分類結果 */
+/** Triage result */
 export interface TriageResult {
   mode: 'single' | 'multi';
   reason: string;
+}
+
+/**
+ * Error codes for user-facing messages in SSE events (server.ts HTTP mode).
+ * The frontend uses these codes to look up localized translations.
+ */
+export type ErrorCode =
+  | 'RATE_LIMIT'
+  | 'GENERATION_FAILED'
+  | 'PROJECT_DELETE_ACTIVE';
+
+/**
+ * Extended error detail for SSE error events that includes an optional
+ * error code for frontend i18n lookup.
+ */
+export interface ErrorEventDetail {
+  error: string;
+  errorCode?: ErrorCode;
 }
