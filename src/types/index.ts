@@ -4,6 +4,8 @@
 
 export type ProviderKind = "openai" | "anthropic" | "google" | "ollama" | "custom";
 
+export type StorageMethod = "keychain" | "file";
+
 export interface AiConfig {
   provider: ProviderKind;
   apiKey: string;
@@ -15,11 +17,17 @@ export interface AiConfig {
   /** エージェントの最大ステップ数（動的ステップ管理のベース値として使用） */
   maxSteps?: number;
   /**
-   * Tauri 実環境で API キーが OS キーチェーンに保存されている場合 true。
+   * API キーがストレージに保存されている場合 true。
    * フロントエンドはキーの実際の値にアクセスできず、このフラグでのみ
    * 設定済みかどうかを判断する。
    */
   apiKeyConfigured?: boolean;
+  /**
+   * API キーの保存方法:
+   * - "keychain": OS キーチェーン（macOS Keychain / Windows Credential Manager）
+   * - "file": 設定ディレクトリ内の credentials.json（パーミッション 600）
+   */
+  storageMethod?: StorageMethod;
 }
 
 // ── Model Discovery ─────────────────────────────────────────────────────────
@@ -240,3 +248,62 @@ export interface AppState {
   errors: ErrorInfo[];
   vitePort: number;
 }
+
+// ============================================================
+// Theme / Settings Types
+// ============================================================
+
+export type ThemeMode = "light" | "dark" | "system";
+
+export interface AppSettings {
+  theme: ThemeMode;
+  uiFontSize: number; // px
+  codeFontSize: number; // px
+  defaultTemperature: number;
+  language: string; // e.g. "ja", "en"
+}
+
+export const DEFAULT_SETTINGS: AppSettings = {
+  theme: "system",
+  uiFontSize: 14,
+  codeFontSize: 13,
+  defaultTemperature: 0.2,
+  language: "ja",
+};
+
+// ============================================================
+// Toast Types
+// ============================================================
+
+export type ToastVariant = "success" | "error" | "info" | "warning";
+
+export interface Toast {
+  id: string;
+  message: string;
+  variant: ToastVariant;
+  duration?: number; // ms, default 4000
+}
+
+// ============================================================
+// Token Usage Types
+// ============================================================
+
+export interface TokenUsage {
+  inputTokens: number;
+  outputTokens: number;
+  /** ISO timestamp when this usage was recorded */
+  timestamp: string;
+  /** Optional: which AI provider/model was used */
+  model?: string;
+  /** Optional: estimated cost in USD */
+  estimatedCost?: number;
+}
+
+// Provider-specific pricing per 1K tokens (approximate)
+export const PROVIDER_PRICES: Record<string, { input: number; output: number }> = {
+  openai: { input: 0.0025, output: 0.01 },    // GPT-4o mini approx
+  anthropic: { input: 0.003, output: 0.015 },  // Claude Sonnet approx
+  google: { input: 0.0025, output: 0.0075 },   // Gemini 1.5 Pro approx
+  ollama: { input: 0, output: 0 },              // Local, free
+  custom: { input: 0, output: 0 },              // Unknown pricing
+};
