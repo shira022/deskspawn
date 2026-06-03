@@ -12,9 +12,15 @@ import type {
   FileNode,
   ProjectMeta,
   CheckpointInfo,
+  AppSettings,
+  Toast,
+  TokenUsage,
 } from "@/types";
+import { DEFAULT_SETTINGS } from "@/types";
+import { isTauri } from "@/lib/tauri";
 import { callBackend } from "@/lib/backend";
-import { SIDECAR_BASE } from "@/lib/constants";
+import { SETTINGS_KEY, sidecarBase } from "@/lib/constants";
+import i18n from "@/lib/i18n";
 
 /**
  * Persist the current messages array to the sidecar so it survives page reloads.
@@ -22,7 +28,7 @@ import { SIDECAR_BASE } from "@/lib/constants";
  */
 async function persistMessages(messages: ChatMessage[]): Promise<void> {
   try {
-    await fetch(`${SIDECAR_BASE}/chat/history`, {
+    await fetch(`${sidecarBase()}/chat/history`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages }),
@@ -153,6 +159,26 @@ interface Store {
   // Generation reload trigger (increment to force iframe reload after generation)
   reloadCounter: number;
   triggerReload: () => void;
+
+  // Settings
+  settings: AppSettings;
+  setSettings: (settings: AppSettings) => void;
+  updateSettings: (partial: Partial<AppSettings>) => void;
+
+  // Theme
+  resolvedTheme: "light" | "dark";
+  setResolvedTheme: (theme: "light" | "dark") => void;
+
+  // Toasts
+  toasts: Toast[];
+  addToast: (toast: Omit<Toast, "id">) => void;
+  removeToast: (id: string) => void;
+
+  // Token Usage
+  sessionUsage: TokenUsage[];
+  addTokenUsage: (usage: TokenUsage) => void;
+  clearSessionUsage: () => void;
+  totalSessionCost: () => number;
 }
 
 export const useAppStore = create<Store>((set, get) => ({
@@ -160,43 +186,57 @@ export const useAppStore = create<Store>((set, get) => ({
   setPhase: (phase) => set({ phase }),
   initialized: false,
   initialize: async () => {
-    try {
+    // Timeout to prevent the app hanging indefinitely if IPC/fetch never settles.
+    // The UI will show after 10s regardless, and background work continues silently.
+    const INIT_TIMEOUT_MS = 10_000;
+    const timeout = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        console.warn(
+          `[initialize] Timeout after ${INIT_TIMEOUT_MS}ms, forcing UI to show`,
+        );
+        resolve();
+      }, INIT_TIMEOUT_MS);
+    });
+
+    const doInit = (async () => {
       // Load AI config from backend (Tauri IPC or localStorage)
       try {
         const config = await callBackend<AiConfig | null>("load_ai_config");
         if (config) {
-          const isTauri =
-            typeof window !== "undefined" &&
-            !!(window as any).__TAURI_INTERNALS__;
+          const isTauriEnv = isTauri();
 
-          // Tauri mode: apiKey is "" (stored in keychain, never in frontend).
-          //   Check apiKeyConfigured flag or Ollama (no key needed).
-          // Browser mode: apiKey comes from localStorage.
-          //   Check actual apiKey value.
-          const hasAccessibleKey =
-            !!(config.apiKey || config.apiKeyConfigured || config.provider === "ollama");
+          if (config.provider && config.model) {
+            // Tauri mode: Rust backend manages the API key (keychain/file).
+            // Config existence with provider+model = properly configured.
+            // Browser mode: need actual key or apiKeyConfigured flag or Ollama.
+            const canProceed =
+              isTauriEnv ||
+              !!(
+                config.apiKey ||
+                config.apiKeyConfigured ||
+                config.provider === "ollama"
+              );
 
-          if (config.provider && config.model && hasAccessibleKey) {
-            // In Tauri mode, strip apiKey for zero frontend exposure
-            if (isTauri) {
-              config.apiKey = "";
+            if (canProceed) {
+              if (isTauriEnv) {
+                config.apiKey = "";
+              }
+              set({ aiConfig: config, phase: "main" });
+            } else {
+              console.warn(
+                "[initialize] Stored AI config is incomplete; staying on setup screen.",
+                config,
+              );
             }
-            set({ aiConfig: config, phase: "main" });
-          } else {
-            console.warn(
-              "[initialize] Stored AI config is incomplete; staying on setup screen.",
-              config,
-            );
           }
         }
       } catch (e) {
         console.warn("[initialize] Failed to load AI config:", e);
-        // Stay on ai-config phase — user will see the setup screen
       }
 
       // Load projects on init
       try {
-        const res = await fetch(`${SIDECAR_BASE}/projects/current`);
+        const res = await fetch(`${sidecarBase()}/projects/current`);
         if (res.ok) {
           const data = await res.json();
           if (data.project) {
@@ -209,7 +249,7 @@ export const useAppStore = create<Store>((set, get) => ({
 
       // Try loading project list
       try {
-        const res = await fetch(`${SIDECAR_BASE}/projects/list`);
+        const res = await fetch(`${sidecarBase()}/projects/list`);
         if (res.ok) {
           const data = await res.json();
           if (data.projects) {
@@ -222,7 +262,7 @@ export const useAppStore = create<Store>((set, get) => ({
 
       // Try fetching checkpoints
       try {
-        const res = await fetch(`${SIDECAR_BASE}/projects/checkpoints`);
+        const res = await fetch(`${sidecarBase()}/projects/checkpoints`);
         if (res.ok) {
           const data = await res.json();
           const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
@@ -237,11 +277,10 @@ export const useAppStore = create<Store>((set, get) => ({
       } catch {
         // Sidecar not running yet
       }
-    } catch (e) {
-      console.warn("Failed to load stored config:", e);
-    } finally {
-      set({ initialized: true });
-    }
+    })();
+
+    await Promise.race([doInit, timeout]);
+    set({ initialized: true });
   },
 
   layoutMode: "2-pane",
@@ -257,10 +296,7 @@ export const useAppStore = create<Store>((set, get) => ({
 
     // In Tauri mode, strip apiKey from frontend state for zero exposure.
     // The key lives only in: OS keychain + sidecar process memory.
-    const isTauri =
-      typeof window !== "undefined" &&
-      !!(window as any).__TAURI_INTERNALS__;
-    const safeConfig = isTauri ? { ...aiConfig, apiKey: "" } : aiConfig;
+    const safeConfig = isTauri() ? { ...aiConfig, apiKey: "" } : aiConfig;
     set({ aiConfig: safeConfig });
   },
 
@@ -310,7 +346,7 @@ export const useAppStore = create<Store>((set, get) => ({
   clearMessages: () => set({ messages: [] }),
   fetchChatHistory: async () => {
     try {
-      const res = await fetch(`${SIDECAR_BASE}/chat/history`);
+      const res = await fetch(`${sidecarBase()}/chat/history`);
       if (res.ok) {
         const data = await res.json();
         if (Array.isArray(data.messages) && data.messages.length > 0) {
@@ -373,7 +409,7 @@ export const useAppStore = create<Store>((set, get) => ({
   setCurrentCheckpointIndex: (currentCheckpointIndex) => set({ currentCheckpointIndex }),
   fetchCheckpoints: async () => {
     try {
-      const res = await fetch(`${SIDECAR_BASE}/projects/checkpoints`);
+      const res = await fetch(`${sidecarBase()}/projects/checkpoints`);
       if (!res.ok) return;
       const data = await res.json();
       const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
@@ -399,4 +435,76 @@ export const useAppStore = create<Store>((set, get) => ({
   // Generation reload trigger
   reloadCounter: 0,
   triggerReload: () => set((state) => ({ reloadCounter: state.reloadCounter + 1 })),
+
+  // ── Settings ──────────────────────────────────────────────────────
+  settings: (() => {
+    const s = loadSettings();
+    i18n.changeLanguage(s.language);
+    return s;
+  })(),
+  setSettings: (settings) => {
+    saveSettings(settings);
+    if (settings.language) i18n.changeLanguage(settings.language);
+    set({ settings });
+  },
+  updateSettings: (partial) => {
+    set((state) => {
+      const next = { ...state.settings, ...partial };
+      saveSettings(next);
+      if (partial.language) i18n.changeLanguage(next.language);
+      return { settings: next };
+    });
+  },
+
+  // ── Theme ─────────────────────────────────────────────────────────
+  resolvedTheme: "light",
+  setResolvedTheme: (resolvedTheme) => set({ resolvedTheme }),
+
+  // ── Toasts ────────────────────────────────────────────────────────
+  toasts: [],
+  addToast: (toast) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    set((state) => ({
+      toasts: [...state.toasts, { ...toast, id }],
+    }));
+    const duration = toast.duration ?? 4000;
+    setTimeout(() => {
+      get().removeToast(id);
+    }, duration);
+  },
+  removeToast: (id) => {
+    set((state) => ({
+      toasts: state.toasts.filter((t) => t.id !== id),
+    }));
+  },
+
+  // ── Token Usage ───────────────────────────────────────────────────
+  sessionUsage: [],
+  addTokenUsage: (usage) => {
+    set((state) => ({
+      sessionUsage: [...state.sessionUsage, usage],
+    }));
+  },
+  clearSessionUsage: () => set({ sessionUsage: [] }),
+  totalSessionCost: () => {
+    return get().sessionUsage.reduce((sum, u) => sum + (u.estimatedCost ?? 0), 0);
+  },
 }));
+
+// ── Settings persistence ────────────────────────────────────────────
+
+function loadSettings(): AppSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    }
+  } catch {}
+  return { ...DEFAULT_SETTINGS };
+}
+
+function saveSettings(settings: AppSettings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {}
+}
