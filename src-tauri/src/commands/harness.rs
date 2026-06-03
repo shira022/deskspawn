@@ -1,7 +1,5 @@
 use crate::engine::backup;
-use crate::engine::monitor::ErrorMonitor;
 use crate::engine::security;
-use crate::engine::staging;
 use crate::models::config::{
     Action, ApplyResult, Artifact, ErrorInfo, FileInfo, ShellResult,
 };
@@ -12,7 +10,6 @@ use tauri::State;
 
 pub struct AppState {
     pub workspace_path: PathBuf,
-    pub error_monitor: ErrorMonitor,
 }
 
 // ── Tauri Commands ────────────────────────────────────────────────────────────
@@ -193,7 +190,6 @@ pub fn apply_artifact(
         .filter_map(|action| match action {
             Action::File(f) => Some(f.file_path.clone()),
             Action::Diff(d) => Some(d.file_path.clone()),
-            Action::Template(_) => None,
             Action::Shell(_) => None,
         })
         .collect();
@@ -235,33 +231,6 @@ pub fn apply_artifact(
                         }
                     }
                     Err(e) => errors.push(e),
-                }
-            }
-            Action::Template(template_action) => {
-                match crate::engine::template::generate_crud_files(
-                    &template_action.table_name,
-                    &template_action.columns,
-                ) {
-                    Ok(generated) => {
-                        // Stage the generated files
-                        let gen_actions: Vec<Action> = vec![action.clone()];
-                        match staging::stage_files(&state.workspace_path, &gen_actions) {
-                            Ok(staged) => {
-                                // Immediately apply staged files
-                                if let Err(e) =
-                                    staging::validate_and_apply(&state.workspace_path, &staged)
-                                {
-                                    errors.push(format!("Template apply error: {}", e));
-                                } else {
-                                    for p in generated.get_all_paths() {
-                                        files_changed.push(p);
-                                    }
-                                }
-                            }
-                            Err(e) => errors.push(format!("Template staging error: {}", e)),
-                        }
-                    }
-                    Err(e) => errors.push(format!("Template generation error: {}", e)),
                 }
             }
             Action::Shell(shell_action) => {
@@ -497,12 +466,10 @@ pub fn run_shell(
     execute_shell_action(&state.workspace_path, &command)
 }
 
-/// Get collected errors from the error monitor.
+/// Get collected errors (deprecated, returns empty).
 #[tauri::command]
-pub fn get_errors(
-    state: State<'_, AppState>,
-) -> Result<Vec<ErrorInfo>, String> {
-    Ok(state.error_monitor.get_all_errors())
+pub fn get_errors() -> Result<Vec<ErrorInfo>, String> {
+    Ok(Vec::new())
 }
 
 /// Get the workspace directory path.
@@ -532,9 +499,6 @@ pub fn initialize_workspace(
     let deskspawn_dir = workspace.join(".deskspawn");
     std::fs::create_dir_all(deskspawn_dir.join("backups"))
         .map_err(|e| format!("Failed to create backups directory: {}", e))?;
-    std::fs::create_dir_all(deskspawn_dir.join("staging"))
-        .map_err(|e| format!("Failed to create staging directory: {}", e))?;
-
     // Check for template directory relative to the app
     let template_dir = Path::new("../templates/react-template");
     if template_dir.exists() {
@@ -552,6 +516,52 @@ pub fn initialize_workspace(
 
     log::info!("Workspace initialized at {:?}", workspace);
     Ok(())
+}
+
+/// Open the workspace directory in Visual Studio Code.
+/// If `workspace_path` is provided, it takes precedence over `state.workspace_path`.
+#[tauri::command]
+pub fn open_in_vscode(
+    state: State<'_, AppState>,
+    workspace_path: Option<String>,
+) -> Result<String, String> {
+    let workspace = workspace_path
+        .as_ref()
+        .filter(|p| !p.is_empty())
+        .map(Path::new)
+        .unwrap_or(&state.workspace_path);
+    let workspace_str = workspace.to_str()
+        .ok_or_else(|| "Workspace path contains invalid characters".to_string())?;
+
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        Command::new("open")
+            .args(["-a", "Visual Studio Code", workspace_str])
+            .spawn()
+            .map_err(|e| format!("Failed to open VS Code: {}", e))?;
+        Ok(format!("Opened VS Code for {}", workspace_str))
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        Command::new("cmd")
+            .args(["/c", "code", workspace_str])
+            .spawn()
+            .map_err(|e| format!("Failed to open VS Code: {}", e))?;
+        Ok(format!("Opened VS Code for {}", workspace_str))
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::process::Command;
+        Command::new("code")
+            .arg(workspace_str)
+            .spawn()
+            .map_err(|e| format!("Failed to open VS Code: {}", e))?;
+        Ok(format!("Opened VS Code for {}", workspace_str))
+    }
 }
 
 /// Copy files from a template directory to the workspace, respecting .gitignore patterns.

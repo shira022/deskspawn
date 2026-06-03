@@ -6,6 +6,9 @@ use std::path::PathBuf;
 const KEYRING_SERVICE: &str = "com.deskspawn";
 const KEYRING_USER: &str = "api_key";
 
+/// File-based credentials file name (stored alongside config.json).
+const CREDENTIALS_FILE: &str = "credentials.json";
+
 /// Default sidecar port (used unless fallback is needed).
 /// The actual port is provided at runtime by SidecarManager.
 pub const DEFAULT_SIDECAR_PORT: u16 = 3001;
@@ -37,6 +40,10 @@ fn config_dir() -> Result<PathBuf, String> {
 
 fn config_file_path() -> Result<PathBuf, String> {
     Ok(config_dir()?.join("config.json"))
+}
+
+fn credentials_file_path() -> Result<PathBuf, String> {
+    Ok(config_dir()?.join(CREDENTIALS_FILE))
 }
 
 /// ── OS Keychain helpers ──────────────────────────────────────────────────────
@@ -95,6 +102,99 @@ fn delete_api_key_from_keychain() {
     }
 }
 
+/// ── Credentials file helpers ─────────────────────────────────────────────────
+
+fn save_api_key_to_file(api_key: &str) -> Result<bool, String> {
+    let path = credentials_file_path()?;
+    let json = serde_json::json!({ "api_key": api_key });
+    let content = serde_json::to_string_pretty(&json)
+        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
+
+    // Restrictive permissions on config directory (Unix only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(parent) = path.parent() {
+            let _ = fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    fs::write(&path, &content)
+        .map_err(|e| format!("Failed to write credentials file: {}", e))?;
+
+    // Restrictive permissions on credentials file (Unix only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    log::info!("API key saved to credentials file ({})", path.display());
+    Ok(true)
+}
+
+fn load_api_key_from_file() -> Option<String> {
+    let path = credentials_file_path().ok()?;
+    if !path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    let parsed: serde_json::Value = serde_json::from_str(&content).ok()?;
+    parsed
+        .get("api_key")
+        .and_then(|v| v.as_str())
+        .map(String::from)
+}
+
+fn delete_credentials_file() {
+    if let Ok(path) = credentials_file_path() {
+        if path.exists() {
+            if fs::remove_file(&path).is_ok() {
+                log::info!("Credentials file deleted");
+            }
+        }
+    }
+}
+
+/// ── Unified storage helpers ──────────────────────────────────────────────────
+
+/// Save the API key to the given storage method.
+fn save_key_to_storage(api_key: &str, method: &str) -> Result<bool, String> {
+    match method {
+        "keychain" => save_api_key_to_keychain(api_key),
+        "file" => save_api_key_to_file(api_key),
+        other => Err(format!("Invalid storage method: {}", other)),
+    }
+}
+
+/// Load the API key from the given storage method.
+fn load_key_from_storage(method: &str) -> Option<String> {
+    match method {
+        "keychain" => load_api_key_from_keychain(),
+        "file" => load_api_key_from_file(),
+        _ => None,
+    }
+}
+
+/// Delete the API key from the given storage method.
+fn delete_key_from_storage(method: &str) {
+    match method {
+        "keychain" => delete_api_key_from_keychain(),
+        "file" => delete_credentials_file(),
+        _ => {}
+    }
+}
+
+/// Read existing AiConfig from disk (returns None if no config exists).
+fn read_existing_config() -> Option<AiConfig> {
+    let path = config_file_path().ok()?;
+    if !path.exists() {
+        return None;
+    }
+    let content = fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&content).ok()
+}
+
 /// ── Sidecar push ─────────────────────────────────────────────────────────────
 
 /// Push the API key to the sidecar's in-memory store.
@@ -111,12 +211,18 @@ pub fn push_api_key_to_sidecar(api_key: &str) {
 
 /// Same as `push_api_key_to_sidecar` but to a specific sidecar port.
 pub fn push_api_key_to_sidecar_on_port(api_key: &str, port: u16) {
+    use std::time::Duration;
+
     let port = if port == 0 { DEFAULT_SIDECAR_PORT } else { port };
     let url = format!("http://127.0.0.1:{}/api/config", port);
     let body = serde_json::json!({ "apiKey": api_key });
 
     for attempt in 0..5 {
         match ureq::post(&url)
+            .config()
+            .timeout_connect(Some(Duration::from_secs(5)))
+            .timeout_recv_response(Some(Duration::from_secs(5)))
+            .build()
             .header("Content-Type", "application/json")
             .send_json(&body)
         {
@@ -130,7 +236,7 @@ pub fn push_api_key_to_sidecar_on_port(api_key: &str, port: u16) {
                     attempt + 1,
                     e
                 );
-                std::thread::sleep(std::time::Duration::from_millis(500 * (attempt + 1)));
+                std::thread::sleep(Duration::from_millis(500 * (attempt + 1)));
             }
         }
     }
@@ -139,73 +245,121 @@ pub fn push_api_key_to_sidecar_on_port(api_key: &str, port: u16) {
 
 /// Load the full AI config including the API key (for internal Rust use).
 /// Returns None if no config exists.
+///
+/// The key is loaded from the storage method configured in config.json
+/// (keychain or credentials file). Falls back to keychain for backward
+/// compatibility if no storage_method is set.
 pub fn load_full_config_for_sidecar() -> Option<String> {
-    let path = config_file_path().ok()?;
-    if !path.exists() {
-        return None;
-    }
-    let content = fs::read_to_string(&path).ok()?;
-    let config: AiConfig = serde_json::from_str(&content).ok()?;
+    let config = read_existing_config()?;
 
-    // If api_key is empty, try keychain
-    if config.api_key.is_empty() {
-        load_api_key_from_keychain()
-    } else {
-        Some(config.api_key)
+    // If api_key is directly in config (legacy fallback for headless Linux/CI),
+    // use it directly
+    if !config.api_key.is_empty() {
+        return Some(config.api_key);
     }
+
+    // Determine storage method, defaulting to "keychain" for backward compat
+    let method = if config.storage_method.is_empty() {
+        "keychain"
+    } else {
+        &config.storage_method
+    };
+
+    load_key_from_storage(method)
 }
 
 /// ── Tauri commands ───────────────────────────────────────────────────────────
 
 /// Save AI configuration.
 ///
-/// Security model (Tauri / keychain available):
-///   - API key → OS keychain (never in config.json)
+/// Security model:
+///   - `storage_method = "keychain"`:
+///       API key → OS keychain (never in config.json)
+///   - `storage_method = "file"`:
+///       API key → `credentials.json` (600 perms, same directory as config.json)
 ///   - API key → Sidecar (in-memory, for AI API calls)
-///   - Other settings → ~/.config/deskspawn/config.json
-///   - Frontend sees `apiKey: ""` and `apiKeyConfigured: true`
-///
-/// Security model (browser / no keychain):
-///   - API key stays in localStorage (browser fallback)
-///   - apiKeyConfigured stays false
-///   - Sidecar receives key from frontend directly
+///   - Other settings → `~/.config/deskspawn/config.json`
+///   - Frontend sees `apiKey: ""` and `apiKeyConfigured: bool`
 ///
 /// Key lifecycle:
-///   - If api_key is non-empty: save to keychain + push to sidecar
+///   - If api_key is non-empty: save to chosen storage + push to sidecar
 ///   - If api_key is empty + api_key_configured is true:
-///     keep existing keychain entry (no-op)
+///     keep existing entry (no-op unless storage method changed → auto-migrate)
 ///   - If api_key is empty + api_key_configured is false:
-///     delete keychain entry (if any) — user removed the key
+///     delete all stored keys — user removed the key
 #[tauri::command]
 pub fn save_ai_config(config: AiConfig) -> Result<(), String> {
     let path = config_file_path()?;
+    let dest_method = if config.storage_method.is_empty() {
+        "keychain"
+    } else {
+        &config.storage_method
+    };
 
-    let keychain_ok: bool;
+    if dest_method != "keychain" && dest_method != "file" {
+        return Err(format!("Invalid storage method: {}", dest_method));
+    }
+
+    // Load existing config for migration detection
+    let existing = read_existing_config();
+
+    let storage_ok: bool;
 
     // 1. Handle API key lifecycle
     if !config.api_key.is_empty() {
-        // New/changed key → save to keychain + push to sidecar
-        keychain_ok = save_api_key_to_keychain(&config.api_key)?;
+        // New/changed key → save to selected storage + push to sidecar
+        storage_ok = save_key_to_storage(&config.api_key, dest_method)?;
         push_api_key_to_sidecar(&config.api_key);
+
+        // Clean up old storage if method changed (e.g., user switched
+        // dropdown from keychain to file and entered a new key)
+        if let Some(ref ex) = existing {
+            if ex.storage_method != dest_method {
+                delete_key_from_storage(&ex.storage_method);
+            }
+        }
     } else if config.api_key_configured {
-        // Empty key but configured flag is true → keep existing keychain entry.
-        // This happens when the frontend re-saves config without the key
-        // (key is already in the keychain, frontend has no access to it).
-        keychain_ok = true;
+        // No new key but was previously configured
+        if let Some(ref ex) = existing {
+            if ex.storage_method != dest_method {
+                // Storage method changed → auto-migrate
+                let key = load_key_from_storage(&ex.storage_method).ok_or_else(|| {
+                    format!(
+                        "Failed to read existing key from '{}'. \
+                         Please re-enter the API key to switch storage.",
+                        ex.storage_method
+                    )
+                })?;
+                save_key_to_storage(&key, dest_method)?;
+                delete_key_from_storage(&ex.storage_method);
+                push_api_key_to_sidecar(&key);
+                storage_ok = true;
+                log::info!(
+                    "API key migrated from '{}' to '{}'",
+                    ex.storage_method,
+                    dest_method
+                );
+            } else {
+                // Same storage method, key already there — keep it
+                storage_ok = true;
+            }
+        } else {
+            // No existing config (shouldn't happen when configured=true, but be safe)
+            storage_ok = true;
+        }
     } else {
-        // Empty key and not configured → remove keychain entry (user removed key)
-        keychain_ok = false;
-        delete_api_key_from_keychain();
+        // User removed key entirely → clean up both
+        delete_key_from_storage("keychain");
+        delete_key_from_storage("file");
+        storage_ok = false;
     }
 
     // 2. Save config.json WITHOUT the API key
     let mut json_config = config;
     json_config.api_key = String::new(); // never exposed to frontend
-    if keychain_ok {
+    if storage_ok {
         json_config.api_key_configured = true;
     }
-    // When keychain is unavailable, api_key stays in JSON (backward compat
-    // for headless Linux / CI environments)
 
     let json = serde_json::to_string_pretty(&json_config)
         .map_err(|e| format!("Failed to serialize config: {}", e))?;
