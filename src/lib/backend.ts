@@ -7,24 +7,11 @@
  * 呼び出し元のコードは共通で、実行環境によってルーティングが自動切替される。
  */
 
-import { SIDECAR_BASE } from "@/lib/constants";
+import { isTauri } from "@/lib/tauri";
+import { sidecarBase } from "@/lib/constants";
 import type { EnvCheckItem } from "@/types";
 
 const STORAGE_KEY = "deskspawn_ai_config";
-
-// ── Tauri detection ──────────────────────────────────────────────────────────
-
-/**
- * Tauri v2 では `window.__TAURI_INTERNALS__` が常に存在する。
- * `window.__TAURI__` は `withGlobalTauri: true` の場合のみ。
- * @see https://v2.tauri.app/reference/config/#withglobaltauri
- */
-function isTauri(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    !!(window as any).__TAURI_INTERNALS__
-  );
-}
 
 // ── Command typeヘルパー ────────────────────────────────────────────────────
 
@@ -38,7 +25,8 @@ type BackendCommand =
   | "restart_tauri"
   | "open_url"
   | "sidecar_port"
-  | "sidecar_status";
+  | "sidecar_status"
+  | "open_in_vscode";
 
 // ── Unified call ─────────────────────────────────────────────────────────────
 
@@ -89,7 +77,7 @@ async function browserFallback<T>(
 
       // Try sidecar first for real shell checks
       try {
-        const res = await fetch(`${SIDECAR_BASE}/api/backend/invoke`, {
+        const res = await fetch(`${sidecarBase()}/api/backend/invoke`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cmd, args: args ?? {} }),
@@ -161,7 +149,7 @@ async function browserFallback<T>(
 
       // Try sidecar first
       try {
-        const res = await fetch(`${SIDECAR_BASE}/api/backend/invoke`, {
+        const res = await fetch(`${sidecarBase()}/api/backend/invoke`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ cmd, args: args ?? {} }),
@@ -210,6 +198,16 @@ async function browserFallback<T>(
 
     case "sidecar_status":
       return { running: true, ready: true, pid: null, port: 3001 } as T;
+
+    // ── Open VS Code ───────────────────────────────────────────────────────
+    case "open_in_vscode": {
+      // Browser fallback: try vscode:// protocol
+      const workspacePath = args?.workspacePath;
+      if (typeof workspacePath === "string") {
+        window.open(`vscode://file/${encodeURI(workspacePath)}`, "_blank");
+      }
+      return "Opened VS Code (browser mode)" as T;
+    }
 
     // ── Open URL ───────────────────────────────────────────────────────────
     case "open_url":
