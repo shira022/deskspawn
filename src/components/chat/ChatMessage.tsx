@@ -1,8 +1,12 @@
 import { useState, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
-import { Bot, User, Pencil, Check, X, Copy, CheckCheck, ChevronLeft, ChevronRight, RotateCcw } from "lucide-react";
+import { Bot, User, Pencil, Check, X, Copy, CheckCheck, ChevronLeft, ChevronRight, RotateCcw, RefreshCw } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { StepLogPanel } from "@/components/chat/StepLogPanel";
 import { useAppStore } from "@/store/useAppStore";
+import { HighlightedText, highlightChildren } from "@/components/chat/SearchHighlight";
 import type { ChatMessage as ChatMessageType } from "@/types";
 
 interface ChatMessageProps {
@@ -18,6 +22,12 @@ interface ChatMessageProps {
   checkpointCount?: number;
   /** Navigate to a specific checkpoint by index */
   onNavigateToCheckpoint?: (index: number) => void;
+  /** Search query for highlighting matches */
+  searchQuery?: string;
+  /** Whether this message matches the current search */
+  isMatch?: boolean;
+  /** Whether this message is the currently active search match */
+  isActiveMatch?: boolean;
 }
 
 export function ChatMessage({
@@ -29,6 +39,9 @@ export function ChatMessage({
   checkpointIndex,
   checkpointCount,
   onNavigateToCheckpoint,
+  searchQuery,
+  isMatch,
+  isActiveMatch,
 }: ChatMessageProps) {
   const isUser = message.role === "user";
   const isAssistant = message.role === "assistant";
@@ -36,6 +49,7 @@ export function ChatMessage({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
   const [copied, setCopied] = useState(false);
+  const { t } = useTranslation();
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const editingMessageId = useAppStore((s) => s.editingMessageId);
   const isThisEditing = editingMessageId === message.id;
@@ -111,9 +125,12 @@ export function ChatMessage({
 
   return (
     <div
+      id={`chat-msg-${message.id}`}
       className={cn(
         "group flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out",
-        isUser ? "flex-row-reverse" : "flex-row"
+        isUser ? "flex-row-reverse" : "flex-row",
+        isMatch && "chat-message-match",
+        isActiveMatch && "chat-message-active-match"
       )}
       style={{ animationFillMode: "both" }}
     >
@@ -140,7 +157,7 @@ export function ChatMessage({
         {/* Message bubble (also serves as edit container) */}
         <div
           className={cn(
-            "rounded-2xl overflow-hidden",
+            "rounded-2xl overflow-hidden chat-bubble",
             isUser
               ? cn(
                   "bg-primary text-primary-foreground rounded-br-md",
@@ -164,7 +181,7 @@ export function ChatMessage({
                 value={editValue}
                 onChange={(e) => setEditValue(e.target.value)}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && e.shiftKey) {
+                  if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
                     e.preventDefault();
                     handleSaveEdit();
                   }
@@ -177,13 +194,23 @@ export function ChatMessage({
               />
             </div>
           ) : isUser ? (
-            <p className="text-sm whitespace-pre-wrap px-4 py-2.5">{message.content}</p>
+            <div className="px-4 py-2.5">
+              {searchQuery ? (
+                <HighlightedText
+                  text={message.content}
+                  query={searchQuery}
+                  className="text-sm whitespace-pre-wrap"
+                />
+              ) : (
+                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+              )}
+            </div>
           ) : (
             <div className="prose prose-sm dark:prose-invert max-w-none text-sm px-4 py-2.5 [&>p]:mb-1 [&>ul]:mt-1 [&>p:last-child]:mb-0">
-              <MessageContent content={message.content} />
-              {/* 実行ログ（展開/折りたたみ可能） */}
+              <MessageContent content={message.content} searchQuery={searchQuery} />
+              {/* Execution logs (collapsible) */}
               {message.stepLogs && message.stepLogs.length > 0 && (
-                <StepLogPanel stepLogs={message.stepLogs} />
+                <StepLogPanel stepLogs={message.stepLogs} searchQuery={searchQuery} />
               )}
             </div>
           )}
@@ -204,14 +231,14 @@ export function ChatMessage({
                 <button
                   onClick={handleSaveEdit}
                   className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
-                  title="保存"
+                  title={t('common.save')}
                 >
                   <Check className="h-3.5 w-3.5" />
                 </button>
                 <button
                   onClick={handleCancelEdit}
                   className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:text-foreground transition-colors"
-                  title="キャンセル"
+                  title={t('common.cancel')}
                 >
                   <X className="h-3.5 w-3.5" />
                 </button>
@@ -222,7 +249,7 @@ export function ChatMessage({
                   <button
                     onClick={handleStartEdit}
                     className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                    title="編集"
+                    title={t('chat.edit')}
                   >
                     <Pencil className="h-3.5 w-3.5" />
                   </button>
@@ -231,7 +258,7 @@ export function ChatMessage({
                   <button
                     onClick={onRegenerate}
                     className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-                    title="リトライ"
+                    title={t('chat.retry')}
                   >
                     <RotateCcw className="h-3.5 w-3.5" />
                   </button>
@@ -243,7 +270,7 @@ export function ChatMessage({
             <button
               onClick={handleCopy}
               className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              title={copied ? "コピーしました" : "コピー"}
+              title={copied ? t('chat.copied') : t('chat.copy')}
             >
               {copied ? (
                 <CheckCheck className="h-3.5 w-3.5 text-success" />
@@ -256,22 +283,16 @@ export function ChatMessage({
             <button
               onClick={onRegenerate}
               className="h-5 w-5 flex items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground transition-colors"
-              title="再生成"
+              title={t('chat.regenerate')}
             >
-              <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="23 4 23 10 17 10" />
-                <polyline points="1 20 1 14 7 14" />
-                <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
-              </svg>
+              <RefreshCw className="h-3.5 w-3.5" />
             </button>
           )}
         </div>
 
         {/* ── Editing indicator ── */}
         {isEditing && (
-          <span className="mt-0.5 text-[10px] text-muted-foreground/30 select-none">
-            編集中…
-          </span>
+          <span className="mt-0.5 text-[10px] text-muted-foreground/30 select-none">{t('chat.editing')}</span>
         )}
 
         {/* ── Checkpoint navigation (assistant messages only) ── */}
@@ -281,14 +302,14 @@ export function ChatMessage({
               onClick={() => onNavigateToCheckpoint(checkpointIndex! - 1)}
               disabled={checkpointIndex === 0}
               className="h-4 w-4 flex items-center justify-center rounded hover:text-foreground/70 hover:bg-muted/60 transition-colors disabled:opacity-20 disabled:pointer-events-none"
-              title="1つ前の状態に戻る"
+              title={t('chat.prevState')}
             >
               <ChevronLeft className="h-3 w-3" />
             </button>
             <span
               className="tabular-nums cursor-pointer hover:text-foreground/60 transition-colors px-0.5 leading-none"
               onClick={() => onNavigateToCheckpoint(checkpointIndex!)}
-              title="このチェックポイントに戻る"
+              title={t('chat.goToCheckpoint')}
             >
               {checkpointLabel}
             </span>
@@ -296,7 +317,7 @@ export function ChatMessage({
               onClick={() => onNavigateToCheckpoint(checkpointIndex! + 1)}
               disabled={checkpointIndex === checkpointCount! - 1}
               className="h-4 w-4 flex items-center justify-center rounded hover:text-foreground/70 hover:bg-muted/60 transition-colors disabled:opacity-20 disabled:pointer-events-none"
-              title="1つ先の状態に進む"
+              title={t('chat.nextState')}
             >
               <ChevronRight className="h-3 w-3" />
             </button>
@@ -307,80 +328,105 @@ export function ChatMessage({
   );
 }
 
-/** Simple markdown-like rendering */
-function MessageContent({ content }: { content: string }) {
-  const lines = content.split("\n");
-  const elements: React.ReactNode[] = [];
-  let i = 0;
+/** Proper markdown rendering using react-markdown */
+function MessageContent({ content, searchQuery }: { content: string; searchQuery?: string }) {
+  const hl = searchQuery
+    ? (children: React.ReactNode) => highlightChildren(children, searchQuery)
+    : (children: React.ReactNode) => children;
 
-  while (i < lines.length) {
-    const line = lines[i];
-
-    // Bold text
-    if (line.startsWith("**") && line.endsWith("**")) {
-      elements.push(
-        <p key={i} className="font-semibold">{line.slice(2, -2)}</p>
-      );
-      i++;
-      continue;
-    }
-
-    // Inline code
-    if (line.startsWith("`") && line.endsWith("`")) {
-      elements.push(
-        <code key={i} className="bg-background px-1 py-0.5 rounded text-xs">{line.slice(1, -1)}</code>
-      );
-      i++;
-      continue;
-    }
-
-    // List items
-    if (line.startsWith("- ")) {
-      const items: string[] = [];
-      while (i < lines.length && lines[i].startsWith("- ")) {
-        items.push(lines[i].slice(2));
-        i++;
-      }
-      elements.push(
-        <ul key={i} className="list-disc pl-4 space-y-0.5">
-          {items.map((item, j) => (
-            <li key={j} className="text-sm">
-              <InlineCode text={item} />
-            </li>
-          ))}
-        </ul>
-      );
-      continue;
-    }
-
-    // Regular paragraph (skip empty lines)
-    if (line.trim()) {
-      elements.push(
-        <p key={i} className="text-sm whitespace-pre-wrap">
-          <InlineCode text={line} />
-        </p>
-      );
-    }
-    i++;
-  }
-
-  return <>{elements}</>;
-}
-
-/** Render inline `code` within text */
-function InlineCode({ text }: { text: string }) {
-  const parts = text.split(/(`[^`]+`)/g);
   return (
-    <>
-      {parts.map((part, i) =>
-        part.startsWith("`") && part.endsWith("`") ? (
-          <code key={i} className="bg-background px-1 py-0.5 rounded text-xs font-mono">
-            {part.slice(1, -1)}
-          </code>
-        ) : (
-          <span key={i}>{part}</span>
-        )
-      )}
-    </>
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      components={{
+        pre({ children }) {
+          return (
+            <pre className="bg-background border border-border/30 rounded-lg p-3 overflow-x-auto text-xs font-mono my-1.5 leading-relaxed">
+              {children}
+            </pre>
+          );
+        },
+        code({ className, children, ...props }) {
+          const match = /language-(\w+)/.exec(className || "");
+          if (match) {
+            return (
+              <>
+                <div className="text-[10px] text-muted-foreground/40 font-sans mb-1.5 uppercase tracking-wider">
+                  {match[1]}
+                </div>
+                <code className={className} {...props}>
+                  {children}
+                </code>
+              </>
+            );
+          }
+          if (className) {
+            return (
+              <code className={className} {...props}>
+                {children}
+              </code>
+            );
+          }
+          // Inline code with highlighting
+          return (
+            <code className="bg-background px-1 py-0.5 rounded text-xs font-mono" {...props}>
+              {searchQuery ? highlightChildren(children, searchQuery) : children}
+            </code>
+          );
+        },
+        p({ children }) {
+          return <p className="text-sm whitespace-pre-wrap">{hl(children)}</p>;
+        },
+        ul({ children, ...props }) {
+          return <ul className="list-disc pl-4 space-y-0.5 my-1" {...props}>{hl(children)}</ul>;
+        },
+        ol({ children, ...props }) {
+          return <ol className="list-decimal pl-4 space-y-0.5 my-1" {...props}>{hl(children)}</ol>;
+        },
+        li({ children, ...props }) {
+          return <li className="text-sm" {...props}>{hl(children)}</li>;
+        },
+        h1({ children, ...props }) {
+          return <h1 className="text-base font-bold my-2" {...props}>{hl(children)}</h1>;
+        },
+        h2({ children, ...props }) {
+          return <h2 className="text-sm font-bold my-1.5" {...props}>{hl(children)}</h2>;
+        },
+        h3({ children, ...props }) {
+          return <h3 className="text-sm font-semibold my-1" {...props}>{hl(children)}</h3>;
+        },
+        a({ href, children, ...props }) {
+          return (
+            <a href={href} target="_blank" rel="noopener noreferrer" className="text-primary underline" {...props}>
+              {children}
+            </a>
+          );
+        },
+        blockquote({ children, ...props }) {
+          return (
+            <blockquote className="border-l-2 border-border/40 pl-3 my-1 text-muted-foreground/80 text-sm" {...props}>
+              {hl(children)}
+            </blockquote>
+          );
+        },
+        hr(props) {
+          return <hr className="my-2 border-border/20" {...props} />;
+        },
+        table({ children, ...props }) {
+          return (
+            <div className="overflow-x-auto my-1.5">
+              <table className="text-xs border-collapse border border-border/30" {...props}>{children}</table>
+            </div>
+          );
+        },
+        th({ children, ...props }) {
+          return <th className="border border-border/30 px-2 py-1 font-medium bg-muted/30 text-left" {...props}>{hl(children)}</th>;
+        },
+        td({ children, ...props }) {
+          return <td className="border border-border/30 px-2 py-1" {...props}>{hl(children)}</td>;
+        },
+      }}
+    >
+      {content}
+    </ReactMarkdown>
   );
 }
