@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type { ModelInfo, ProviderKind } from "@/types";
-import { SIDECAR_BASE } from "@/lib/constants";
+import { sidecarBase } from "@/lib/constants";
+import i18n from "@/lib/i18n";
 
 interface UseModelsOptions {
   provider: ProviderKind;
@@ -38,7 +39,7 @@ export function useModels({ provider, customEndpoint, apiKey }: UseModelsOptions
         params.set("apiKey", apiKey);
       }
 
-      const res = await fetch(`${SIDECAR_BASE}/api/models?${params}`);
+      const res = await fetch(`${sidecarBase()}/api/models?${params}`);
       if (!res.ok) {
         const errData = await res.json().catch(() => ({}));
         throw new Error((errData as any).error || `HTTP ${res.status}`);
@@ -46,7 +47,7 @@ export function useModels({ provider, customEndpoint, apiKey }: UseModelsOptions
       const data = await res.json();
       setModels(data.models ?? []);
     } catch (e: any) {
-      setError(e.message || "モデル一覧の取得に失敗しました");
+      setError(e.message || i18n.t('ai.error.modelsFetchFailed'));
     } finally {
       setLoading(false);
     }
