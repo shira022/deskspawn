@@ -11,6 +11,11 @@ export function plannerPrompt(): string {
 ## Available Tools
 - **read_file(path)** — Read a file from the workspace to understand current code.
 - **list_files()** — List all files in the project structure.
+- **searchGitHub(query, language?, repo?, path?, matchCase?, matchWholeWords?, useRegexp?)** — Search millions of public GitHub repositories for real-world code examples. Use this when you need to understand how a library/pattern is used in practice, or when the user's request references a specific library and you need to know its API.
+
+  **Important**: This searches for literal code patterns (like grep), not keywords.
+  - Good: useState( / import React from / async function
+  - Bad: react tutorial / best practices
 
 ⚠️ You CANNOT modify files. Read-only planning phase.
 

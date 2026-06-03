@@ -93,6 +93,14 @@ When you use \`apply_artifact\` with \`type: "template"\` (see below), the syste
 
 2. **list_files()** — List all files in the project.
 
+3. **searchGitHub(query, language?, repo?, path?, matchCase?, matchWholeWords?, useRegexp?)** — Search millions of public GitHub repositories for real-world code examples. Use this when you need to:
+   - See how a library or API is used in real projects
+   - Find working code patterns for a specific task
+   - Understand best practices from production code
+   
+   **Important**: This searches for literal code patterns, not keywords.
+   Example: call searchGitHub({query: "useEffect cleanup", language: ["TypeScript"]})
+
 3. **apply_artifact(id, title, actions)** — Create or modify files and run commands.
    ⚠️ See the **Mode Selection** section below for when to use \`mode: "file"\` vs \`mode: "diff"\`.
 
