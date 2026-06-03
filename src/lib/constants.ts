@@ -46,13 +46,16 @@ export const SIDECAR_HEALTH_URL = `${SIDECAR_BASE}/health`;
 
 import type { ProviderKind } from "@/types";
 
+/** localStorage に設定を保存するキー */
+export const SETTINGS_KEY = "deskspawn_settings";
+
 /** プロバイダー表示名マップ */
 export const providerLabels: Record<string, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",
   ollama: "Ollama",
-  custom: "カスタム",
+  custom: "Custom",
 };
 
 /** プロバイダーアイコンマップ */
