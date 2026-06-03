@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,7 +22,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import type { ProjectMeta } from "@/types";
-import { SIDECAR_BASE } from "@/lib/constants";
+import { sidecarBase } from "@/lib/constants";
 
 interface ProjectSwitcherProps {
   open: boolean;
@@ -37,6 +38,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
   const [deleteError, setDeleteError] = useState("");
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
+  const { t } = useTranslation();
 
   const {
     currentProjectId,
@@ -51,6 +53,9 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     setFileTree,
     setSelectedFile,
     setErrors,
+    setCheckpoints,
+    setCurrentCheckpointIndex,
+    setVisibleMessageCount,
     projectSwitching,
     setProjectSwitching,
   } = useAppStore();
@@ -58,7 +63,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
   // Fetch projects on open
   useEffect(() => {
     if (open) {
-      fetch(`${SIDECAR_BASE}/projects/list`)
+      fetch(`${sidecarBase()}/projects/list`)
         .then((res) => res.json())
         .then((data) => setProjects(data.projects || []))
         .catch(console.error);
@@ -96,7 +101,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     onOpenChange(false);
 
     try {
-      const res = await fetch(`${SIDECAR_BASE}/projects/switch`, {
+      const res = await fetch(`${sidecarBase()}/projects/switch`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ projectId: project.id }),
@@ -121,6 +126,9 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
       setFileTree([]);
       setSelectedFile(null);
       setErrors([]);
+      setCheckpoints([]);
+      setCurrentCheckpointIndex(-1);
+      setVisibleMessageCount(-1);
 
       // Keep projectSwitching true — PreviewPanel will clear it when workspaceReady
     } catch (e: any) {
@@ -132,7 +140,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
   const handleDelete = async (project: ProjectMeta) => {
     setDeleteError("");
     try {
-      const res = await fetch(`${SIDECAR_BASE}/projects/${project.id}`, {
+      const res = await fetch(`${sidecarBase()}/projects/${project.id}`, {
         method: "DELETE",
       });
       if (!res.ok) {
@@ -150,7 +158,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
       setProjects(data.projects);
       setDeleteTarget(null);
     } catch (e: any) {
-      setDeleteError(e.message || "削除に失敗しました");
+      setDeleteError(e.message || t('project.deleteError'));
     }
   };
 
@@ -172,7 +180,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     try {
       // Trigger download via anchor tag
       const a = document.createElement("a");
-      a.href = `${SIDECAR_BASE}/projects/${project.id}/export`;
+      a.href = `${sidecarBase()}/projects/${project.id}/export`;
       a.download = `${project.name}.deskspawn`;
       a.click();
     } catch (e: any) {
@@ -201,7 +209,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
       }
       const fileBase64 = btoa(binary);
 
-      const res = await fetch(`${SIDECAR_BASE}/projects/import`, {
+      const res = await fetch(`${sidecarBase()}/projects/import`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileBase64 }),
@@ -216,7 +224,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
       setProjects(data.projects || []);
       onOpenChange(false);
     } catch (e: any) {
-      setImportError(e.message || "インポートに失敗しました");
+      setImportError(e.message || t('project.importError'));
     } finally {
       setImporting(false);
       // Reset input so the same file can be imported again
@@ -235,9 +243,9 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
       >
         <div className="p-2">
           <div className="flex items-center justify-between px-2 py-1.5">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 shrink-0">
               <Clock className="h-3 w-3" />
-              アプリ履歴
+              {t('project.history')}
             </span>
             <div className="flex items-center gap-1">
               <Button
@@ -246,10 +254,10 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                 className="h-6 px-2 text-xs"
                 onClick={handleImportClick}
                 disabled={importing}
-                title="インポート"
+                title={t('project.import')}
               >
                 <Upload className="h-3 w-3 mr-1" />
-                {importing ? "..." : "インポート"}
+                {importing ? "..." : t('project.import')}
               </Button>
               <Button
                 variant="ghost"
@@ -261,7 +269,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                 }}
               >
                 <Plus className="h-3 w-3 mr-1" />
-                新規作成
+                {t('project.createNew')}
               </Button>
             </div>
           </div>
@@ -282,7 +290,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
           {projects.length === 0 ? (
             <div className="flex flex-col items-center py-6 text-center text-muted-foreground">
               <FolderKanban className="h-8 w-8 mb-2 opacity-30" />
-              <p className="text-xs">アプリ履歴はまだありません</p>
+               <p className="text-xs">{t('project.noHistory')}</p>
               <Button
                 variant="outline"
                 size="sm"
@@ -293,7 +301,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                 }}
               >
                 <Plus className="h-3 w-3 mr-1" />
-                最初のアプリを作成
+                {t('project.createFirst')}
               </Button>
             </div>
           ) : (
@@ -339,7 +347,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                             e.preventDefault();
                             handleExport(project);
                           }}
-                          title="エクスポート"
+                          title={t('project.export')}
                         >
                           <Download className="h-3.5 w-3.5" />
                         </button>
@@ -350,7 +358,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                             e.preventDefault();
                             setDeleteTarget(project);
                           }}
-                          title="削除"
+                          title={t('project.delete')}
                         >
                           <Trash2 className="h-3.5 w-3.5" />
                         </button>
@@ -366,9 +374,9 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
           <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteError(""); } }}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>アプリを削除</DialogTitle>
+                <DialogTitle>{t('project.deleteTitle')}</DialogTitle>
                 <DialogDescription>
-                  「{deleteTarget?.name}」を完全に削除しますか？この操作は取り消せません。
+                  {t('project.deleteConfirm', { name: deleteTarget?.name || '' })}
                 </DialogDescription>
               </DialogHeader>
               {deleteError && (
@@ -386,7 +394,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                     setDeleteError("");
                   }}
                 >
-                  キャンセル
+                  {t('common.cancel')}
                 </Button>
                 <Button
                   variant="destructive"
@@ -398,7 +406,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                     }
                   }}
                 >
-                  削除する
+                  {t('project.deleteConfirmButton')}
                 </Button>
               </DialogFooter>
             </DialogContent>

@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import {
   Dialog,
@@ -13,7 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Sparkles } from "lucide-react";
-import { SIDECAR_BASE } from "@/lib/constants";
+import { sidecarBase } from "@/lib/constants";
 
 interface NewAppDialogProps {
   open: boolean;
@@ -24,6 +25,7 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
   const [appName, setAppName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const { t } = useTranslation();
 
   const {
     setCurrentProjectId,
@@ -42,7 +44,7 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
   const handleCreate = async () => {
     const name = appName.trim();
     if (!name) {
-      setError("アプリ名を入力してください");
+      setError(t('project.appNameRequired'));
       return;
     }
 
@@ -51,7 +53,7 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
     setProjectSwitching(true);
 
     try {
-      const res = await fetch(`${SIDECAR_BASE}/projects/new`, {
+      const res = await fetch(`${sidecarBase()}/projects/new`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ name }),
@@ -87,7 +89,7 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
       const msg = String(e.message || e);
       // Network errors (sidecar not running) → friendly message
       if (/Load failed|fetch|NetworkError|Failed to fetch|connect.*refused|ECONNREFUSED/i.test(msg)) {
-        setError("サイドカーサーバーに接続できません。\n`npm run sidecar` を実行してから再試行してください。");
+        setError(t('project.sidecarError'));
       } else {
         setError(msg);
       }
@@ -104,10 +106,10 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5" />
-            新しいアプリを作成
+            {t('project.createNewTitle')}
           </DialogTitle>
           <DialogDescription>
-            DeskSpawn で新しいアプリをゼロから作成します。
+            {t('project.createNewDesc')}
           </DialogDescription>
         </DialogHeader>
 
@@ -115,14 +117,14 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>アプリ名</Label>
+            <Label>{t('project.appName')}</Label>
             <Input
               value={appName}
               onChange={(e) => {
                 setAppName(e.target.value);
                 setError("");
               }}
-              placeholder="例: タスク管理アプリ"
+              placeholder={t('project.appNamePlaceholder')}
               autoFocus
             />
             {error && (
@@ -132,10 +134,10 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
 
           <div className="rounded-lg border bg-muted/30 p-3">
             <p className="text-xs text-muted-foreground space-y-1">
-              <span>• React + Vite + Tailwind CSS のテンプレートを使用</span><br />
-              <span>• データは IndexedDB（ブラウザ内蔵DB）に自動保存</span><br />
-              <span>• 変更は自動でバックアップされます</span><br />
-              <span>• 他のユーザーとアプリを共有するにはエクスポート/インポート</span>
+              <span>{t('project.templateReact')}</span><br />
+              <span>{t('project.templateIndexedDB')}</span><br />
+              <span>{t('project.templateAutoBackup')}</span><br />
+              <span>{t('project.templateShare')}</span>
             </p>
           </div>
         </div>
@@ -146,16 +148,16 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
             onClick={() => onOpenChange(false)}
             disabled={creating}
           >
-            キャンセル
+            {t('common.cancel')}
           </Button>
           <Button onClick={handleCreate} disabled={creating || !appName.trim()}>
             {creating ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                作成中...
+                {t('project.creating')}
               </>
             ) : (
-              "作成"
+              t('project.create')
             )}
           </Button>
         </DialogFooter>

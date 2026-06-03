@@ -14,10 +14,13 @@ import {
   Loader2,
   RefreshCw,
   AlertCircle,
+  ExternalLink,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import type { FileNode } from "@/types";
-import { SIDECAR_BASE } from "@/lib/constants";
+import { sidecarBase } from "@/lib/constants";
+import { callBackend } from "@/lib/backend";
 
 interface TreeNode {
   name: string;
@@ -155,6 +158,7 @@ function TreeItem({
 // ── File Preview ─────────────────────────────────────────────────────────────
 
 function FilePreview({ filePath }: { filePath: string }) {
+  const { t } = useTranslation();
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -163,7 +167,7 @@ function FilePreview({ filePath }: { filePath: string }) {
     setLoading(true);
     setError("");
     try {
-      const url = `${SIDECAR_BASE}/projects/file?path=${encodeURIComponent(filePath)}`;
+      const url = `${sidecarBase()}/projects/file?path=${encodeURIComponent(filePath)}`;
       const res = await fetch(url);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
@@ -197,7 +201,7 @@ function FilePreview({ filePath }: { filePath: string }) {
         {loading ? (
           <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin mr-1" />
-            読み込み中...
+            {t('common.loading')}
           </div>
         ) : error ? (
           <div className="flex items-center justify-center h-full text-xs text-red-500">
@@ -229,10 +233,11 @@ export function FileTreePanel() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const { t } = useTranslation();
 
   const fetchTree = useCallback(async () => {
     try {
-      const res = await fetch(`${SIDECAR_BASE}/projects/files`);
+      const res = await fetch(`${sidecarBase()}/projects/files`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
         throw new Error((data as any).error || `HTTP ${res.status}`);
@@ -289,18 +294,37 @@ export function FileTreePanel() {
       <div className="flex h-10 items-center justify-between border-b px-3">
         <div className="flex items-center gap-2">
           <Folder className="h-4 w-4 text-muted-foreground" />
-          <span className="text-sm font-medium">ファイル</span>
+          <span className="text-sm font-medium">{t('fileTree.title')}</span>
         </div>
-        <button
-          onClick={() => {
-            setLoading(true);
-            fetchTree();
-          }}
-          className="p-1 rounded hover:bg-muted transition-colors"
-          title="再読み込み"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground ${loading ? "animate-spin" : ""}`} />
-        </button>
+        <div className="flex items-center gap-0.5">
+          <button
+            onClick={async () => {
+              try {
+                // Get the current project's workspace path from the sidecar
+                const res = await fetch(`${sidecarBase()}/health`);
+                const data = await res.json();
+                const workspacePath = data.workspace || "";
+                await callBackend("open_in_vscode", { workspacePath });
+              } catch (e) {
+                console.warn("Failed to open VS Code:", e);
+              }
+            }}
+            className="p-1 rounded hover:bg-muted transition-colors"
+            title={t('fileTree.openInVSCode')}
+          >
+            <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
+          </button>
+          <button
+            onClick={() => {
+              setLoading(true);
+              fetchTree();
+            }}
+            className="p-1 rounded hover:bg-muted transition-colors"
+            title={t('fileTree.refresh')}
+          >
+            <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </div>
       </div>
 
       {/* File Tree */}
@@ -308,7 +332,7 @@ export function FileTreePanel() {
         {loading && tree.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
             <Loader2 className="h-3 w-3 animate-spin mr-1" />
-            読み込み中...
+            {t('common.loading')}
           </div>
         ) : error ? (
           <div className="flex items-center justify-center py-8 text-xs text-red-500">
@@ -317,8 +341,8 @@ export function FileTreePanel() {
           </div>
         ) : tree.length === 0 ? (
           <div className="px-3 py-8 text-xs text-muted-foreground text-center">
-            <p className="mb-1">ファイルがありません</p>
-            <p className="text-[10px]">AIにアプリ生成を指示してください</p>
+            <p className="mb-1">{t('fileTree.noFiles')}</p>
+            <p className="text-[10px]">{t('fileTree.askAiToGenerate')}</p>
           </div>
         ) : (
           tree.map((node) => (
@@ -340,7 +364,7 @@ export function FileTreePanel() {
         <FilePreview filePath={selectedFile} />
       ) : (
         <div className="h-10 border-t flex items-center justify-center text-[10px] text-muted-foreground">
-          ファイルを選択すると内容が表示されます
+          {t('fileTree.selectFileToPreview')}
         </div>
       )}
     </div>
