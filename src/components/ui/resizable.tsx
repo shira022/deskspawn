@@ -1,4 +1,9 @@
 import * as React from "react";
+import {
+  Group,
+  Panel,
+  Separator,
+} from "react-resizable-panels";
 import { cn } from "@/lib/utils";
 
 const ResizablePanelGroup = ({
@@ -8,59 +13,86 @@ const ResizablePanelGroup = ({
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & {
   direction?: "horizontal" | "vertical";
-}) => (
-  <div
-    className={cn(
-      "flex h-full w-full",
-      direction === "horizontal" ? "flex-row" : "flex-col",
-      className
-    )}
-    {...props}
-  >
-    {children}
-  </div>
-);
+}) => {
+  // Filter out children that are visually hidden via className so the library
+  // doesn't try to lay them out.  This is a safety net — callers should prefer
+  // conditional rendering over CSS-based hiding.
+  const visibleChildren = React.Children.toArray(children).filter((child) => {
+    if (React.isValidElement(child)) {
+      const cls = child.props.className ?? "";
+      if (cls.split(" ").includes("hidden")) return false;
+    }
+    return true;
+  });
 
-const ResizablePanel = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement> & {
-    defaultSize?: number;
-    minSize?: number;
-  }
->(({ className, style, defaultSize, minSize, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn("overflow-auto", className)}
-    style={{ flex: defaultSize ? `${defaultSize} 1 0%` : "1 1 0%", ...style }}
-    {...props}
-  />
-));
-ResizablePanel.displayName = "ResizablePanel";
+  return (
+    <Group
+      orientation={direction}
+      className={cn("h-full w-full", className)}
+      {...props}
+    >
+      {visibleChildren}
+    </Group>
+  );
+};
+
+const ResizablePanel = ({
+  className,
+  style,
+  defaultSize,
+  minSize,
+  children,
+  ...props
+}: React.HTMLAttributes<HTMLDivElement> & {
+  defaultSize?: number | string;
+  minSize?: number | string;
+}) => {
+  // Coerce numeric values to percentage strings (the library accepts "50%")
+  const toPercent = (v: number | string | undefined) =>
+    v === undefined ? undefined : typeof v === "number" ? `${v}%` : v;
+
+  return (
+    <Panel
+      defaultSize={toPercent(defaultSize)}
+      minSize={toPercent(minSize)}
+      className={cn("overflow-auto", className)}
+      style={style}
+      {...props}
+    >
+      {children}
+    </Panel>
+  );
+};
 
 const ResizableHandle = ({
   className,
   direction = "horizontal",
+  children,
   ...props
 }: React.HTMLAttributes<HTMLDivElement> & {
   direction?: "horizontal" | "vertical";
 }) => (
-  <div
+  <Separator
     className={cn(
-      "relative flex items-center justify-center bg-border",
+      "relative flex items-center justify-center bg-border transition-colors",
+      "data-[separator=active]:bg-primary/50",
+      "data-[separator=focus]:bg-primary/50",
       direction === "horizontal"
-        ? "w-1 cursor-col-resize hover:bg-primary/50 transition-colors"
-        : "h-1 cursor-row-resize hover:bg-primary/50 transition-colors",
-      className
+        ? "w-1 cursor-col-resize"
+        : "h-1 cursor-row-resize",
+      className,
     )}
     {...props}
   >
-    <div
-      className={cn(
-        "rounded-full bg-border",
-        direction === "horizontal" ? "h-8 w-0.5" : "w-8 h-0.5"
-      )}
-    />
-  </div>
+    {children ?? (
+      <div
+        className={cn(
+          "rounded-full bg-border",
+          direction === "horizontal" ? "h-8 w-0.5" : "w-8 h-0.5",
+        )}
+      />
+    )}
+  </Separator>
 );
 
 export { ResizablePanelGroup, ResizablePanel, ResizableHandle };
