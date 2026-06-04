@@ -13,7 +13,7 @@ const CREDENTIALS_FILE: &str = "credentials.json";
 /// The actual port is provided at runtime by SidecarManager.
 pub const DEFAULT_SIDECAR_PORT: u16 = 3001;
 
-/// ── Path helpers ─────────────────────────────────────────────────────────────
+// ── Path helpers ──────────────────────────────────────────────────────────────
 
 fn config_dir() -> Result<PathBuf, String> {
     #[cfg(target_os = "macos")]
@@ -46,7 +46,7 @@ fn credentials_file_path() -> Result<PathBuf, String> {
     Ok(config_dir()?.join(CREDENTIALS_FILE))
 }
 
-/// ── OS Keychain helpers ──────────────────────────────────────────────────────
+// ── OS Keychain helpers ───────────────────────────────────────────────────────
 
 fn save_api_key_to_keychain(api_key: &str) -> Result<bool, String> {
     match keyring::Entry::new(KEYRING_SERVICE, KEYRING_USER) {
@@ -102,7 +102,7 @@ fn delete_api_key_from_keychain() {
     }
 }
 
-/// ── Credentials file helpers ─────────────────────────────────────────────────
+// ── Credentials file helpers ──────────────────────────────────────────────────
 
 fn save_api_key_to_file(api_key: &str) -> Result<bool, String> {
     let path = credentials_file_path()?;
@@ -148,15 +148,13 @@ fn load_api_key_from_file() -> Option<String> {
 
 fn delete_credentials_file() {
     if let Ok(path) = credentials_file_path() {
-        if path.exists() {
-            if fs::remove_file(&path).is_ok() {
-                log::info!("Credentials file deleted");
-            }
+        if path.exists() && fs::remove_file(&path).is_ok() {
+            log::info!("Credentials file deleted");
         }
     }
 }
 
-/// ── Unified storage helpers ──────────────────────────────────────────────────
+// ── Unified storage helpers ───────────────────────────────────────────────────
 
 /// Save the API key to the given storage method.
 fn save_key_to_storage(api_key: &str, method: &str) -> Result<bool, String> {
@@ -195,7 +193,7 @@ fn read_existing_config() -> Option<AiConfig> {
     serde_json::from_str(&content).ok()
 }
 
-/// ── Sidecar push ─────────────────────────────────────────────────────────────
+// ── Sidecar push ──────────────────────────────────────────────────────────────
 
 /// Push the API key to the sidecar's in-memory store.
 ///
@@ -268,7 +266,7 @@ pub fn load_full_config_for_sidecar() -> Option<String> {
     load_key_from_storage(method)
 }
 
-/// ── Tauri commands ───────────────────────────────────────────────────────────
+// ── Tauri commands ────────────────────────────────────────────────────────────
 
 /// Save AI configuration.
 ///
