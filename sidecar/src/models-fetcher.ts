@@ -56,7 +56,20 @@ interface ModelsDevModel {
   temperature: boolean;
   tool_call: boolean;
   limit: { context: number; output: number };
-  cost?: { input: number; output: number };
+  /**
+   * Pricing in $ per 1M tokens.
+   * The actual API may include additional keys beyond the ones typed here
+   * (e.g. cache_read, cache_write, reasoning, input_audio, output_audio, tiers, context_over_200k).
+   * We intentionally type only the fields we consume and let extras pass through.
+   */
+  cost?: {
+    input: number;
+    output: number;
+    cache_read?: number;
+    cache_write?: number;
+    reasoning?: number;
+    [key: string]: unknown;
+  };
   status?: string;
   modalities?: { input: string[]; output: string[] };
   open_weights?: boolean;
@@ -90,6 +103,15 @@ function convertModelsDevModel(raw: ModelsDevModel): ModelInfo {
     supportsImageInput,
     contextLimit: raw.limit.context,
     maxOutput: raw.limit.output,
+    cost: raw.cost
+      ? {
+          input: raw.cost.input,
+          output: raw.cost.output,
+          cacheRead: raw.cost.cache_read,
+          cacheWrite: raw.cost.cache_write,
+          reasoning: raw.cost.reasoning,
+        }
+      : undefined,
   };
 }
 

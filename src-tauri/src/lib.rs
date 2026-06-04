@@ -27,13 +27,9 @@ pub fn run() {
                 .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)?;
             log::info!("Workspace path: {:?}", workspace_path);
 
-            // Initialize the error monitor
-            let error_monitor = engine::monitor::ErrorMonitor::new();
-
             // Store in managed state
             app.manage(AppState {
                 workspace_path: workspace_path.clone(),
-                error_monitor,
             });
 
             // Start the security HTTP server (Rust-backed file ops for sidecar)
@@ -42,10 +38,42 @@ pub fn run() {
 
             // Initialize and start the sidecar manager (pass security port)
             let sidecar_manager = SidecarManager::new(workspace_path.clone(), security_port);
-            if let Err(e) = sidecar_manager.start() {
-                log::warn!("Failed to start sidecar on launch: {}", e);
+            let mut sidecar_started = false;
+            for attempt in 1..=3 {
+                match sidecar_manager.start() {
+                    Ok(()) => {
+                        log::info!("Sidecar started successfully (port {}).", sidecar_manager.actual_port());
+                        sidecar_started = true;
+                        break;
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to start sidecar (attempt {}/3): {}", attempt, e);
+                        if attempt < 3 {
+                            std::thread::sleep(std::time::Duration::from_millis(1000 * attempt));
+                        }
+                    }
+                }
+            }
+            if sidecar_started {
+                let sidecar_port = sidecar_manager.actual_port();
+
+                // Push stored API key to sidecar in a background thread so it
+                // cannot block setup() (macOS Keychain access may prompt the
+                // user or hang, and the Tauri window won't appear until setup
+                // returns).
+                let key_port = sidecar_port;
+                std::thread::spawn(move || {
+                    if let Some(api_key) = commands::ai_config::load_full_config_for_sidecar() {
+                        commands::ai_config::push_api_key_to_sidecar_on_port(&api_key, key_port);
+                        // Clear the key from Rust's stack after pushing
+                        drop(api_key);
+                    }
+                });
             } else {
-                log::info!("Sidecar started successfully.");
+                log::error!(
+                    "Sidecar failed to start after 3 attempts. The frontend will show 'Sidecar Offline'. \
+                     Use the restart button or run 'npm run sidecar' manually."
+                );
             }
             app.manage(sidecar_manager);
 
@@ -69,6 +97,7 @@ pub fn run() {
             commands::harness::get_errors,
             commands::harness::get_workspace_path,
             commands::harness::initialize_workspace,
+            commands::harness::open_in_vscode,
             // Environment check commands
             commands::env_check::check_environment,
             commands::env_check::check_winget,
@@ -84,6 +113,7 @@ pub fn run() {
             commands::sidecar::restart_sidecar,
             commands::sidecar::kill_sidecar,
             commands::sidecar::sidecar_status,
+            commands::sidecar::sidecar_port,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

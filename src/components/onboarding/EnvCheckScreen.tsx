@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,8 @@ export function EnvCheckScreen() {
     setSetupRunning,
   } = useAppStore();
 
+  const { t } = useTranslation();
+
   const [showSetupModal, setShowSetupModal] = useState(false);
   const [checkingComplete, setCheckingComplete] = useState(false);
 
@@ -78,14 +81,12 @@ export function EnvCheckScreen() {
     };
   }, []);
 
-  // ── Listen for install progress events (Tauri Tauri only) ──────────────
+  // ── Listen for install progress events ──────────────────────────────────
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     async function setupListener() {
-      const hasTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
-      if (!hasTauri) return;
       const { listen } = await import("@tauri-apps/api/event");
 
       unlisten = await listen<SetupProgress>(
@@ -114,9 +115,6 @@ export function EnvCheckScreen() {
   // ── Auto-setup logic ─────────────────────────────────────────────────────
 
   const startAutoSetup = useCallback(async () => {
-    const hasTauri = typeof window !== "undefined" && !!(window as any).__TAURI_INTERNALS__;
-    if (!hasTauri) return;
-
     setSetupRunning(true);
     setShowSetupModal(false);
 
@@ -188,9 +186,9 @@ export function EnvCheckScreen() {
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10">
             <MonitorCheck className="h-6 w-6 text-primary" />
           </div>
-          <h1 className="text-2xl font-bold tracking-tight">環境チェック</h1>
+          <h1 className="text-2xl font-bold tracking-tight">{t('env.title')}</h1>
           <p className="text-sm text-muted-foreground">
-            Node.js と npm が利用可能かを確認します
+            {t('env.description')}
           </p>
         </div>
 
@@ -203,14 +201,14 @@ export function EnvCheckScreen() {
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" />
               <div className="space-y-2 text-sm">
                 <p className="font-medium text-amber-800 dark:text-amber-200">
-                  自動セットアップを利用できません
+                  {t('env.autoSetupUnavailable')}
                 </p>
                 <p className="text-amber-700 dark:text-amber-300">
-                  Windows パッケージマネージャー（winget）が見つかりませんでした。
+                  {t('env.wingetNotFound')}
                 </p>
                 <div className="space-y-1">
                   <p className="text-xs font-medium text-amber-700 dark:text-amber-300">
-                    winget を導入する方法：
+                    {t('env.howToInstallWinget')}
                   </p>
                   <Button
                     variant="outline"
@@ -224,10 +222,10 @@ export function EnvCheckScreen() {
                     }
                   >
                     <Store className="mr-1 h-3 w-3" />
-                    Microsoft Store で App Installer を更新する
+                    {t('env.updateAppInstaller')}
                   </Button>
                   <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                    Store が開かない場合は、以下から各ツールを手動でインストールしてください。
+                    {t('env.manualInstallFallback')}
                   </p>
                 </div>
               </div>
@@ -258,25 +256,25 @@ export function EnvCheckScreen() {
                       {item.status === "ok" && (
                         <Badge variant="success">
                           <CheckCircle2 className="mr-1 h-3 w-3" />
-                          OK
+                          {t('env.ok')}
                         </Badge>
                       )}
                       {item.status === "fail" && (
                         <Badge variant="destructive">
                           <XCircle className="mr-1 h-3 w-3" />
-                          未インストール
+                          {t('env.notInstalled')}
                         </Badge>
                       )}
                       {item.status === "installing" && (
                         <Badge variant="outline">
                           <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                          インストール中
+                          {t('env.installing')}
                         </Badge>
                       )}
                       {item.status === "pending" && (
                         <Badge variant="outline">
                           <Loader2 className="mr-1 h-3 w-3 animate-spin" />
-                          確認中
+                          {t('env.checking')}
                         </Badge>
                       )}
                     </div>
@@ -284,7 +282,7 @@ export function EnvCheckScreen() {
                       {item.description}
                       {item.sizeMb && item.status === "fail" && (
                         <span className="ml-1 opacity-60">
-                          （約{formatSize(item.sizeMb)}）
+                          {t('env.approxSize', { size: formatSize(item.sizeMb) })}
                         </span>
                       )}
                     </p>
@@ -312,7 +310,7 @@ export function EnvCheckScreen() {
                         className="h-auto p-0 text-xs"
                         onClick={() => window.open(item.downloadUrl, "_blank")}
                       >
-                        手動インストール{" "}
+                        {t('env.manualInstall')}{" "}
                         <ExternalLink className="ml-1 h-3 w-3" />
                       </Button>
                     )}
@@ -335,7 +333,7 @@ export function EnvCheckScreen() {
               onClick={() => setShowSetupModal(true)}
             >
               <Download className="mr-2 h-4 w-4" />
-              自動セットアップ
+              {t('env.autoSetupButton')}
             </Button>
           )}
 
@@ -344,10 +342,10 @@ export function EnvCheckScreen() {
             <div className="space-y-2 text-center">
               <Loader2 className="mx-auto h-5 w-5 animate-spin text-primary" />
               <p className="text-sm text-muted-foreground">
-                依存関係を自動インストール中...
+                {t('env.installingDeps')}
               </p>
               <p className="text-xs text-muted-foreground">
-                セットアップが完了するまでお待ちください
+                {t('env.waitForSetup')}
               </p>
             </div>
           )}
@@ -355,14 +353,14 @@ export function EnvCheckScreen() {
           {/* Status message (no winget, has failures, not installing) */}
           {hasChecked && !allPassed && !setupRunning && !wingetOk && (
             <p className="text-sm text-muted-foreground text-center">
-              必要なツールをインストールしてからお試しください
+              {t('env.installRequiredTools')}
             </p>
           )}
 
           {/* All OK */}
           {allPassed && !setupRunning && (
             <p className="text-sm text-green-600 dark:text-green-400 text-center font-medium">
-              すべての依存関係が準備できました
+              {t('env.allDepsReady')}
             </p>
           )}
 
@@ -373,19 +371,19 @@ export function EnvCheckScreen() {
               className="flex-1"
               disabled={setupRunning}
             >
-              戻る
+              {t('common.back')}
             </Button>
             <Button
               onClick={() => setPhase("main")}
               className="flex-1"
               disabled={setupRunning}
             >
-              DeskSpawn を始める
+              {t('env.startDeskspawn')}
             </Button>
           </div>
 
           <p className="text-xs text-muted-foreground text-center">
-            Node.js はアプリの開発サーバーと依存関係の管理に必要です。
+            {t('env.nodejsRequired')}
           </p>
         </div>
       </div>
@@ -399,9 +397,9 @@ export function EnvCheckScreen() {
                 <Download className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <h2 className="text-lg font-semibold">自動セットアップの確認</h2>
+                <h2 className="text-lg font-semibold">{t('env.setupConfirmTitle')}</h2>
                 <p className="text-xs text-muted-foreground">
-                  winget を使用して以下のツールをインストールします
+                  {t('env.setupConfirmDesc')}
                 </p>
               </div>
             </div>
@@ -421,7 +419,7 @@ export function EnvCheckScreen() {
                     {pkg.description}
                   </span>
                   <span className="ml-auto text-xs text-muted-foreground">
-                    約{formatSize(pkg.sizeMb)}
+                    {t('env.approxSize', { size: formatSize(pkg.sizeMb) })}
                   </span>
                 </div>
               ))}
@@ -429,24 +427,21 @@ export function EnvCheckScreen() {
 
             {/* Total size warning */}
             <div className="mb-4 rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              合計ダウンロードサイズ: 約{formatSize(totalSizeMb)}
+              {t('env.totalSize')} {t('env.approxSize', { size: formatSize(totalSizeMb) })}
             </div>
 
             {/* VS Build Tools specific warning */}
             {hasVsBuildTools && (
               <div className="mb-4 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
-                VS Build Tools のインストールには約4.5GBの空き容量と安定した
-                インターネット接続が必要です。Wi-Fi 環境を推奨します。
+                {t('env.vsBuildToolsWarning')}
               </div>
             )}
 
             {/* UAC notice */}
             <div className="mb-4 rounded-md bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              <p className="font-medium">インストール中について</p>
+              <p className="font-medium">{t('env.installNotice')}</p>
               <p>
-                インストール中に Windows の確認画面（UAC）が表示された場合は、
-                「はい」を押して許可してください。これは Windows がシステムへの
-                変更を確認するための標準的な動作です。
+                {t('env.uacDescription')}
               </p>
             </div>
 
@@ -458,10 +453,10 @@ export function EnvCheckScreen() {
                 className="flex-1"
                 onClick={() => setShowSetupModal(false)}
               >
-                キャンセル
+                {t('common.cancel')}
               </Button>
               <Button className="flex-1" onClick={startAutoSetup}>
-                インストール開始
+                {t('env.startInstall')}
                 <ArrowRight className="ml-1 h-4 w-4" />
               </Button>
             </div>

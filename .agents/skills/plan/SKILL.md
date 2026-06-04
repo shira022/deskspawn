@@ -86,6 +86,7 @@ Ask the human user about the dimensions required for the chosen tier. Do not ass
 - What are the loading states? Empty states? Error states?
 - Are there accessibility requirements? (keyboard nav, screen reader labels)
 - Does it follow shadcn/ui component patterns?
+- **i18n:** Does this change introduce new UI text? If so, plan translation keys for ALL language files (`src/locales/*/common.json`). Does it require adding a new language? If so, `src/lib/languages.ts` needs updating.
 
 ##### Security (Full, and Focused when I/O or new dependencies)
 

@@ -6,76 +6,93 @@ import type { LanguageModel } from 'ai';
 import type { ProviderConfig } from './types.js';
 
 /**
- * Known Ollama models mapped to their typical local identifiers.
- * Users can override via the `model` field in config.
- */
-const OLLAMA_DEFAULT_MODEL = 'llama3.2';
-
-/**
  * Resolve a language model instance from the provider configuration.
- * Supports: openai, anthropic, google, ollama, and custom (OpenAI-compatible).
  *
- * Each provider is instantiated via its `create*` factory so that API keys
- * and custom endpoints can be passed explicitly. If no apiKey is provided,
- * the factory will fall back to the standard environment variable.
+ * API keys are NEVER read from environment variables.
+ * They must be provided explicitly via the config (from keychain / file
+ * in Tauri mode, or localStorage in browser mode).
+ *
+ * If apiKey is missing for a provider that requires one, an error is thrown
+ * with a clear message rather than sending an empty Authorization header
+ * (which would result in a cryptic 401 from the API).
  */
 export function getModel(config: ProviderConfig): LanguageModel {
   const { provider, model, apiKey, customEndpoint } = config;
 
   switch (provider) {
     case 'openai': {
-      const client = createOpenAI({
-        apiKey,
-        baseURL: customEndpoint,
-      });
-      // createOpenAI returns a provider with .chat(modelId) method
+      if (!apiKey) {
+        throw new Error(
+          'OpenAI API key is not configured. ' +
+          'Please enter your API key in the settings.',
+        );
+      }
+      const client = createOpenAI({ apiKey, baseURL: customEndpoint });
       return client.chat(model) as unknown as LanguageModel;
     }
 
     case 'anthropic': {
-      const client = createAnthropic({
-        apiKey,
-        baseURL: customEndpoint,
-      });
-      // createAnthropic returns a provider with .messages(modelId) method
+      if (!apiKey) {
+        throw new Error(
+          'Anthropic API key is not configured. ' +
+          'Please enter your API key in the settings.',
+        );
+      }
+      const client = createAnthropic({ apiKey, baseURL: customEndpoint });
       return client.messages(model) as unknown as LanguageModel;
     }
 
     case 'google': {
-      const client = createGoogleGenerativeAI({
-        apiKey,
-        baseURL: customEndpoint,
-      });
-      // createGoogleGenerativeAI returns a provider with .chat(modelId) method
+      if (!apiKey) {
+        throw new Error(
+          'Google AI API key is not configured. ' +
+          'Please enter your API key in the settings.',
+        );
+      }
+      const client = createGoogleGenerativeAI({ apiKey, baseURL: customEndpoint });
       return client.chat(model) as unknown as LanguageModel;
     }
 
     case 'ollama': {
-      // Ollama exposes an OpenAI-compatible API at localhost:11434/v1
+      // Ollama is local-only; no API key needed.
       const ollama = createOpenAICompatible({
         name: 'ollama',
         baseURL: customEndpoint ?? 'http://localhost:11434/v1',
       });
-      return ollama.chatModel(model || OLLAMA_DEFAULT_MODEL) as unknown as LanguageModel;
+      if (!model) {
+        throw new Error(
+          'Ollama model is not specified. ' +
+          'Please enter a model name in the settings (e.g. llama3.2, qwen2.5).',
+        );
+      }
+      return ollama.chatModel(model) as unknown as LanguageModel;
     }
 
     case 'custom': {
       if (!customEndpoint) {
         throw new Error(
-          'customEndpoint is required when provider is "custom"'
+          'Custom provider requires an endpoint URL. ' +
+          'Please enter the endpoint in the settings.',
+        );
+      }
+      if (!apiKey) {
+        throw new Error(
+          'Custom provider API key is not configured. ' +
+          'Please enter your API key in the settings.',
         );
       }
       const client = createOpenAICompatible({
         name: 'custom-provider',
         baseURL: customEndpoint,
-        apiKey: apiKey ?? '',
+        apiKey,
       });
       return client.chatModel(model) as unknown as LanguageModel;
     }
 
     default: {
       throw new Error(
-        `Unsupported provider: "${provider}". Supported: openai, anthropic, google, ollama, custom`
+        `Unsupported provider: "${provider}". ` +
+        'Supported: openai, anthropic, google, ollama, custom',
       );
     }
   }

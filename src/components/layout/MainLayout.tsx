@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { useTranslation, Trans } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { PreviewPanel } from "@/components/preview/PreviewPanel";
@@ -25,13 +26,16 @@ import {
   FolderKanban,
   ChevronDown,
   Plus,
+  Sun,
+  Moon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tooltip } from "@/components/ui/tooltip";
 import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
-import type { ProviderKind } from "@/types";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
+import type { ProviderKind, ThemeMode } from "@/types";
 import { providerLabels } from "@/lib/constants";
 import { useModels } from "@/hooks/useModels";
 
@@ -40,25 +44,12 @@ const layoutIcons: Record<string, React.ReactNode> = {
   "3-pane": <LayoutPanelLeft className="h-4 w-4" />,
 };
 
-const layoutLabels: Record<string, string> = {
-  "2-pane": "2ペイン（チャット＋プレビュー）",
-  "3-pane": "3ペイン（ファイル＋チャット＋プレビュー）",
-};
-
 const providerIcons: Record<ProviderKind, React.ReactNode> = {
   openai: <Sparkles className="h-3.5 w-3.5" />,
   anthropic: <Cloud className="h-3.5 w-3.5" />,
   google: <Globe className="h-3.5 w-3.5" />,
   ollama: <Cpu className="h-3.5 w-3.5" />,
   custom: <Server className="h-3.5 w-3.5" />,
-};
-
-const providerRepModel: Record<ProviderKind, string> = {
-  openai: "GPT",
-  anthropic: "Claude",
-  google: "Gemini",
-  ollama: "ローカルLLM",
-  custom: "OpenAI 互換",
 };
 
 export function MainLayout() {
@@ -74,12 +65,32 @@ export function MainLayout() {
     previewMaximized,
   } = useAppStore();
 
+  const { t } = useTranslation();
+
+  const providerRepModel: Record<ProviderKind, string> = {
+    openai: "GPT",
+    anthropic: "Claude",
+    google: "Gemini",
+    ollama: t('ai.providerOllamaDesc'),
+    custom: t('ai.providerCustomDesc'),
+  };
+
+  const layoutLabels: Record<string, string> = {
+    "2-pane": t('layout.twoPane'),
+    "3-pane": t('layout.threePane'),
+  };
+
   const currentAppName = currentProjectId
     ? projects.find((p) => p.id === currentProjectId)?.name
     : null;
   const [showModelSettings, setShowModelSettings] = useState(false);
   const [showProjectSwitcher, setShowProjectSwitcher] = useState(false);
   const [showNewApp, setShowNewApp] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+
+  const settings = useAppStore((s) => s.settings);
+  const resolvedTheme = useAppStore((s) => s.resolvedTheme);
+  const updateSettings = useAppStore((s) => s.updateSettings);
 
   const currentProvider: ProviderKind = (aiConfig?.provider as ProviderKind) ?? "ollama";
   const currentModel = aiConfig?.model ?? null;
@@ -160,8 +171,8 @@ export function MainLayout() {
               <FolderKanban className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs max-w-[100px] truncate">
                 {currentProjectId
-                  ? projects.find((p) => p.id === currentProjectId)?.name || "プロジェクト"
-                  : "プロジェクト未選択"}
+                  ? projects.find((p) => p.id === currentProjectId)?.name || t('project.label')
+                  : t('project.noneSelected')}
               </span>
               {projectSwitching ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
@@ -185,7 +196,7 @@ export function MainLayout() {
             onClick={() => setShowNewApp(true)}
           >
             <Plus className="h-3.5 w-3.5" />
-            <span className="text-xs">新規アプリ</span>
+            <span className="text-xs">{t('project.newApp')}</span>
           </Button>
         </div>
 
@@ -201,21 +212,14 @@ export function MainLayout() {
               {hasConfig ? (
                 <>
                   {providerIcons[currentProvider]}
-                  <span className="text-xs max-w-[80px] truncate">{currentModel || "未選択"}</span>
-                  {(() => {
-                    const info = toolbarModels.find((m) => m.id === currentModel);
-                    return info?.supportsImageInput ? (
-                      <span className="text-[10px]" title="📷 スクリーンショットレビュー対応">📷</span>
-                    ) : null;
-                  })()}
+                  <span className="text-xs max-w-[80px] truncate">{currentModel || t('common.notSelected')}</span>
                 </>
               ) : (
                 <>
                   <Settings2 className="h-3.5 w-3.5" />
-                  <span className="text-xs">AI未設定</span>
+                  <span className="text-xs">{t('ai.notConfiguredShort')}</span>
                 </>
               )}
-              <Settings2 className="h-3 w-3 text-muted-foreground" />
             </Button>
 
             {showModelSettings && (
@@ -228,7 +232,7 @@ export function MainLayout() {
                   <div className="p-3 space-y-3">
                     {!hasConfig ? (
                       <div className="text-center py-2">
-                        <p className="text-sm text-muted-foreground mb-2">AI設定が行われていません</p>
+                        <p className="text-sm text-muted-foreground mb-2">{t('ai.notConfigured')}</p>
                         <Button
                           size="sm"
                           className="h-7 text-xs"
@@ -237,14 +241,14 @@ export function MainLayout() {
                             useAppStore.getState().setPhase("ai-config");
                           }}
                         >
-                          AI設定画面へ
+                          {t('ai.goToConfig')}
                         </Button>
                       </div>
                     ) : (
                       <>
                         <div>
                           <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-                            プロバイダー
+                            {t('settings.provider')}
                           </label>
                           <Select
                             value={currentProvider}
@@ -261,13 +265,13 @@ export function MainLayout() {
 
                         <div>
                           <label className="text-[11px] font-medium text-muted-foreground mb-1 block">
-                            モデル
+                            {t('ai.model')}
                           </label>
 
                           {toolbarModelsLoading ? (
                             <div className="flex items-center gap-1.5 h-8 px-2 rounded border bg-muted/30 text-xs text-muted-foreground">
                               <Loader2 className="h-3 w-3 animate-spin" />
-                              取得中...
+                              {t('common.loading')}
                             </div>
                           ) : toolbarModelsError ? (
                             <div className="space-y-1.5">
@@ -279,7 +283,7 @@ export function MainLayout() {
                                 value={currentModel ?? ""}
                                 onChange={handleModelInputChange}
                                 className="h-8 text-xs"
-                                placeholder="モデル名を入力"
+                                placeholder={t('ai.modelPlaceholder')}
                               />
                             </div>
                           ) : hasToolbarModels ? (
@@ -289,38 +293,68 @@ export function MainLayout() {
                               className="h-8 text-xs"
                             >
                               <option value="" disabled>
-                                モデルを選択...
+                                {t('ai.selectModel')}
                               </option>
                               {toolbarModels.map((m) => (
                                 <option
                                   key={m.id}
                                   value={m.id}
-                                  title={m.supportsImageInput ? '📷 画像レビュー対応' : 'テキストベースの画面確認のみ'}
+                                  title={m.supportsImageInput ? t('ai.supportsImageReview') : t('ai.textOnlyReview')}
                                 >
-                                  {m.supportsImageInput ? '📷 ' : '   '}{m.name}
+                                  {m.supportsImageInput ? '✦ ' : '   '}{m.name}
                                 </option>
                               ))}
                               <option disabled>──────────</option>
-                              <option value="__custom__">その他（手動入力）...</option>
+                              <option value="__custom__">{t('ai.otherManual')}</option>
                             </Select>
                           ) : (
                             <Input
                               value={currentModel ?? ""}
                               onChange={handleModelInputChange}
                               className="h-8 text-xs"
-                              placeholder="モデル名を入力"
+                              placeholder={t('ai.modelPlaceholder')}
                             />
                           )}
 
-                          {/* Manual input fallback when "その他" selected */}
+                          {/* Manual input fallback when "Other" selected */}
                           {currentModel === "" && hasToolbarModels && (
                             <Input
                               className="h-8 text-xs mt-1.5"
-                              placeholder="モデルIDを手動入力"
+                              placeholder={t('ai.manualModelId')}
                               value=""
                               onChange={handleModelInputChange}
+
                             />
                           )}
+
+                          {/* Model cost info */}
+                          {(() => {
+                            const selected = toolbarModels.find((m) => m.id === currentModel);
+                            if (!selected?.cost) return null;
+                            const c = selected.cost;
+                            const showCached = c.cacheRead != null && c.cacheRead !== c.input;
+                            const showReasoning = c.reasoning != null && c.reasoning !== c.output;
+                            return (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                <span className="inline-flex items-center rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                  In {formatCostRate(c.input)}
+                                </span>
+                                <span className="inline-flex items-center rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                  Out {formatCostRate(c.output)}
+                                </span>
+                                {showCached && (
+                                  <span className="inline-flex items-center rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                    Cache {formatCostRate(c.cacheRead!)}
+                                  </span>
+                                )}
+                                {showReasoning && (
+                                  <span className="inline-flex items-center rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                    Think {formatCostRate(c.reasoning!)}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         <Separator />
@@ -335,14 +369,14 @@ export function MainLayout() {
                               useAppStore.getState().setPhase("ai-config");
                             }}
                           >
-                            APIキー設定
+                            {t('ai.apiKeySettings')}
                           </Button>
                           <Button
                             size="sm"
                             className="h-7 flex-1 text-xs"
                             onClick={() => setShowModelSettings(false)}
                           >
-                            閉じる
+                            {t('common.close')}
                           </Button>
                         </div>
                       </>
@@ -352,6 +386,39 @@ export function MainLayout() {
               </>
             )}
           </div>
+
+          {/* Dark mode toggle */}
+          <Tooltip content={resolvedTheme === "dark" ? t('common.switchToLight') : t('common.switchToDark')}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => {
+                const next = settings.theme === "system"
+                  ? (resolvedTheme === "dark" ? "light" : "dark")
+                  : (settings.theme === "dark" ? "light" : "dark");
+                updateSettings({ theme: next as ThemeMode });
+              }}
+            >
+              {resolvedTheme === "dark" ? (
+                <Sun className="h-3.5 w-3.5" />
+              ) : (
+                <Moon className="h-3.5 w-3.5" />
+              )}
+            </Button>
+          </Tooltip>
+
+          {/* Settings button */}
+          <Tooltip content={t('settings.title')}>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-7 w-7"
+              onClick={() => setShowSettings(true)}
+            >
+              <Settings2 className="h-3.5 w-3.5" />
+            </Button>
+          </Tooltip>
 
           <Tooltip content={layoutLabels[layoutMode]}>
             <Button
@@ -372,22 +439,18 @@ export function MainLayout() {
           direction="horizontal"
           className={appLoading ? "opacity-20 pointer-events-none select-none" : ""}
         >
-          <ResizablePanel
-            defaultSize={18}
-            minSize={0}
-            className={layoutMode === "2-pane" ? "hidden" : ""}
-          >
-            <FileTreePanel />
-          </ResizablePanel>
-          <ResizableHandle className={layoutMode === "2-pane" ? "hidden" : ""} />
-          <ResizablePanel
-            defaultSize={37}
-            minSize={previewMaximized ? 0 : 20}
-            className={previewMaximized ? "hidden" : ""}
-          >
-            <ChatPanel />
-          </ResizablePanel>
-          <ResizableHandle className={previewMaximized ? "hidden" : ""} />
+          {layoutMode === "3-pane" && (
+            <ResizablePanel defaultSize={18} minSize={0}>
+              <FileTreePanel />
+            </ResizablePanel>
+          )}
+          {layoutMode === "3-pane" && <ResizableHandle />}
+          {!previewMaximized && (
+            <ResizablePanel defaultSize={37} minSize={20}>
+              <ChatPanel />
+            </ResizablePanel>
+          )}
+          {!previewMaximized && <ResizableHandle />}
           <ResizablePanel defaultSize={45} minSize={25}>
             <PreviewPanel />
           </ResizablePanel>
@@ -404,16 +467,16 @@ export function MainLayout() {
                 </div>
               </div>
               <div>
-                <p className="text-base font-semibold">新しいアプリを準備しています</p>
+                <p className="text-base font-semibold">{t('project.preparingNewApp')}</p>
                 <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                   {currentAppName ? (
-                    <>「{currentAppName}」のテンプレートを展開し、<br />開発サーバーを起動しています</>
+                    <Trans i18nKey="project.preparingWithName" values={{ appName: currentAppName }} />
                   ) : (
-                    <>テンプレートを展開し、開発サーバーを起動しています</>
+                    <>{t('project.preparingGeneric')}</>
                   )}
                 </p>
                 <p className="text-xs text-muted-foreground/60 mt-3">
-                  この画面は準備が完了すると自動で消えます
+                  {t('project.autoDismiss')}
                 </p>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground/50">
@@ -431,6 +494,13 @@ export function MainLayout() {
 
       {/* New App Dialog */}
       <NewAppDialog open={showNewApp} onOpenChange={setShowNewApp} />
+
+      {/* Settings Dialog */}
+      <SettingsDialog open={showSettings} onOpenChange={setShowSettings} />
     </div>
   );
+}
+
+function formatCostRate(rate: number): string {
+  return `$${rate.toFixed(2)}/M`;
 }
