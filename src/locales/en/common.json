@@ -251,21 +251,13 @@
     "sidecarError": "Cannot connect to the sidecar server.\nRun `npm run sidecar` and try again."
   },
   "fileTree": {
-    "title": "Files",
+    "askAiToGenerate": "Ask AI to generate an app",
+    "errorLoadFailed": "Failed to load file",
+    "noFiles": "No files",
     "openInVSCode": "Open in VS Code",
     "refresh": "Refresh",
-    "noFiles": "No files",
-    "askAiToGenerate": "Ask AI to generate an app",
-    "selectFileToPreview": "Select a file to see its contents"
-  },
-  "fileTree": {
-    "title": "Files",
-    "openInVSCode": "Open in VS Code",
-    "refresh": "Refresh",
-    "noFiles": "No files",
-    "askAiToGenerate": "Ask AI to generate an app",
     "selectFileToPreview": "Select a file to see its contents",
-    "errorLoadFailed": "Failed to load file"
+    "title": "Files"
   },
   "triage": {
     "analyzing": "Analyzing request...",

@@ -251,21 +251,13 @@
     "sidecarError": "サイドカーサーバーに接続できません。`npm run sidecar` を実行してから再試行してください。"
   },
   "fileTree": {
-    "title": "ファイル",
+    "askAiToGenerate": "AIにアプリ生成を指示してください",
+    "errorLoadFailed": "ファイルの読み込みに失敗しました",
+    "noFiles": "ファイルがありません",
     "openInVSCode": "VS Code で開く",
     "refresh": "再読み込み",
-    "noFiles": "ファイルがありません",
-    "askAiToGenerate": "AIにアプリ生成を指示してください",
-    "selectFileToPreview": "ファイルを選択すると内容が表示されます"
-  },
-  "fileTree": {
-    "title": "ファイル",
-    "openInVSCode": "VS Code で開く",
-    "refresh": "再読み込み",
-    "noFiles": "ファイルがありません",
-    "askAiToGenerate": "AIにアプリ生成を指示してください",
     "selectFileToPreview": "ファイルを選択すると内容が表示されます",
-    "errorLoadFailed": "ファイルの読み込みに失敗しました"
+    "title": "ファイル"
   },
   "triage": {
     "analyzing": "要求を分析中...",
