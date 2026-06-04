@@ -102,9 +102,9 @@ export function StatusBar() {
     complete: { label: t('status.complete'), icon: <CheckCircle2 className="h-3 w-3" />, variant: "success" as const },
   };
 
-  const sessionUsage = useAppStore((s) => s.sessionUsage);
-  const totalCost = sessionUsage.reduce((sum, u) => sum + (u.estimatedCost ?? 0), 0);
-  const totalTokens = sessionUsage.reduce((sum, u) => sum + u.inputTokens + u.outputTokens, 0);
+  const messages = useAppStore((s) => s.messages);
+  const totalCost = messages.reduce((sum, m) => sum + (m.usage?.estimatedCost ?? 0), 0);
+  const totalTokens = messages.reduce((sum, m) => sum + (m.usage?.inputTokens ?? 0) + (m.usage?.outputTokens ?? 0), 0);
 
   const s = statusConfig[agentStatus];
 

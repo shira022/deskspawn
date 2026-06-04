@@ -316,15 +316,45 @@ export function MainLayout() {
                             />
                           )}
 
-                          {/* Manual input fallback when "その他" selected */}
+                          {/* Manual input fallback when "Other" selected */}
                           {currentModel === "" && hasToolbarModels && (
                             <Input
                               className="h-8 text-xs mt-1.5"
                               placeholder={t('ai.manualModelId')}
                               value=""
                               onChange={handleModelInputChange}
+
                             />
                           )}
+
+                          {/* Model cost info */}
+                          {(() => {
+                            const selected = toolbarModels.find((m) => m.id === currentModel);
+                            if (!selected?.cost) return null;
+                            const c = selected.cost;
+                            const showCached = c.cacheRead != null && c.cacheRead !== c.input;
+                            const showReasoning = c.reasoning != null && c.reasoning !== c.output;
+                            return (
+                              <div className="flex flex-wrap gap-1 mt-1.5">
+                                <span className="inline-flex items-center rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                  In {formatCostRate(c.input)}
+                                </span>
+                                <span className="inline-flex items-center rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                  Out {formatCostRate(c.output)}
+                                </span>
+                                {showCached && (
+                                  <span className="inline-flex items-center rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                    Cache {formatCostRate(c.cacheRead!)}
+                                  </span>
+                                )}
+                                {showReasoning && (
+                                  <span className="inline-flex items-center rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 text-[10px] font-medium">
+                                    Think {formatCostRate(c.reasoning!)}
+                                  </span>
+                                )}
+                              </div>
+                            );
+                          })()}
                         </div>
 
                         <Separator />
@@ -469,4 +499,8 @@ export function MainLayout() {
       <SettingsDialog open={showSettings} onOpenChange={setShowSettings} />
     </div>
   );
+}
+
+function formatCostRate(rate: number): string {
+  return `$${rate.toFixed(2)}/M`;
 }

@@ -18,7 +18,6 @@ import {
   Store,
 } from "lucide-react";
 import type { EnvCheckItem, WingetStatus, SetupProgress } from "@/types";
-import { isTauri } from "@/lib/tauri";
 import { callBackend } from "@/lib/backend";
 
 // ── Icons ─────────────────────────────────────────────────────────────────────
@@ -82,13 +81,12 @@ export function EnvCheckScreen() {
     };
   }, []);
 
-  // ── Listen for install progress events (Tauri Tauri only) ──────────────
+  // ── Listen for install progress events ──────────────────────────────────
 
   useEffect(() => {
     let unlisten: (() => void) | undefined;
 
     async function setupListener() {
-      if (!isTauri()) return;
       const { listen } = await import("@tauri-apps/api/event");
 
       unlisten = await listen<SetupProgress>(
@@ -117,8 +115,6 @@ export function EnvCheckScreen() {
   // ── Auto-setup logic ─────────────────────────────────────────────────────
 
   const startAutoSetup = useCallback(async () => {
-    if (!isTauri()) return;
-
     setSetupRunning(true);
     setShowSetupModal(false);
 

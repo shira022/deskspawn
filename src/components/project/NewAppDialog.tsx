@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Sparkles } from "lucide-react";
 import { sidecarBase } from "@/lib/constants";
+import { parseSidecarError } from "@/lib/utils";
 
 interface NewAppDialogProps {
   open: boolean;
@@ -61,7 +62,7 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error((data as any).error || `HTTP ${res.status}`);
+        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
       }
 
       const data = await res.json();

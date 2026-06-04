@@ -12,6 +12,7 @@ import {
   Trash2,
   Download,
   Upload,
+  Loader2,
 } from "lucide-react";
 import {
   Dialog,
@@ -23,6 +24,7 @@ import {
 } from "@/components/ui/dialog";
 import type { ProjectMeta } from "@/types";
 import { sidecarBase } from "@/lib/constants";
+import { parseSidecarError } from "@/lib/utils";
 
 interface ProjectSwitcherProps {
   open: boolean;
@@ -37,7 +39,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
   const [deleteTarget, setDeleteTarget] = useState<ProjectMeta | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [importing, setImporting] = useState(false);
-  const [importError, setImportError] = useState("");
+  const [exportingId, setExportingId] = useState<string | null>(null);
   const { t } = useTranslation();
 
   const {
@@ -58,6 +60,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     setVisibleMessageCount,
     projectSwitching,
     setProjectSwitching,
+    addToast,
   } = useAppStore();
 
   // Fetch projects on open
@@ -109,7 +112,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error((data as any).error || `HTTP ${res.status}`);
+        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
       }
 
       const data = await res.json();
@@ -145,7 +148,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error((data as any).error || `HTTP ${res.status}`);
+        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
       }
       const data = await res.json();
 
@@ -177,14 +180,36 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
   };
 
   const handleExport = async (project: ProjectMeta) => {
+    setExportingId(project.id);
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 60_000);
     try {
-      // Trigger download via anchor tag
+      const res = await fetch(`${sidecarBase()}/projects/${project.id}/export`, {
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
       const a = document.createElement("a");
-      a.href = `${sidecarBase()}/projects/${project.id}/export`;
+      a.href = url;
       a.download = `${project.name}.deskspawn`;
       a.click();
+      URL.revokeObjectURL(url);
+
+      addToast({ variant: "success", message: t('project.exportSuccess', { name: project.name }) });
     } catch (e: any) {
-      console.error("Export failed:", e);
+      if (e.name === "AbortError") {
+        addToast({ variant: "error", message: t('project.exportTimeout') });
+      } else {
+        addToast({ variant: "error", message: `${t('project.exportError')}: ${e.message || e}` });
+      }
+    } finally {
+      clearTimeout(timeout);
+      setExportingId(null);
     }
   };
 
@@ -197,7 +222,6 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     if (!file) return;
 
     setImporting(true);
-    setImportError("");
 
     try {
       // Read file as base64
@@ -217,14 +241,16 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
 
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error((data as any).error || `HTTP ${res.status}`);
+        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
       }
 
       const data = await res.json();
       setProjects(data.projects || []);
+      const projectName = data.project?.name || file.name.replace(/\.deskspawn$/i, '');
+      addToast({ variant: "success", message: t('project.importSuccess', { name: projectName }) });
       onOpenChange(false);
     } catch (e: any) {
-      setImportError(e.message || t('project.importError'));
+      addToast({ variant: "error", message: `${t('project.importError')}: ${e.message || ''}` });
     } finally {
       setImporting(false);
       // Reset input so the same file can be imported again
@@ -256,8 +282,12 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                 disabled={importing}
                 title={t('project.import')}
               >
-                <Upload className="h-3 w-3 mr-1" />
-                {importing ? "..." : t('project.import')}
+                {importing ? (
+                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                ) : (
+                  <Upload className="h-3 w-3 mr-1" />
+                )}
+                {importing ? t('project.importing') : t('project.import')}
               </Button>
               <Button
                 variant="ghost"
@@ -281,9 +311,6 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
             className="hidden"
             onChange={handleFileSelected}
           />
-          {importError && (
-            <p className="px-2 pb-1 text-[10px] text-destructive">{importError}</p>
-          )}
 
           <Separator className="my-1.5" />
 
@@ -341,15 +368,20 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                           </span>
                         </div>
                         <button
-                          className="shrink-0 p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors"
+                          className="shrink-0 p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors disabled:opacity-40 disabled:pointer-events-none"
                           onClick={(e) => {
                             e.stopPropagation();
                             e.preventDefault();
                             handleExport(project);
                           }}
-                          title={t('project.export')}
+                          disabled={exportingId === project.id}
+                          title={exportingId === project.id ? '' : t('project.export')}
                         >
-                          <Download className="h-3.5 w-3.5" />
+                          {exportingId === project.id ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Download className="h-3.5 w-3.5" />
+                          )}
                         </button>
                         <button
                           className="shrink-0 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"

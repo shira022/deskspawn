@@ -323,6 +323,25 @@ export function ChatMessage({
             </button>
           </div>
         )}
+
+        {/* ── Token usage / model footer (assistant messages only) ── */}
+        {isAssistant && message.usage && (
+          <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground/30 select-none">
+            <span>
+              {(message.usage.inputTokens + message.usage.outputTokens).toLocaleString()}{" "}
+              {t('chat.usageTokens')}
+            </span>
+            {message.usage.model && (
+              <span className="font-mono">
+                {message.usage.provider ? `${message.usage.provider}/` : ""}
+                {message.usage.model}
+              </span>
+            )}
+            {message.usage.estimatedCost ? (
+              <span>${message.usage.estimatedCost.toFixed(4)}</span>
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   );

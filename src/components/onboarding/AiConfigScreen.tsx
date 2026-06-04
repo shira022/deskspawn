@@ -9,7 +9,6 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ProviderKind, AiConfig, ModelInfo, StorageMethod } from "@/types";
 import { useModels } from "@/hooks/useModels";
-import { isTauri } from "@/lib/tauri";
 import {
   Sparkles,
   ChevronRight,
@@ -72,7 +71,6 @@ export function AiConfigScreen() {
   const [selectedModelInfo, setSelectedModelInfo] = useState<ModelInfo | null>(null);
 
   const showApiKey = providerNeedsApiKey(provider);
-  const isTauriEnv = isTauri();
 
   // Fetch models when provider or custom endpoint changes
   useEffect(() => {
@@ -148,7 +146,7 @@ export function AiConfigScreen() {
       temperature: parseFloat(temperature) || 0.2,
       maxTokens: maxTokens ? parseInt(maxTokens) : undefined,
       apiKeyConfigured: hasExistingKey || !!resolvedApiKey,
-      storageMethod: isTauriEnv ? storageMethod : undefined,
+      storageMethod,
     };
 
     setAiConfig(config);
@@ -231,63 +229,61 @@ export function AiConfigScreen() {
                   </>
                 )}
 
-                {/* Storage method selector (Tauri mode only) */}
-                {isTauriEnv && (
-                  <div className="space-y-2 pt-1">
-                    <Label>{t('ai.storageMethod')}</Label>
-                    <div className="grid grid-cols-2 gap-2">
-                      <button
-                        type="button"
-                        onClick={() => setStorageMethod("keychain")}
-                        className={`flex items-start gap-2.5 rounded-md border p-3 text-left text-sm transition-colors ${
-                          storageMethod === "keychain"
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:border-muted-foreground/30"
-                        }`}
-                      >
-                        <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0">
-                          <div className="font-medium">{t('ai.keychain')}</div>
-                          <div className="text-xs text-muted-foreground">
-                            {t('common.recommended')}
-                          </div>
+                {/* Storage method selector */}
+                <div className="space-y-2 pt-1">
+                  <Label>{t('ai.storageMethod')}</Label>
+                  <div className="grid grid-cols-2 gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setStorageMethod("keychain")}
+                      className={`flex items-start gap-2.5 rounded-md border p-3 text-left text-sm transition-colors ${
+                        storageMethod === "keychain"
+                          ? "border-primary bg-primary/5"
+                          : "border-border hover:border-muted-foreground/30"
+                      }`}
+                    >
+                      <Lock className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <div className="font-medium">{t('ai.keychain')}</div>
+                        <div className="text-xs text-muted-foreground">
+                          {t('common.recommended')}
                         </div>
-                        {storageMethod === "keychain" && (
-                          <div className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary">
-                            <div className="h-2 w-2 rounded-full bg-primary-foreground" />
-                          </div>
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setStorageMethod("file")}
-                        className={`flex items-start gap-2.5 rounded-md border p-3 text-left text-sm transition-colors ${
-                          storageMethod === "file"
-                            ? "border-primary bg-primary/5"
-                            : "border-border hover:border-muted-foreground/30"
-                        }`}
-                      >
-                        <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0">
-                          <div className="font-medium">{t('ai.file')}</div>
-                          <div className="text-xs text-muted-foreground">
-                            credentials.json
-                          </div>
+                      </div>
+                      {storageMethod === "keychain" && (
+                        <div className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary">
+                          <div className="h-2 w-2 rounded-full bg-primary-foreground" />
                         </div>
-                        {storageMethod === "file" && (
-                          <div className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary">
-                            <div className="h-2 w-2 rounded-full bg-primary-foreground" />
-                          </div>
-                        )}
-                      </button>
-                    </div>
-                    <p className="text-xs text-muted-foreground">
-                      {storageMethod === "keychain"
-                        ? t('ai.keychainDescription')
-                        : t('ai.fileDescription')}
-                    </p>
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setStorageMethod("file")}
+                      className={`flex items-start gap-2.5 rounded-md border p-3 text-left text-sm transition-colors ${
+                        storageMethod === "file"
+                          ? "border-primary bg-primary/5"
+                          : "border-border hover:border-muted-foreground/30"
+                      }`}
+                    >
+                      <FileText className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                      <div className="min-w-0">
+                        <div className="font-medium">{t('ai.file')}</div>
+                        <div className="text-xs text-muted-foreground">
+                          credentials.json
+                        </div>
+                      </div>
+                      {storageMethod === "file" && (
+                        <div className="ml-auto flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-primary">
+                          <div className="h-2 w-2 rounded-full bg-primary-foreground" />
+                        </div>
+                      )}
+                    </button>
                   </div>
-                )}
+                  <p className="text-xs text-muted-foreground">
+                    {storageMethod === "keychain"
+                      ? t('ai.keychainDescription')
+                      : t('ai.fileDescription')}
+                  </p>
+                </div>
               </div>
             )}
 
@@ -371,6 +367,28 @@ export function AiConfigScreen() {
                   )}
                 </div>
               )}
+
+              {/* Model cost info */}
+              {selectedModelInfo?.cost && (
+                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                  <span className="inline-flex items-center rounded bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 px-1.5 py-0.5 text-[10px] font-medium">
+                    {t('ai.costInput')} {formatCostRate(selectedModelInfo.cost.input)}
+                  </span>
+                  <span className="inline-flex items-center rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 px-1.5 py-0.5 text-[10px] font-medium">
+                    {t('ai.costOutput')} {formatCostRate(selectedModelInfo.cost.output)}
+                  </span>
+                  {selectedModelInfo.cost.cacheRead != null && selectedModelInfo.cost.cacheRead !== selectedModelInfo.cost.input && (
+                    <span className="inline-flex items-center rounded bg-sky-500/10 text-sky-600 dark:text-sky-400 px-1.5 py-0.5 text-[10px] font-medium">
+                      {t('ai.costCached')} {formatCostRate(selectedModelInfo.cost.cacheRead)}
+                    </span>
+                  )}
+                  {selectedModelInfo.cost.reasoning != null && selectedModelInfo.cost.reasoning !== selectedModelInfo.cost.output && (
+                    <span className="inline-flex items-center rounded bg-purple-500/10 text-purple-600 dark:text-purple-400 px-1.5 py-0.5 text-[10px] font-medium">
+                      {t('ai.costReasoning')} {formatCostRate(selectedModelInfo.cost.reasoning)}
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
             {/* Custom Endpoint */}
@@ -444,4 +462,8 @@ function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
   if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
   return String(n);
+}
+
+function formatCostRate(rate: number): string {
+  return `$${rate.toFixed(2)}/M`;
 }

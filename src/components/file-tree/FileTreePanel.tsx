@@ -21,6 +21,7 @@ import { useTranslation } from "react-i18next";
 import type { FileNode } from "@/types";
 import { sidecarBase } from "@/lib/constants";
 import { callBackend } from "@/lib/backend";
+import { parseSidecarError } from "@/lib/utils";
 
 interface TreeNode {
   name: string;
@@ -171,12 +172,12 @@ function FilePreview({ filePath }: { filePath: string }) {
       const res = await fetch(url);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error((data as any).error || `HTTP ${res.status}`);
+        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
       }
       const data = await res.json();
       setContent(data.content);
     } catch (e: any) {
-      setError(e.message || "Failed to load file");
+      setError(e.message || t('fileTree.errorLoadFailed'));
     } finally {
       setLoading(false);
     }
@@ -240,7 +241,7 @@ export function FileTreePanel() {
       const res = await fetch(`${sidecarBase()}/projects/files`);
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        throw new Error((data as any).error || `HTTP ${res.status}`);
+        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
       }
       const data = await res.json();
       const files: { path: string }[] = data.files ?? [];
@@ -260,13 +261,11 @@ export function FileTreePanel() {
       setTree(fileTree);
       setError("");
     } catch (e: any) {
-      setError(e.message || "Failed to load file tree");
+      setError(e.message || t('fileTree.errorLoadFailed'));
     } finally {
       setLoading(false);
     }
   }, [setFileTree]);
-
-  // Initial fetch
   useEffect(() => {
     fetchTree();
   }, [fetchTree]);

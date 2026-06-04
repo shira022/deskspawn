@@ -2,8 +2,9 @@ import { useAppStore } from "@/store/useAppStore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import { Select } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Sun, Moon, Monitor, Thermometer, Globe } from "lucide-react";
+import { Sun, Moon, Monitor, Thermometer, Globe, List } from "lucide-react";
 import { useTranslation } from "react-i18next";
+import { languages, type LanguageCode } from "@/lib/languages";
 import type { ThemeMode } from "@/types";
 
 interface SettingsDialogProps {
@@ -22,10 +23,10 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     { value: "system", label: t('settings.themeSystem'), icon: <Monitor className="h-3.5 w-3.5" /> },
   ];
 
-  const languageOptions = [
-    { value: "ja", label: t('settings.langJa') },
-    { value: "en", label: t('settings.langEn') },
-  ];
+  const languageOptions = languages.map((lang) => ({
+    value: lang.code,
+    label: t(lang.labelKey),
+  }));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -66,6 +67,41 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           <Separator />
 
+          {/* ── シンプルモード ── */}
+          <div>
+            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
+              <List className="h-3.5 w-3.5" />
+              {t('settings.simpleMode')}
+            </label>
+            <p className="text-[10px] text-muted-foreground/50 mb-2">
+              {t('settings.simpleModeDescription')}
+            </p>
+            <div className="flex gap-2">
+              <button
+                onClick={() => updateSettings({ simpleMode: true })}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs transition-all ${
+                  settings.simpleMode === true
+                    ? "border-primary bg-primary/10 text-primary font-medium"
+                    : "border-border/50 hover:bg-muted text-muted-foreground"
+                }`}
+              >
+                ON
+              </button>
+              <button
+                onClick={() => updateSettings({ simpleMode: false })}
+                className={`flex-1 flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-xs transition-all ${
+                  settings.simpleMode === false
+                    ? "border-primary bg-primary/10 text-primary font-medium"
+                    : "border-border/50 hover:bg-muted text-muted-foreground"
+                }`}
+              >
+                OFF
+              </button>
+            </div>
+          </div>
+
+          <Separator />
+
           {/* ── デフォルト温度 ── */}
           <div>
             <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
@@ -101,7 +137,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
             </label>
             <Select
               value={settings.language}
-              onChange={(e) => updateSettings({ language: e.target.value })}
+              onChange={(e) => updateSettings({ language: e.target.value as LanguageCode })}
               className="h-8 text-xs"
             >
               {languageOptions.map((opt) => (
