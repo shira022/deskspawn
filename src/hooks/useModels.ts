@@ -1,6 +1,7 @@
 import { useState, useCallback } from "react";
 import type { ModelInfo, ProviderKind } from "@/types";
 import { sidecarBase } from "@/lib/constants";
+import { setModelCostCache, clearModelCostCache } from "@/lib/cost";
 import i18n from "@/lib/i18n";
 
 interface UseModelsOptions {
@@ -45,7 +46,11 @@ export function useModels({ provider, customEndpoint, apiKey }: UseModelsOptions
         throw new Error((errData as any).error || `HTTP ${res.status}`);
       }
       const data = await res.json();
-      setModels(data.models ?? []);
+      const fetchedModels: ModelInfo[] = data.models ?? [];
+      setModels(fetchedModels);
+      // Update the shared cost cache for calculateCost() to use
+      clearModelCostCache();
+      setModelCostCache(fetchedModels);
     } catch (e: any) {
       setError(e.message || i18n.t('ai.error.modelsFetchFailed'));
     } finally {

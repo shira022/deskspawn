@@ -12,7 +12,7 @@ import { useAppStore } from "@/store/useAppStore";
 import type { ChatMessage as ChatMessageType, AiConfig, StepLogEntry } from "@/types";
 import { sidecarBase, providerLabels, sidecarChatUrl } from "@/lib/constants";
 import i18n from "@/lib/i18n";
-import { PROVIDER_PRICES } from "@/types";
+import { calculateCost } from "@/lib/cost";
 
 // ─── SSE Message Types ──────────────────────────────────────────────────────────
 
@@ -111,6 +111,8 @@ async function callSidecar(
   config: AiConfig | null,
   abortRef: React.MutableRefObject<AbortController | null>,
   estimatedMaxSteps?: number,
+  simpleMode?: boolean,
+  language?: string,
   setContinuationRound?: (round: number) => void,
   setMaxContinuations?: (max: number) => void,
   setRateLimitInfo?: (info: { retryCount: number; maxRetries: number; waitMs: number } | null) => void,
@@ -135,6 +137,8 @@ async function callSidecar(
         role: m.role,
         content: m.content,
       })),
+      simpleMode: simpleMode ?? true,
+      language,
       config: {
         provider, model, apiKey, customEndpoint, temperature, maxTokens,
         maxSteps: estimatedMaxSteps ?? 20,
@@ -296,18 +300,24 @@ async function callSidecar(
     : undefined;
 
   if (fullText) {
-    // Record token usage
-    if (lastUsage && useAppStore.getState().aiConfig) {
-      const cfg = useAppStore.getState().aiConfig!;
-      const prices = PROVIDER_PRICES[cfg.provider] || { input: 0, output: 0 };
-      const cost = (lastUsage.inputTokens / 1000) * prices.input + (lastUsage.outputTokens / 1000) * prices.output;
-      useAppStore.getState().addTokenUsage({
+    const cfg = useAppStore.getState().aiConfig;
+
+    // Compute usage object — embed directly in the message for persistence
+    let usage: import("@/types").TokenUsage | undefined;
+    if (lastUsage && cfg) {
+      const cost = calculateCost({
+        inputTokens: lastUsage.inputTokens,
+        outputTokens: lastUsage.outputTokens,
+        model: cfg.model || undefined,
+      });
+      usage = {
         inputTokens: lastUsage.inputTokens,
         outputTokens: lastUsage.outputTokens,
         timestamp: new Date().toISOString(),
+        provider: cfg.provider,
         model: cfg.model || undefined,
         estimatedCost: cost,
-      });
+      };
     }
 
     addMessage({
@@ -318,6 +328,7 @@ async function callSidecar(
       checkpointId: lastCheckpointId,
       stepLogs,
       phaseOutputs: phaseOutputsArray,
+      usage,
     });
     setLiveStepLogs([]);
     setWorkspaceReady(true);
@@ -405,10 +416,14 @@ export function useChatSSE(): UseChatSSEReturn {
       setMaxContinuations(0);
       setRateLimitInfo(null);
 
+      const { settings } = useAppStore.getState();
+      const simpleMode = settings.simpleMode;
+      const language = settings.language;
+
       try {
         const producedOutput = await callSidecar(
           history, addMessage, setAgentStepCount, setAgentMaxSteps, setLiveStepLogs,
-          setWorkspaceReady, cfg, abortControllerRef, estimatedMaxSteps,
+          setWorkspaceReady, cfg, abortControllerRef, estimatedMaxSteps, simpleMode, language,
           setContinuationRound, setMaxContinuations, setRateLimitInfo, setPhaseOutputs,
         );
 
@@ -431,10 +446,10 @@ export function useChatSSE(): UseChatSSEReturn {
         setAgentStatus("complete");
 
         // Show toast notification on completion
-        const { addToast: showToast, messages: msgs, sessionUsage: sessUsage } = useAppStore.getState();
+        const { addToast: showToast, messages: msgs } = useAppStore.getState();
         const lastMsg = msgs.length > 0 ? msgs[msgs.length - 1] : null;
         const hasArtifacts = lastMsg?.stepLogs?.some((s: any) => s.toolName === "apply_artifact") ?? false;
-        const totalCost = sessUsage.reduce((sum: number, u: any) => sum + (u.estimatedCost ?? 0), 0);
+        const totalCost = msgs.reduce((sum: number, m: any) => sum + (m.usage?.estimatedCost ?? 0), 0);
         showToast({
           message: i18n.t('chat.generationComplete', {
             sparkle: hasArtifacts ? " ✨" : "",
