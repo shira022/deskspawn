@@ -83,36 +83,14 @@ export interface FileEntry {
   isDirectory: boolean;
 }
 
-export async function listFiles(workspaceDir?: string): Promise<FileEntry[]> {
-  const root = workspaceDir || getWorkspaceDir();
-  const files: FileEntry[] = [];
-  
-  async function walk(dir: string, relative: string) {
-    try {
-      const entries = await fs.readdir(dir, { withFileTypes: true });
-      for (const e of entries) {
-        const full = path.join(dir, e.name);
-        const rel = relative ? `${relative}/${e.name}` : e.name;
-        
-        // Skip excluded directories
-        if (e.isDirectory()) {
-          if (IGNORED_DIRS.includes(e.name)) continue;
-          await walk(full, rel);
-        } else {
-          const stat = await fs.stat(full);
-          files.push({
-            path: rel,
-            size: stat.size,
-            lastModified: stat.mtime.toISOString(),
-            isDirectory: false,
-          });
-        }
-      }
-    } catch { /* skip inaccessible dirs */ }
-  }
-  
-  await walk(root, '');
-  return files;
+export async function listFiles(_workspaceDir?: string): Promise<FileEntry[]> {
+  const { files } = await securityPost('/api/list-files', {});
+  return files.map((f: any) => ({
+    path: f.path,
+    size: f.size,
+    lastModified: f.last_modified,
+    isDirectory: false,
+  }));
 }
 
 // ── apply_artifact ──────────────────────────────────────────────────────────
@@ -123,9 +101,6 @@ export interface ApplyResult {
   shellCommandsRun: string[];
   errors?: string[];
 }
-
-// Maximum content size for a single file action before auto-splitting
-const MAX_FILE_CONTENT_CHARS = 50_000;
 
 export async function applyArtifact(artifact: Artifact, workspaceDir?: string): Promise<ApplyResult> {
   const root = workspaceDir || getWorkspaceDir();
@@ -156,27 +131,12 @@ export async function applyArtifact(artifact: Artifact, workspaceDir?: string): 
         result.success = false;
       }
     } else if (action.type === 'file' && action.mode === 'file') {
-      // Large file actions: write directly (avoids JSON serialization issues)
-      if (action.content && action.content.length > MAX_FILE_CONTENT_CHARS) {
-        console.log(`[split] Large file action (${action.content.length} chars) for ${action.filePath}, writing directly via Rust...`);
-        try {
-          await securityPost('/api/apply-artifact', {
-            actions: [{ type: 'file', file_path: action.filePath, content: action.content, mode: 'file' }],
-          });
-          result.filesChanged.push(action.filePath);
-          console.log(`[split] Direct write succeeded for ${action.filePath}`);
-        } catch (e: any) {
-          result.errors!.push(`file/file: ${e.message || e}`);
-          result.success = false;
-        }
-      } else {
-        securityActions.push({
-          type: 'file',
-          file_path: action.filePath,
-          content: action.content,
-          mode: 'file',
-        });
-      }
+      securityActions.push({
+        type: 'file',
+        file_path: action.filePath,
+        content: action.content,
+        mode: 'file',
+      });
     } else if (action.type === 'file' && action.mode === 'diff') {
       securityActions.push({
         type: 'diff',
@@ -354,7 +314,7 @@ export interface ErrorEntry {
   message: string;
   filePath?: string;
   line?: number;
-  /** Actionable suggestion in Japanese for the AI to self-correct. */
+  /** Actionable suggestion for the AI to self-correct. */
   suggestion?: string;
 }
 
@@ -370,8 +330,8 @@ function classifyTsError(message: string, filePath?: string): Pick<ErrorEntry, '
     return {
       pattern: 'missing_module',
       suggestion: missing
-        ? `モジュール '${missing}' が見つかりません。run_shell で "npm install ${missing}" を実行してください。`
-        : '不足しているモジュールがあります。npm install でインストールしてください。',
+        ? `Module '${missing}' not found. Run "npm install ${missing}" via run_shell to install it.`
+        : 'Some modules are missing. Run "npm install" to install them.',
     };
   }
 
@@ -379,7 +339,7 @@ function classifyTsError(message: string, filePath?: string): Pick<ErrorEntry, '
   if (m.includes('cannot find module') && filePath?.includes('@/components/ui/')) {
     return {
       pattern: 'missing_component',
-      suggestion: `${filePath} が見つかりません。適用可能な shadcn/ui パターンがない場合、よりシンプルな Tailwind CSS ベースのコンポーネントを作成してください。例: div + Tailwind utility classes + lucide-react アイコン。`,
+      suggestion: `${filePath} not found. If no suitable shadcn/ui pattern is available, create a simpler Tailwind CSS-based component instead. Example: div + Tailwind utility classes + lucide-react icons.`,
     };
   }
 
@@ -387,7 +347,7 @@ function classifyTsError(message: string, filePath?: string): Pick<ErrorEntry, '
   if (m.includes('failed to resolve') && (filePath?.includes('@/') || filePath?.includes('/ui/'))) {
     return {
       pattern: 'missing_component',
-      suggestion: `'${filePath}' のインポートパスが間違っているか、ファイルが存在しません。ファイルを作成するか、パスを修正してください。`,
+      suggestion: `'${filePath}' import path is incorrect or the file does not exist. Create the file or fix the path.`,
     };
   }
 
@@ -395,7 +355,7 @@ function classifyTsError(message: string, filePath?: string): Pick<ErrorEntry, '
   if (m.includes('is not assignable') || m.includes('type') && m.includes('is not') || m.includes('property') && m.includes('does not exist')) {
     return {
       pattern: 'type_error',
-      suggestion: '型定義と実際の使用が一致していません。型定義ファイル (src/types/*.ts) を確認し、必要に応じて修正または新しい型を追加してください。',
+      suggestion: 'Type definitions do not match actual usage. Check type definition files (src/types/*.ts) and fix or add new types as needed.',
     };
   }
 
@@ -403,7 +363,7 @@ function classifyTsError(message: string, filePath?: string): Pick<ErrorEntry, '
   if (m.includes('unterminated') || m.includes('unexpected token') || m.includes('expression expected')) {
     return {
       pattern: 'syntax_error',
-      suggestion: '構文エラーです。括弧やセミコロン、引用符が正しく閉じられているか確認してください。',
+      suggestion: 'Syntax error. Check that all parentheses, semicolons, and quotes are properly closed.',
     };
   }
 

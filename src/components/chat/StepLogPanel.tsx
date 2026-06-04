@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useTranslation } from "react-i18next";
 import { cn } from "@/lib/utils";
 import type { StepLogEntry } from "@/types";
 import {
@@ -13,12 +14,17 @@ import {
   CheckCircle2,
   XCircle,
   Clock,
+  Play,
+  ClipboardList,
 } from "lucide-react";
+import { HighlightedText } from "@/components/chat/SearchHighlight";
 
 interface StepLogPanelProps {
   stepLogs: StepLogEntry[];
   /** true の場合は生成中のライブログとして表示 */
   isLive?: boolean;
+  /** Search query for highlighting matched text */
+  searchQuery?: string;
 }
 
 /** ツール名 → アイコン */
@@ -39,19 +45,19 @@ function toolIcon(name: string) {
   }
 }
 
-/** ツール名 → 日本語ラベル */
-function toolLabel(name: string): string {
+/** ツール名 → ラベル */
+function toolLabel(name: string, t: (key: string) => string): string {
   switch (name) {
     case "read_file":
-      return "ファイル読み取り";
+      return t('step.readFile');
     case "list_files":
-      return "ファイル一覧";
+      return t('step.listFiles');
     case "apply_artifact":
-      return "コード生成・編集";
+      return t('step.applyArtifact');
     case "run_shell":
-      return "コマンド実行";
+      return t('step.runShell');
     case "get_errors":
-      return "エラーチェック";
+      return t('step.getErrors');
     default:
       return name;
   }
@@ -70,11 +76,12 @@ function formatJSON(obj: Record<string, unknown>): string {
 
 /** ステータスに応じたバッジ */
 function StatusBadge({ status }: { status: StepLogEntry["status"] }) {
+  const { t } = useTranslation();
   if (status === "running") {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-blue-500/10 px-1.5 py-0.5 text-[10px] text-blue-600 dark:text-blue-400 font-medium">
         <Clock className="h-2.5 w-2.5 animate-pulse" />
-        実行中
+        {t('step.running')}
       </span>
     );
   }
@@ -82,14 +89,14 @@ function StatusBadge({ status }: { status: StepLogEntry["status"] }) {
     return (
       <span className="inline-flex items-center gap-1 rounded-full bg-red-500/10 px-1.5 py-0.5 text-[10px] text-red-600 dark:text-red-400 font-medium">
         <XCircle className="h-2.5 w-2.5" />
-        エラー
+        {t('step.error')}
       </span>
     );
   }
   return (
     <span className="inline-flex items-center gap-1 rounded-full bg-green-500/10 px-1.5 py-0.5 text-[10px] text-green-600 dark:text-green-400 font-medium">
       <CheckCircle2 className="h-2.5 w-2.5" />
-      成功
+      {t('step.success')}
     </span>
   );
 }
@@ -98,10 +105,13 @@ function StatusBadge({ status }: { status: StepLogEntry["status"] }) {
 function StepRow({
   entry,
   defaultOpen,
+  searchQuery,
 }: {
   entry: StepLogEntry;
   defaultOpen: boolean;
+  searchQuery?: string;
 }) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(defaultOpen);
   const isRunning = entry.status === "running";
   const isError = entry.status === "error";
@@ -150,7 +160,15 @@ function StepRow({
           <span className="text-muted-foreground/50 mr-1.5 tabular-nums">
             Step {entry.step}
           </span>
-          <span className="text-foreground/80">{toolLabel(entry.toolName)}</span>
+          {searchQuery ? (
+            <HighlightedText
+              text={toolLabel(entry.toolName, t)}
+              query={searchQuery}
+              className="text-foreground/80"
+            />
+          ) : (
+            <span className="text-foreground/80">{toolLabel(entry.toolName, t)}</span>
+          )}
         </span>
         <StatusBadge status={entry.status} />
       </button>
@@ -162,7 +180,7 @@ function StepRow({
           {entry.args && Object.keys(entry.args).length > 0 && (
             <div>
               <span className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">
-                引数
+                {t('step.args')}
               </span>
               <pre className="mt-0.5 rounded bg-background/60 border border-border/20 px-2.5 py-1.5 text-[11px] font-mono text-foreground/70 overflow-x-auto whitespace-pre-wrap">
                 {formatJSON(entry.args)}
@@ -174,7 +192,7 @@ function StepRow({
           {entry.result && (
             <div>
               <span className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider">
-                結果
+                {t('step.result')}
               </span>
               <pre
                 className={cn(
@@ -184,7 +202,11 @@ function StepRow({
                     : "bg-background/60 border border-border/20 text-foreground/70",
                 )}
               >
-                {entry.result}
+                {searchQuery ? (
+                  <HighlightedText text={entry.result} query={searchQuery} />
+                ) : (
+                  entry.result
+                )}
               </pre>
             </div>
           )}
@@ -196,7 +218,7 @@ function StepRow({
                 <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-blue-400/60" />
                 <span className="relative inline-flex h-2 w-2 rounded-full bg-blue-500" />
               </span>
-              実行中...
+              {t('step.executing')}
             </div>
           )}
         </div>
@@ -212,7 +234,8 @@ function StepRow({
  * - 各ステップ行: 個別に開閉可能
  * - ステータス（成功/エラー/実行中）がひと目でわかる
  */
-export function StepLogPanel({ stepLogs, isLive }: StepLogPanelProps) {
+export function StepLogPanel({ stepLogs, isLive, searchQuery }: StepLogPanelProps) {
+  const { t } = useTranslation();
   const [panelOpen, setPanelOpen] = useState(false);
   const errorCount = stepLogs.filter((s) => s.status === "error").length;
   const runningCount = stepLogs.filter((s) => s.status === "running").length;
@@ -243,16 +266,21 @@ export function StepLogPanel({ stepLogs, isLive }: StepLogPanelProps) {
         </span>
         <span
           className={cn(
-            "flex h-5 w-5 shrink-0 items-center justify-center rounded text-[10px] font-bold",
+            "flex h-5 w-5 shrink-0 items-center justify-center rounded",
             isLive
               ? "bg-blue-500/15 text-blue-600 dark:text-blue-400"
               : "bg-muted-foreground/10 text-muted-foreground",
           )}
         >
-          {isLive ? "▶" : "📋"}
+          {isLive ? <Play className="h-3.5 w-3.5" /> : <ClipboardList className="h-3.5 w-3.5" />}
         </span>
-        <span className="min-w-0 flex-1 text-xs font-medium text-foreground/80">
-          {isLive ? "ライブ実行ログ" : "実行ログ"}
+        <span className="min-w-0 flex-1 text-xs font-medium text-foreground/80 flex items-center gap-1.5">
+          {isLive ? t('step.liveLog') : t('step.executionLog')}
+          {isLive && (
+            <span className="inline-flex items-center rounded-full bg-blue-500/15 px-1.5 py-0.5 text-[10px] font-semibold text-blue-600 dark:text-blue-400 tracking-wider animate-pulse">
+              LIVE
+            </span>
+          )}
         </span>
 
         {/* ステータスサマリー */}
@@ -264,16 +292,16 @@ export function StepLogPanel({ stepLogs, isLive }: StepLogPanelProps) {
             </span>
           )}
           <span className="text-[11px] text-muted-foreground tabular-nums">
-            {stepLogs.length} ステップ
+            {t('step.stepsCount', { count: stepLogs.length })}
           </span>
           {runningCount > 0 && (
             <span className="text-[11px] text-blue-500 font-medium tabular-nums">
-              ({runningCount} 実行中)
+              ({runningCount} {t('step.runningBadge')})
             </span>
           )}
           {errorCount > 0 && (
             <span className="text-[11px] text-red-500 font-medium tabular-nums">
-              ({errorCount} エラー)
+              ({errorCount} {t('step.errorsBadge')})
             </span>
           )}
         </div>
@@ -287,6 +315,7 @@ export function StepLogPanel({ stepLogs, isLive }: StepLogPanelProps) {
               key={`${entry.step}-${entry.toolName}-${idx}`}
               entry={entry}
               defaultOpen={defaultOpenIndex(idx)}
+              searchQuery={searchQuery}
             />
           ))}
         </div>

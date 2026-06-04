@@ -44,7 +44,7 @@ function Dialog({ open, onOpenChange, children }: DialogProps) {
   return (
     <>
       <DialogOverlay onClick={() => onOpenChange(false)} />
-      <DialogContent>{children}</DialogContent>
+      {children}
     </>
   );
 }

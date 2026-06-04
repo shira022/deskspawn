@@ -287,22 +287,22 @@ export class StepManager {
   getSuggestion(): string | null {
     // Pattern A: Repeated get_errors without any file writes
     if (this.consecutiveGetErrors >= MAX_GET_ERRORS_WITHOUT_ACTION && this.totalFileActions === 0) {
-      return 'コードを読んだだけで何も変更していないようです。apply_artifact を使って実際にコードを生成してみてください。';
+      return 'You only read files without making any changes. Use apply_artifact to actually generate code.';
     }
 
     // Pattern B: Loop detected and no file changes at all
     if (this.stoppedReason === 'loop_detected' && this.fileWriteCount === 0) {
-      return '同じツール呼び出しを繰り返しています。別のアプローチを試すか、読み取ったファイルの内容を確認してください。';
+      return 'You are repeating the same tool calls. Try a different approach or review the file contents you have read.';
     }
 
     // Pattern C: Loop detected after many file writes (stuck in fix loop)
     if (this.stoppedReason === 'loop_detected' && this.fileWriteCount >= 3) {
-      return '修正を繰り返していますが解決していません。テンプレートアクション (type: "template") を使ってCRUDを生成するか、または pre-installed の shadcn/ui コンポーネントのみを使用しているか確認してください。';
+      return 'Repeated fixes are not resolving the issue. Try using a template action (type: "template") to generate CRUD, or verify you are only using pre-installed shadcn/ui components.';
     }
 
     // Pattern D: Max steps reached with file writes but errors likely remain
     if (this.stoppedReason === 'max_steps' && this.fileWriteCount >= 3) {
-      return '多くのファイルを変更しましたが上限に達しました。「続けて」と送信すると続きから再開します。';
+      return 'You have modified many files but reached the step limit. Send "continue" to resume from where you left off.';
     }
 
     return null;
