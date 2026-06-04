@@ -1,12 +1,18 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
-import ja from "@/locales/ja/common.json";
-import en from "@/locales/en/common.json";
 
-export const resources = {
-  ja: { translation: ja },
-  en: { translation: en },
-} as const;
+const localeModules = import.meta.glob(
+  "@/locales/*/common.json",
+  { eager: true }
+) as Record<string, { default: Record<string, unknown> }>;
+
+const resources: Record<string, { translation: Record<string, unknown> }> = {};
+for (const [path, mod] of Object.entries(localeModules)) {
+  const lang = path.match(/\/locales\/([^/]+)\/common\.json$/)?.[1];
+  if (lang) {
+    resources[lang] = { translation: mod.default };
+  }
+}
 
 i18n.use(initReactI18next).init({
   resources,

@@ -24,10 +24,14 @@
     "themeSystem": "システム連動",
     "defaultTemperature": "デフォルト温度",
     "temperatureHint": "低いほど正確・高いほど創造的（AI生成時の初期値）",
+    "simpleMode": "シンプルモード",
+    "simpleModeDescription": "AIの応答を簡潔にし、追加した機能や修正した内容だけを平易な言葉で伝えます",
     "language": "言語",
-    "langJa": "日本語",
-    "langEn": "English",
     "provider": "プロバイダー"
+  },
+  "languages": {
+    "ja": "日本語",
+    "en": "English"
   },
   "ai": {
     "welcome": "DeskSpawn へようこそ",
@@ -73,7 +77,11 @@
       "openai": "OpenAI の API キー（https://platform.openai.com/api-keys）",
       "anthropic": "Anthropic の API キー（Console → API Keys）",
       "google": "Google AI Studio の API キー"
-    }
+    },
+    "costInput": "入力",
+    "costOutput": "出力",
+    "costCached": "キャッシュ",
+    "costReasoning": "推論"
   },
   "env": {
     "title": "環境チェック",
@@ -163,6 +171,7 @@
     "checkpointRestoreFailed": "⚠️ チェックポイントの復元に失敗しました。\n\n{{error}}\n\nプレビューを最新の状態に戻します。",
     "streamEndedWithoutResult": "⚠️ ストリームが完了しましたが、ツールの結果が取得できませんでした",
     "generationComplete": "コード生成が完了しました{{sparkle}}{{cost}}",
+    "usageTokens": "トークン",
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI設定が行われていません。ツールバーの「{{notConfiguredLabel}}」ボタンから設定してください。",
       "noProjectSelected": "⚠️ プロジェクトが選択されていません。ツールバーの「{{newAppLabel}}」からプロジェクトを作成するか、アプリ履歴から選択してください。",
@@ -213,13 +222,18 @@
     "autoDismiss": "この画面は準備が完了すると自動で消えます",
     "history": "アプリ履歴",
     "import": "インポート",
+    "importing": "インポート中...",
+    "importSuccess": "「{{name}}」をインポートしました",
     "importError": "インポートに失敗しました",
+    "exportSuccess": "「{{name}}」をエクスポートしました",
+    "exportTimeout": "エクスポートがタイムアウトしました",
     "createNew": "新規作成",
     "noHistory": "アプリ履歴はまだありません",
     "createFirst": "最初のアプリを作成",
     "export": "エクスポート",
     "delete": "削除",
     "deleteError": "削除に失敗しました",
+    "exportError": "エクスポートに失敗しました",
     "deleteTitle": "アプリを削除",
     "deleteConfirm": "「{{name}}」を完全に削除しますか？この操作は取り消せません。",
     "deleteConfirmButton": "削除する",
@@ -244,28 +258,14 @@
     "askAiToGenerate": "AIにアプリ生成を指示してください",
     "selectFileToPreview": "ファイルを選択すると内容が表示されます"
   },
-  "preview": {
-    "title": "ライブプレビュー",
-    "zoomOut": "ズームアウト",
-    "zoomIn": "ズームイン",
-    "zoomReset": "ズームリセット",
-    "reload": "リロード",
-    "restore": "元に戻す",
-    "maximize": "プレビューを最大化",
-    "startFailed": "プレビューの起動に失敗しました",
-    "restoringCheckpoint": "チェックポイントを復元しています",
-    "preparingApp": "新しいアプリを準備しています...",
-    "switchingProject": "プロジェクトを切り替えています",
-    "startingServer": "アプリサーバーを起動しています...",
-    "preparing": "準備中...",
-    "serverNoResponse": "開発サーバーの応答がありません。プロジェクトを切り替えて再試行してください。",
-    "restoringFiles": "ファイルを復元し、開発サーバーを再起動しています",
-    "installingDeps": "依存関係のインストールと開発サーバーの起動を行っています",
-    "restartingServer": "開発サーバーを再起動しています",
-    "waitingForVite": "Vite 開発サーバーが起動するのを待っています",
-    "serverNotResponding": "開発サーバーが応答しません。プロジェクト一覧から別のアプリを選択して再試行してください。",
-    "notReady": "プレビュー準備中",
-    "notReadyDesc": "チャットでアプリのコードを生成すると、ここにリアルタイムプレビューが表示されます。"
+  "fileTree": {
+    "title": "ファイル",
+    "openInVSCode": "VS Code で開く",
+    "refresh": "再読み込み",
+    "noFiles": "ファイルがありません",
+    "askAiToGenerate": "AIにアプリ生成を指示してください",
+    "selectFileToPreview": "ファイルを選択すると内容が表示されます",
+    "errorLoadFailed": "ファイルの読み込みに失敗しました"
   },
   "triage": {
     "analyzing": "要求を分析中...",
@@ -277,6 +277,18 @@
     "RATE_LIMIT": "レート制限に達しました。{{error}}",
     "GENERATION_FAILED": "応答の生成に失敗しました。{{error}}",
     "PROJECT_DELETE_ACTIVE": "現在アクティブなプロジェクトは削除できません。先に別のプロジェクトに切り替えてください。",
+    "PROJECT_NAME_REQUIRED": "プロジェクト名を入力してください。",
+    "PROJECT_NOT_FOUND": "プロジェクトが見つかりませんでした。",
+    "PROJECT_DIR_NOT_FOUND": "プロジェクトディレクトリが見つかりませんでした。",
+    "NO_BACKUP_FOUND": "バックアップが見つかりませんでした。",
+    "MODELS_FETCH_FAILED": "モデル一覧の取得に失敗しました。",
+    "SERVER_ERROR": "サーバーエラーが発生しました。",
+    "EXPORT_DOWNLOAD_FAILED": "エクスポートのダウンロードに失敗しました。",
+    "EXPORT_FAILED": "エクスポートに失敗しました。",
+    "FILE_BASE64_REQUIRED": "ファイルデータが必要です。",
+    "IMPORT_FAILED": "インポートに失敗しました。",
+    "INVALID_IMPORT_FILE": "無効な .deskspawn ファイルです。deskspawn.json が見つかりません。",
+    "INTERNAL_ERROR": "内部エラーが発生しました。",
     "fallback": "エラーが発生しました: {{errMsg}}"
   }
 }

@@ -2,6 +2,8 @@
 // AI Provider Configuration Types
 // ============================================================
 
+import type { LanguageCode } from "@/lib/languages";
+
 export type ProviderKind = "openai" | "anthropic" | "google" | "ollama" | "custom";
 
 export type StorageMethod = "keychain" | "file";
@@ -11,7 +13,6 @@ export interface AiConfig {
   apiKey: string;
   model: string;
   customEndpoint?: string;
-  apiVersion?: string;
   temperature: number;
   maxTokens?: number;
   /** エージェントの最大ステップ数（動的ステップ管理のベース値として使用） */
@@ -32,6 +33,19 @@ export interface AiConfig {
 
 // ── Model Discovery ─────────────────────────────────────────────────────────
 
+/**
+ * Model-specific pricing in $ per 1M tokens (from models.dev).
+ * Same model can have different rates per usage method:
+ *   input / output / cacheRead / cacheWrite / reasoning
+ */
+export interface ModelCost {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -41,6 +55,8 @@ export interface ModelInfo {
   supportsImageInput: boolean;
   contextLimit: number;
   maxOutput: number;
+  /** Real pricing from models.dev — undefined for ollama/custom models */
+  cost?: ModelCost;
 }
 
 // ============================================================
@@ -142,7 +158,7 @@ export interface ShellResult {
   exitCode: number;
 }
 
-export type ErrorType = "typescript" | "vite";
+export type ErrorType = "typescript";
 
 export interface ErrorInfo {
   type: ErrorType;
@@ -192,6 +208,8 @@ export interface ChatMessage {
   stepLogs?: StepLogEntry[];
   /** 各フェーズの詳細出力（planner/coder/verifier/visual_qa） */
   phaseOutputs?: PhaseOutput[];
+  /** トークン使用量とモデル情報（履歴に永続化される） */
+  usage?: TokenUsage;
 }
 
 // ============================================================
@@ -260,7 +278,9 @@ export interface AppSettings {
   uiFontSize: number; // px
   codeFontSize: number; // px
   defaultTemperature: number;
-  language: string; // e.g. "ja", "en"
+  language: LanguageCode;
+  /** シンプルモード — 非エンジニア向けに平易な説明で結果だけ伝える */
+  simpleMode: boolean;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -269,6 +289,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   codeFontSize: 13,
   defaultTemperature: 0.2,
   language: "ja",
+  simpleMode: true,
 };
 
 // ============================================================
@@ -291,19 +312,18 @@ export interface Toast {
 export interface TokenUsage {
   inputTokens: number;
   outputTokens: number;
+  /** Tokens consumed by reasoning/thinking (billed at reasoning rate if available) */
+  reasoningTokens?: number;
+  /** Input tokens served from provider cache (billed at cached input rate) */
+  cachedInputTokens?: number;
+  /** Input tokens used to create a new cache entry (billed at cache write rate) */
+  cacheCreationTokens?: number;
   /** ISO timestamp when this usage was recorded */
   timestamp: string;
-  /** Optional: which AI provider/model was used */
+  /** Which AI provider was used (e.g. "openai", "anthropic") */
+  provider?: string;
+  /** Which AI model was used (e.g. "gpt-4o", "claude-sonnet-4") */
   model?: string;
-  /** Optional: estimated cost in USD */
+  /** Estimated cost in USD (calculated client-side from models.dev pricing) */
   estimatedCost?: number;
 }
-
-// Provider-specific pricing per 1K tokens (approximate)
-export const PROVIDER_PRICES: Record<string, { input: number; output: number }> = {
-  openai: { input: 0.0025, output: 0.01 },    // GPT-4o mini approx
-  anthropic: { input: 0.003, output: 0.015 },  // Claude Sonnet approx
-  google: { input: 0.0025, output: 0.0075 },   // Gemini 1.5 Pro approx
-  ollama: { input: 0, output: 0 },              // Local, free
-  custom: { input: 0, output: 0 },              // Unknown pricing
-};

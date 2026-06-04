@@ -24,10 +24,14 @@
     "themeSystem": "System",
     "defaultTemperature": "Default temperature",
     "temperatureHint": "Lower is more precise, higher is more creative (initial value for AI generation)",
+    "simpleMode": "Simple Mode",
+    "simpleModeDescription": "Keep AI responses concise — describe only what features were added or what was fixed, in plain language",
     "language": "Language",
-    "langJa": "日本語",
-    "langEn": "English",
     "provider": "Provider"
+  },
+  "languages": {
+    "ja": "日本語",
+    "en": "English"
   },
   "ai": {
     "welcome": "Welcome to DeskSpawn",
@@ -73,7 +77,11 @@
       "openai": "OpenAI API Key (https://platform.openai.com/api-keys)",
       "anthropic": "Anthropic API Key (Console → API Keys)",
       "google": "Google AI Studio API Key"
-    }
+    },
+    "costInput": "Input",
+    "costOutput": "Output",
+    "costCached": "Cached",
+    "costReasoning": "Reasoning"
   },
   "env": {
     "title": "Environment Check",
@@ -163,6 +171,7 @@
     "checkpointRestoreFailed": "⚠️ Failed to restore checkpoint.\n\n{{error}}\n\nReverting the preview to the latest state.",
     "streamEndedWithoutResult": "⚠️ The stream ended but the tool result was not obtained",
     "generationComplete": "Code generation complete{{sparkle}}{{cost}}",
+    "usageTokens": "tokens",
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI is not configured. Please configure it from the \"{{notConfiguredLabel}}\" button in the toolbar.",
       "noProjectSelected": "⚠️ No project is selected. Create a project from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
@@ -213,13 +222,18 @@
     "autoDismiss": "This screen will automatically close when ready",
     "history": "App History",
     "import": "Import",
+    "importing": "Importing...",
+    "importSuccess": "Imported「{{name}}」",
     "importError": "Import failed",
+    "exportSuccess": "Exported「{{name}}」",
+    "exportTimeout": "Export timed out",
     "createNew": "Create New",
     "noHistory": "No app history yet",
     "createFirst": "Create your first app",
     "export": "Export",
     "delete": "Delete",
     "deleteError": "Delete failed",
+    "exportError": "Export failed",
     "deleteTitle": "Delete App",
     "deleteConfirm": "Are you sure you want to permanently delete \"{{name}}\"? This action cannot be undone.",
     "deleteConfirmButton": "Delete",
@@ -244,28 +258,14 @@
     "askAiToGenerate": "Ask AI to generate an app",
     "selectFileToPreview": "Select a file to see its contents"
   },
-  "preview": {
-    "title": "Live Preview",
-    "zoomOut": "Zoom Out",
-    "zoomIn": "Zoom In",
-    "zoomReset": "Reset Zoom",
-    "reload": "Reload",
-    "restore": "Restore",
-    "maximize": "Maximize Preview",
-    "startFailed": "Failed to start preview",
-    "restoringCheckpoint": "Restoring checkpoint",
-    "preparingApp": "Preparing a new app...",
-    "switchingProject": "Switching project",
-    "startingServer": "Starting app server...",
-    "preparing": "Preparing...",
-    "serverNoResponse": "Dev server is not responding. Try switching to a different project.",
-    "restoringFiles": "Restoring files and restarting dev server",
-    "installingDeps": "Installing dependencies and starting dev server",
-    "restartingServer": "Restarting dev server",
-    "waitingForVite": "Waiting for Vite dev server to start",
-    "serverNotResponding": "Dev server is not responding. Select another app from the project list and try again.",
-    "notReady": "Preview Not Ready",
-    "notReadyDesc": "Generate app code via chat, and the live preview will appear here."
+  "fileTree": {
+    "title": "Files",
+    "openInVSCode": "Open in VS Code",
+    "refresh": "Refresh",
+    "noFiles": "No files",
+    "askAiToGenerate": "Ask AI to generate an app",
+    "selectFileToPreview": "Select a file to see its contents",
+    "errorLoadFailed": "Failed to load file"
   },
   "triage": {
     "analyzing": "Analyzing request...",
@@ -277,6 +277,18 @@
     "RATE_LIMIT": "Rate limit reached.{{error}}",
     "GENERATION_FAILED": "Response generation failed.{{error}}",
     "PROJECT_DELETE_ACTIVE": "Cannot delete the currently active project. Switch to a different project first.",
+    "PROJECT_NAME_REQUIRED": "Project name is required.",
+    "PROJECT_NOT_FOUND": "Project not found.",
+    "PROJECT_DIR_NOT_FOUND": "Project directory not found.",
+    "NO_BACKUP_FOUND": "No backup found.",
+    "MODELS_FETCH_FAILED": "Failed to fetch model list.",
+    "SERVER_ERROR": "A server error occurred.",
+    "EXPORT_DOWNLOAD_FAILED": "Export download failed.",
+    "EXPORT_FAILED": "Export failed.",
+    "FILE_BASE64_REQUIRED": "File data is required.",
+    "IMPORT_FAILED": "Import failed.",
+    "INVALID_IMPORT_FILE": "Invalid .deskspawn file: missing deskspawn.json.",
+    "INTERNAL_ERROR": "An internal error occurred.",
     "fallback": "An error occurred: {{errMsg}}"
   }
 }

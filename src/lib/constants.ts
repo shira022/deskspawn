@@ -35,15 +35,6 @@ export function sidecarHealthUrl(): string {
   return `${sidecarBase()}/health`;
 }
 
-/**
- * Legacy constants (keep for backward compatibility).
- * Note: these are evaluated ONCE at import time.
- * For dynamic resolution, use the function versions instead.
- */
-export const SIDECAR_BASE = `http://localhost:${_sidecarPort}`;
-export const SIDECAR_CHAT_URL = `${SIDECAR_BASE}/chat`;
-export const SIDECAR_HEALTH_URL = `${SIDECAR_BASE}/health`;
-
 import type { ProviderKind } from "@/types";
 
 /** localStorage に設定を保存するキー */
