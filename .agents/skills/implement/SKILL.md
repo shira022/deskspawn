@@ -51,6 +51,67 @@ For each assigned task:
    - No `unsafe`, `std::process::Command`, `std::fs` write, `std::net` in Rust
    - No `eval()`, `new Function()`, unrestricted `fetch()` in TypeScript
    - New dependencies must be in the allowed package list
+7. **Respect i18n (internationalization):** All user-facing UI strings must use the i18n system. See "i18n Patterns" below.
+
+#### i18n Patterns
+
+When adding or modifying UI text, follow these patterns:
+
+1. **React components** — use the `useTranslation()` hook:
+   ```tsx
+   import { useTranslation } from "react-i18next";
+
+   function MyComponent() {
+     const { t } = useTranslation();
+     return <div>{t('myNamespace.myKey')}</div>;
+   }
+   ```
+
+2. **Non-React code** (hooks, utils) — use the `i18n` instance directly:
+   ```tsx
+   import i18n from "@/lib/i18n";
+
+   export function formatError(err: Error): string {
+     return i18n.t('common.errorOccurred');
+   }
+   ```
+
+3. **Translation files** — add keys to ALL language files in `src/locales/`:
+   - `src/locales/en/common.json` — English
+   - `src/locales/ja/common.json` — 日本語
+   - (plus any additional languages)
+
+4. **Key naming** — use hierarchical namespaces matching the feature/component name:
+   ```jsonc
+   {
+     "settings": {
+       "title": "Settings",
+       "theme": "Theme",
+       "themeLight": "Light"
+     },
+     "chat": {
+       "title": "Chat",
+       "error": {
+         "generic": "An error occurred"
+       }
+     }
+   }
+   ```
+
+5. **Variable interpolation** — use `{{variableName}}` syntax:
+   ```json
+   { "greeting": "Hello, {{name}}!" }
+   ```
+   ```tsx
+   t('greeting', { name: 'Alice' })
+   ```
+
+6. **Adding a new language** — requires two changes:
+   - Create `src/locales/{code}/common.json` with all keys translated
+   - Add `{ code, labelKey: "languages.{code}" }` to `src/lib/languages.ts`
+   - Add the display name key (`languages.{code}`) to all existing language files
+
+7. **Never hardcode** user-facing strings in component or utility code.
 
 ### Step 3: Dependency Coordination
 
