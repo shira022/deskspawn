@@ -10,8 +10,12 @@
  *   または orchestrator の getSystemPrompt(phase, planContext) を使用。
  */
 
+import { coderPrompt } from './system-prompts/coder.js';
+
 // Re-export the main coder prompt (previously the single agent prompt)
-export { coderPrompt as buildSystemPrompt } from './system-prompts/coder.js';
+export function buildSystemPrompt(simpleMode?: boolean, language?: string): string {
+  return coderPrompt(undefined, simpleMode, language);
+}
 
 // Re-export all prompts for convenience
 export { plannerPrompt, coderPrompt, verifierPrompt, visualQAPrompt } from './system-prompts/index.js';

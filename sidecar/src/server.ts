@@ -112,7 +112,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
 `);
     fs.writeFileSync(path.join(projectDir, 'index.html'), `<!DOCTYPE html>
 <html lang="en">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${name}</title></head>
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%236366f1%22/><polygon points=%2256,12 20,54 46,54 40,88 78,40 52,40%22 fill=%22white%22/></svg>" /><title>${name}</title></head>
   <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
 </html>`);
 
@@ -601,7 +601,7 @@ app.get('/projects/list', (_req, res) => {
     const projects = readProjectsJson();
     res.json({ projects });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -610,7 +610,7 @@ app.post('/projects/new', async (req, res) => {
   try {
     const { name } = req.body;
     if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'Project name is required' });
+      res.status(400).json({ error: 'Project name is required', errorCode: 'PROJECT_NAME_REQUIRED' });
       return;
     }
 
@@ -653,7 +653,7 @@ app.post('/projects/new', async (req, res) => {
 
     res.json({ project: projectMeta, projects });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -662,20 +662,20 @@ app.post('/projects/switch', (req, res) => {
   try {
     const { projectId } = req.body;
     if (!projectId) {
-      res.status(400).json({ error: 'projectId is required' });
+      res.status(400).json({ error: 'projectId is required', errorCode: 'PROJECT_ID_REQUIRED' });
       return;
     }
 
     const projects = readProjectsJson();
     const project = projects.find((p) => p.id === projectId);
     if (!project) {
-      res.status(404).json({ error: 'Project not found' });
+      res.status(404).json({ error: 'Project not found', errorCode: 'PROJECT_NOT_FOUND' });
       return;
     }
 
     const projectDir = path.join(PROJECTS_DIR, projectId);
     if (!fs.existsSync(projectDir)) {
-      res.status(404).json({ error: 'Project directory not found' });
+      res.status(404).json({ error: 'Project directory not found', errorCode: 'PROJECT_DIR_NOT_FOUND' });
       return;
     }
 
@@ -690,7 +690,7 @@ app.post('/projects/switch', (req, res) => {
 
     res.json({ project, projects });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -703,14 +703,14 @@ app.delete('/projects/:id', (req, res) => {
     const projectIndex = projects.findIndex((p) => p.id === id);
 
     if (projectIndex === -1) {
-      res.status(404).json({ error: 'Project not found' });
+      res.status(404).json({ error: 'Project not found', errorCode: 'PROJECT_NOT_FOUND' });
       return;
     }
 
     // Don't allow deleting the currently active project
     const workspaceDir = executors.getWorkspaceDir();
     if (path.basename(workspaceDir) === id) {
-      res.status(400).json({ error: 'Cannot delete the currently active project. Switch to a different project first.' });
+      res.status(400).json({ error: 'Cannot delete the currently active project. Switch to a different project first.', errorCode: 'PROJECT_DELETE_ACTIVE' });
       return;
     }
 
@@ -727,7 +727,7 @@ app.delete('/projects/:id', (req, res) => {
 
     res.json({ success: true, projects });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -762,7 +762,7 @@ app.get('/projects/files', async (_req, res) => {
     const files = await executors.listFiles();
     res.json({ files });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -770,13 +770,13 @@ app.get('/projects/file', async (req, res) => {
   try {
     const filePath = req.query.path as string;
     if (!filePath) {
-      res.status(400).json({ error: 'path query parameter is required' });
+      res.status(400).json({ error: 'path query parameter is required', errorCode: 'PATH_REQUIRED' });
       return;
     }
     const content = await executors.readFile(filePath);
     res.json({ path: filePath, content });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -798,7 +798,7 @@ app.post('/projects/checkpoint', async (_req, res) => {
     const id = await executors.createCheckpoint(workspaceDir);
     res.json({ id });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -806,7 +806,7 @@ app.post('/projects/restore', async (req, res) => {
   try {
     const { checkpointId } = req.body;
     if (!checkpointId) {
-      res.status(400).json({ error: 'checkpointId is required' });
+      res.status(400).json({ error: 'checkpointId is required', errorCode: 'CHECKPOINT_ID_REQUIRED' });
       return;
     }
     const workspaceDir = executors.getWorkspaceDir();
@@ -816,7 +816,7 @@ app.post('/projects/restore', async (req, res) => {
     startWorkspaceDevServer(workspaceDir);
     res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -828,7 +828,7 @@ app.get('/projects/checkpoints', (_req, res) => {
     checkpoints.reverse();
     res.json({ checkpoints });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -836,7 +836,7 @@ app.post('/projects/checkpoints/cleanup', (req, res) => {
   try {
     const { keepCheckpointId } = req.body;
     if (!keepCheckpointId) {
-      res.status(400).json({ error: 'keepCheckpointId is required' });
+      res.status(400).json({ error: 'keepCheckpointId is required', errorCode: 'KEEP_CHECKPOINT_ID_REQUIRED' });
       return;
     }
     const workspaceDir = executors.getWorkspaceDir();
@@ -844,7 +844,7 @@ app.post('/projects/checkpoints/cleanup', (req, res) => {
     const remaining = executors.listCheckpoints(workspaceDir).reverse();
     res.json({ checkpoints: remaining });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -865,7 +865,7 @@ app.get('/chat/history', (_req, res) => {
       res.json({ messages: [] });
     }
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -874,7 +874,7 @@ app.post('/chat/history', (req, res) => {
   try {
     const { messages } = req.body;
     if (!Array.isArray(messages)) {
-      res.status(400).json({ error: 'messages array is required' });
+      res.status(400).json({ error: 'messages array is required', errorCode: 'MESSAGES_REQUIRED' });
       return;
     }
     const workspaceDir = executors.getWorkspaceDir();
@@ -884,7 +884,7 @@ app.post('/chat/history', (req, res) => {
     fs.writeFileSync(historyPath, JSON.stringify(messages), 'utf-8');
     res.json({ success: true, count: messages.length });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -902,7 +902,7 @@ app.post('/api/config', (req, res) => {
     console.log('[api/config] API key updated in sidecar memory');
     res.json({ success: true });
   } else {
-    res.status(400).json({ error: 'apiKey string required' });
+    res.status(400).json({ error: 'apiKey string required', errorCode: 'API_KEY_REQUIRED' });
   }
 });
 
@@ -925,17 +925,17 @@ app.get('/api/models', async (req, res) => {
     const models = await getModelsForProvider(provider, customEndpoint, apiKey);
     res.json({ models });
   } catch (error: any) {
-    res.status(500).json({ error: `Failed to fetch models: ${error?.message || error}` });
+    res.status(500).json({ error: `Failed to fetch models: ${error?.message || error}`, errorCode: 'MODELS_FETCH_FAILED' });
   }
 });
 
 // ── Chat endpoint ────────────────────────────────────────────────────────────
 
 app.post('/chat', async (req, res) => {
-  const { messages, config } = req.body;
+  const { messages, config, simpleMode, language } = req.body;
   
   if (!messages || !Array.isArray(messages)) {
-    res.status(400).json({ error: 'messages array required' });
+    res.status(400).json({ error: 'messages array required', errorCode: 'MESSAGES_REQUIRED' });
     return;
   }
 
@@ -1248,6 +1248,8 @@ app.post('/chat', async (req, res) => {
           return subset;
         },
         signal,
+        simpleMode !== false, // default to true
+        language,
         // Pipeline lifecycle hooks → SSE events
         {
           onPhaseStart: (phase) => {
@@ -1357,14 +1359,14 @@ app.post('/chat', async (req, res) => {
     // If we already flushed SSE headers, send error as SSE event instead of HTTP 500
     // which would fail silently (headers already sent).
     try {
-      res.write(`data: ${JSON.stringify({ type: 'error', error: `Server error: ${error?.message || error}` })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'error', error: `Server error: ${error?.message || error}`, errorCode: 'SERVER_ERROR' })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
       res.end();
     } catch {
       // Headers not yet sent or response already ended — fall back to JSON
       try {
         if (!res.headersSent) {
-          res.status(500).json({ error: `Server error: ${error?.message || error}` });
+          res.status(500).json({ error: `Server error: ${error?.message || error}`, errorCode: 'SERVER_ERROR' });
         }
       } catch {}
     }
@@ -1383,7 +1385,7 @@ app.put('/data-backup', (req, res) => {
     fs.writeFileSync(backupPath, JSON.stringify(req.body), 'utf-8');
     res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -1393,13 +1395,13 @@ app.get('/data-backup', (_req, res) => {
     const workspaceDir = executors.getWorkspaceDir();
     const backupPath = path.join(workspaceDir, BACKUP_FILENAME);
     if (!fs.existsSync(backupPath)) {
-      res.status(404).json({ error: 'No backup found' });
+      res.status(404).json({ error: 'No backup found', errorCode: 'NO_BACKUP_FOUND' });
       return;
     }
     const raw = fs.readFileSync(backupPath, 'utf-8');
     res.json(JSON.parse(raw));
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -1411,7 +1413,7 @@ app.get('/projects/:id/export', (req, res) => {
     const { id } = req.params;
     const projectDir = path.join(PROJECTS_DIR, id);
     if (!fs.existsSync(projectDir)) {
-      res.status(404).json({ error: 'Project not found' });
+      res.status(404).json({ error: 'Project not found', errorCode: 'PROJECT_NOT_FOUND' });
       return;
     }
 
@@ -1456,12 +1458,20 @@ app.get('/projects/:id/export', (req, res) => {
 
     // Send the zip file
     const zipPath = path.join(exportDir, zipName);
-    res.download(zipPath, zipName, () => {
+    // Use dotfiles: 'allow' because the export dir is under .deskspawn/
+    // Without this, Express 5's send package returns 404 for paths through hidden directories.
+    res.download(zipPath, zipName, { dotfiles: 'allow' }, (err) => {
+      if (err) {
+        console.error(`[sidecar] Export download failed for project ${id}:`, err.message);
+        if (!res.headersSent) {
+          res.status(500).json({ error: `Export download failed: ${err.message}`, errorCode: 'EXPORT_DOWNLOAD_FAILED' });
+        }
+      }
       // Cleanup temp export directory
       fs.rmSync(exportDir, { recursive: true, force: true });
     });
   } catch (e: any) {
-    res.status(500).json({ error: `Export failed: ${e.message}` });
+    res.status(500).json({ error: `Export failed: ${e.message}`, errorCode: 'EXPORT_FAILED' });
   }
 });
 
@@ -1470,7 +1480,7 @@ app.post('/projects/import', async (req, res) => {
   try {
     const { fileBase64 } = req.body;
     if (!fileBase64 || typeof fileBase64 !== 'string') {
-      res.status(400).json({ error: 'fileBase64 is required' });
+      res.status(400).json({ error: 'fileBase64 is required', errorCode: 'FILE_BASE64_REQUIRED' });
       return;
     }
 
@@ -1487,7 +1497,7 @@ app.post('/projects/import', async (req, res) => {
     const metaPath = path.join(tempDir, 'deskspawn.json');
     if (!fs.existsSync(metaPath)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
-      res.status(400).json({ error: 'Invalid .deskspawn file: missing deskspawn.json' });
+      res.status(400).json({ error: 'Invalid .deskspawn file: missing deskspawn.json', errorCode: 'INVALID_IMPORT_FILE' });
       return;
     }
     const deskspawnMeta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
@@ -1551,7 +1561,7 @@ app.post('/projects/import', async (req, res) => {
 
     res.json({ project: projectMeta, projects });
   } catch (e: any) {
-    res.status(500).json({ error: `Import failed: ${e.message}` });
+    res.status(500).json({ error: `Import failed: ${e.message}`, errorCode: 'IMPORT_FAILED' });
   }
 });
 

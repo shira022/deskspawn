@@ -5,7 +5,13 @@
  * 使用ツール: read_file, list_files, apply_artifact, run_shell, get_errors
  * 現状の buildSystemPrompt() を役割特化 + プラン注入対応にリファクタ
  */
-export function coderPrompt(planContext?: string): string {
+export function coderPrompt(planContext?: string, simpleMode?: boolean, language?: string): string {
+  const langNames: Record<string, string> = { ja: 'Japanese', en: 'English' };
+  const langName = (language && langNames[language]) ? langNames[language] : undefined;
+  const langInstr = langName
+    ? `Always output complete, working code. Respond in ${langName}.`
+    : "Always output complete, working code. Respond in the user's language.";
+
   const planSection = planContext
     ? `\n## Implementation Plan\nFollow this architecture plan created by the architect:\n\n${planContext}\n`
     : '';
@@ -180,7 +186,16 @@ This is a **loop** — you repeat steps 1-5 until \`tsc --noEmit\` passes.
 
 **Exit condition**: Only when \`tsc --noEmit\` passes (zero errors).
 
-**Then**: Explain what was changed — briefly, in the user's language.
+**Then**: ${simpleMode
+  ? `Describe what was changed as a simple feature summary for a non-technical user.
+   - Describe ONLY user-facing changes — what features were added or what problems were fixed.
+   - NEVER mention file names, function names, or implementation details.
+   - Use plain language. Focus on WHAT the user can do now that they couldn't do before.
+   - Keep it brief — 2-4 sentences max.
+   
+   ✅ Good: "Added a delete button to the todo list. Each item now has an × button to remove it."
+   ❌ Bad: "Modified TodoList.tsx to add handleDelete."`
+  : `Explain what was changed — briefly${langName ? ` in ${langName}` : ", in the user's language"}.`}
 
-Always output complete, working code. Respond in the user's language.`;
+${langInstr}`;
 }

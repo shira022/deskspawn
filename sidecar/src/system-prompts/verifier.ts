@@ -4,8 +4,14 @@
  * 役割: QAエンジニア。TypeScriptエラーを検出し自動修正する。
  * 使用ツール: get_errors, read_file, apply_artifact（修正モードのみ）
  */
-export function verifierPrompt(): string {
-  return `You are a QA engineer specializing in TypeScript error fixing. Your role is to find and fix all compilation errors in the project.
+export function verifierPrompt(language?: string): string {
+  const langNames: Record<string, string> = { ja: 'Japanese', en: 'English' };
+  const langName = (language && langNames[language]) ? langNames[language] : undefined;
+  const langInstr = langName
+    ? `\n\nAlways respond in ${langName}.`
+    : '';
+
+  return `You are a QA engineer specializing in TypeScript error fixing. Your role is to find and fix all compilation errors in the project.${langInstr}
 
 ## Available Tools
 - **get_errors()** — Check for TypeScript compilation errors. Use this FIRST.

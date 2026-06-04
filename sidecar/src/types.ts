@@ -13,6 +13,18 @@ export interface ProviderConfig {
 
 // ─── Model Discovery ──────────────────────────────────────────────────────────
 
+/**
+ * Model-specific pricing in $ per 1M tokens (from models.dev).
+ * The source API may include additional rate variants beyond these fields.
+ */
+export interface ModelCost {
+  input: number;
+  output: number;
+  cacheRead?: number;
+  cacheWrite?: number;
+  reasoning?: number;
+}
+
 export interface ModelInfo {
   id: string;
   name: string;
@@ -22,6 +34,8 @@ export interface ModelInfo {
   supportsImageInput: boolean;
   contextLimit: number;
   maxOutput: number;
+  /** Real pricing from models.dev — undefined for ollama/custom models */
+  cost?: ModelCost;
 }
 
 // ─── IPC Messages (Rust → Sidecar) ─────────────────────────────────────────────
@@ -227,7 +241,25 @@ export interface TriageResult {
 export type ErrorCode =
   | 'RATE_LIMIT'
   | 'GENERATION_FAILED'
-  | 'PROJECT_DELETE_ACTIVE';
+  | 'PROJECT_DELETE_ACTIVE'
+  | 'PROJECT_NAME_REQUIRED'
+  | 'PROJECT_ID_REQUIRED'
+  | 'PROJECT_NOT_FOUND'
+  | 'PROJECT_DIR_NOT_FOUND'
+  | 'PATH_REQUIRED'
+  | 'CHECKPOINT_ID_REQUIRED'
+  | 'KEEP_CHECKPOINT_ID_REQUIRED'
+  | 'MESSAGES_REQUIRED'
+  | 'API_KEY_REQUIRED'
+  | 'MODELS_FETCH_FAILED'
+  | 'SERVER_ERROR'
+  | 'NO_BACKUP_FOUND'
+  | 'EXPORT_DOWNLOAD_FAILED'
+  | 'EXPORT_FAILED'
+  | 'FILE_BASE64_REQUIRED'
+  | 'INVALID_IMPORT_FILE'
+  | 'IMPORT_FAILED'
+  | 'INTERNAL_ERROR';
 
 /**
  * Extended error detail for SSE error events that includes an optional

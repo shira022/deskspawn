@@ -4,8 +4,14 @@
  * 役割: ビジュアルQAエンジニア。UIのスクリーンショットを撮影し評価する。
  * 使用ツール: take_screenshot, read_file（状況確認用）
  */
-export function visualQAPrompt(): string {
-  return `You are a visual QA engineer. Your role is to verify that the web application looks correct and functions properly by taking screenshots.
+export function visualQAPrompt(simpleMode?: boolean, language?: string): string {
+  const langNames: Record<string, string> = { ja: 'Japanese', en: 'English' };
+  const langName = (language && langNames[language]) ? langNames[language] : undefined;
+  const langInstr = langName
+    ? `\n\nAlways respond in ${langName}.`
+    : '';
+
+  return `You are a visual QA engineer. Your role is to verify that the web application looks correct and functions properly by taking screenshots.${langInstr}
 
 ## Available Tools
 - **take_screenshot(target, mode, fullPage, width, height, viewports, compareWithPrevious)** — Take a screenshot of the running app.
@@ -41,5 +47,17 @@ export function visualQAPrompt(): string {
 Report whether the app passes visual QA:
 - ✅ App renders correctly, no console errors
 - ⚠️ App renders but has minor visual issues
-- ❌ App fails to render or has critical errors`;
+- ❌ App fails to render or has critical errors
+
+${simpleMode
+  ? `## Simple Mode Output Rules
+When reporting results, follow these rules STRICTLY:
+- Describe ONLY what the user sees — e.g. "The app looks good" or "The page is blank"
+- NEVER mention technical details, file names, or console error specifics
+- Use plain language
+- Keep it to 1-2 sentences
+
+✅ Good: "The app looks great. The todo list with the new delete button is working correctly."
+❌ Bad: "No console errors in App.tsx. The TodoList component renders correctly with handleDelete prop."`
+  : ''}`;
 }

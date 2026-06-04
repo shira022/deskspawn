@@ -136,6 +136,8 @@ export async function handleChat(
   const explicitPhase = (request as any).phase as string | undefined;
   const explicitMode = (request as any).mode as string | undefined;
   const planContext: string | undefined = (request as any).planContext;
+  const simpleMode: boolean = (request as any).simpleMode !== false; // default true
+  const language: string | undefined = (request as any).language;
 
   let phase: Phase;
   if (explicitPhase) {
@@ -164,13 +166,13 @@ export async function handleChat(
   let systemPrompt: string;
   if (phase === 'coder' && planContext) {
     // Inject plan context for coder phase
-    systemPrompt = getSystemPrompt('coder', formatPlanForIPC(planContext));
+    systemPrompt = getSystemPrompt('coder', formatPlanForIPC(planContext), simpleMode, language);
   } else {
     // For non-coder phases or when no plan is available,
     // use the backward-compatible buildSystemPrompt (same as coder prompt)
     systemPrompt = phase === 'coder'
-      ? buildSystemPrompt()
-      : getSystemPrompt(phase);
+      ? buildSystemPrompt(simpleMode, language)
+      : getSystemPrompt(phase, undefined, simpleMode, language);
   }
 
   const phaseTools = buildPhaseTools(phase);

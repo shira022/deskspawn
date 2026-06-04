@@ -5,8 +5,14 @@
  * 使用ツール: read_file, list_files（読み取り専用）
  * 出力: 構造化された実装計画（JSON）
  */
-export function plannerPrompt(): string {
-  return `You are a senior software architect. Your role is to analyze the user's request and the existing project, then create a detailed implementation plan.
+export function plannerPrompt(language?: string): string {
+  const langNames: Record<string, string> = { ja: 'Japanese', en: 'English' };
+  const langName = (language && langNames[language]) ? langNames[language] : undefined;
+  const langInstr = langName
+    ? `\n\nAlways respond in ${langName}.`
+    : '';
+
+  return `You are a senior software architect. Your role is to analyze the user's request and the existing project, then create a detailed implementation plan.${langInstr}
 
 ## Available Tools
 - **read_file(path)** — Read a file from the workspace to understand current code.

@@ -110,20 +110,20 @@ export interface PhaseRunResult {
 // ─── System Prompt Resolution ──────────────────────────────────────────────────
 
 /**
- * Get the system prompt for a given phase with optional plan context.
+ * Get the system prompt for a given phase with optional plan context and simple mode.
  */
-export function getSystemPrompt(phase: Phase, planContext?: string): string {
+export function getSystemPrompt(phase: Phase, planContext?: string, simpleMode?: boolean, language?: string): string {
   switch (phase) {
     case 'planner':
-      return plannerPrompt();
+      return plannerPrompt(language);
     case 'coder':
-      return coderPrompt(planContext);
+      return coderPrompt(planContext, simpleMode, language);
     case 'verifier':
-      return verifierPrompt();
+      return verifierPrompt(language);
     case 'visual_qa':
-      return visualQAPrompt();
+      return visualQAPrompt(simpleMode, language);
     default:
-      return coderPrompt(planContext);
+      return coderPrompt(planContext, simpleMode, language);
   }
 }
 
@@ -263,8 +263,10 @@ export async function runPhase(
   signal: AbortSignal,
   hooks?: PipelineHooks,
   planContext?: string,
+  simpleMode?: boolean,
+  language?: string,
 ): Promise<PhaseRunResult> {
-  const systemPrompt = getSystemPrompt(phase, planContext);
+  const systemPrompt = getSystemPrompt(phase, planContext, simpleMode, language);
   const toolNames = getAllowedTools(phase);
   const tools = buildTools(toolNames);
   const config = PHASE_CONFIGS[phase];
@@ -376,6 +378,8 @@ export async function runWithTriage(
   requestMessages: Array<Record<string, unknown>>,
   buildTools: ToolBuilderFn,
   signal: AbortSignal,
+  simpleMode?: boolean,
+  language?: string,
   hooks?: PipelineHooks,
 ): Promise<PipelineResult> {
   // ── Phase 0: Triage ──────────────────────────────────────────────────
@@ -390,7 +394,7 @@ export async function runWithTriage(
   if (triageResult.mode === 'single') {
     // Single-agent: run only the coder phase (backward compatible)
     const coderResult = await runPhase(
-      model, 'coder', requestMessages, buildTools, signal, hooks,
+      model, 'coder', requestMessages, buildTools, signal, hooks, undefined, simpleMode, language,
     );
 
     return {
@@ -401,7 +405,7 @@ export async function runWithTriage(
   }
 
   // Multi-agent: run full pipeline
-  return runPipeline(model, requestMessages, buildTools, signal, hooks);
+  return runPipeline(model, requestMessages, buildTools, signal, hooks, simpleMode, language);
 }
 
 // ─── Full Pipeline ─────────────────────────────────────────────────────────────
@@ -431,6 +435,8 @@ export async function runPipeline(
   buildTools: ToolBuilderFn,
   signal: AbortSignal,
   hooks?: PipelineHooks,
+  simpleMode?: boolean,
+  language?: string,
 ): Promise<PipelineResult> {
   const phases: Phase[] = ['planner', 'coder', 'verifier', 'visual_qa'];
   let planContext: string | undefined;
@@ -457,6 +463,8 @@ export async function runPipeline(
       signal,
       hooks,
       planContext,
+      simpleMode,
+      language,
     );
 
     hooks?.onPhaseEnd?.(phase, result);
