@@ -10,20 +10,21 @@ import fs from 'fs';
 import crypto from 'crypto';
 import { ChildProcess, spawn, execSync, execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
-import { generateText } from 'ai';
 import { getModel } from './providers.js';
 import { tools } from './tools.js';
-import { buildSystemPrompt } from './system-prompt.js';
 import * as executors from './tool-executors.js';
 import { getModelsForProvider } from './models-fetcher.js';
 import { takeScreenshot } from './screenshot.js';
-import { StepManager } from './step-limits.js';
-import { withRateLimitRetry } from './retry.js';
+import { runWithTriage, getPhaseLabel } from './orchestrator.js';
+import { initMCPClients, getMCPTools, closeMCPClients } from './mcp-client.js';
 // preview import removed — no longer needed (no Tauri backend)
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
+
+// ── In-memory API key store (received from Rust backend, never from frontend) ─
+let storedApiKey: string | null = null;
 const PROJECTS_DIR = path.join(PROJECT_ROOT, 'projects');
 const PROJECTS_JSON = path.join(PROJECTS_DIR, 'projects.json');
 const TEMPLATE_DIR = path.join(PROJECT_ROOT, 'templates', 'react-template');
@@ -34,7 +35,17 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
-const PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
+// ── Port resolution with fallback ────────────────────────────────────────────
+const DESIRED_PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
+let ACTUAL_PORT = DESIRED_PORT;
+
+// ── Unhandled error resilience ───────────────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[sidecar] UNCAUGHT EXCEPTION — sidecar continuing:', err);
+});
+process.on('unhandledRejection', (reason) => {
+  console.error('[sidecar] UNHANDLED REJECTION — sidecar continuing:', reason);
+});
 
 // ── Workspace dev server process management ─────────────────────────────────
 
@@ -91,8 +102,8 @@ function App() {
   return <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-8">
     <div className="text-center space-y-4">
       <h1 className="text-2xl font-bold">${name}</h1>
-      <p className="text-muted-foreground">新しいアプリが作成されました。</p>
-      <p className="text-sm text-muted-foreground">AI チャットでアプリを構築してください。</p>
+      <p className="text-muted-foreground">Your new app has been created.</p>
+      <p className="text-sm text-muted-foreground">Use the AI chat to build your app.</p>
     </div>
   </div>;
 }
@@ -100,8 +111,8 @@ function App() {
 ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
 `);
     fs.writeFileSync(path.join(projectDir, 'index.html'), `<!DOCTYPE html>
-<html lang="ja">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><title>${name}</title></head>
+<html lang="en">
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%236366f1%22/><polygon points=%2256,12 20,54 46,54 40,88 78,40 52,40%22 fill=%22white%22/></svg>" /><title>${name}</title></head>
   <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
 </html>`);
 
@@ -590,7 +601,7 @@ app.get('/projects/list', (_req, res) => {
     const projects = readProjectsJson();
     res.json({ projects });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -599,7 +610,7 @@ app.post('/projects/new', async (req, res) => {
   try {
     const { name } = req.body;
     if (!name || typeof name !== 'string') {
-      res.status(400).json({ error: 'Project name is required' });
+      res.status(400).json({ error: 'Project name is required', errorCode: 'PROJECT_NAME_REQUIRED' });
       return;
     }
 
@@ -642,7 +653,7 @@ app.post('/projects/new', async (req, res) => {
 
     res.json({ project: projectMeta, projects });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -651,20 +662,20 @@ app.post('/projects/switch', (req, res) => {
   try {
     const { projectId } = req.body;
     if (!projectId) {
-      res.status(400).json({ error: 'projectId is required' });
+      res.status(400).json({ error: 'projectId is required', errorCode: 'PROJECT_ID_REQUIRED' });
       return;
     }
 
     const projects = readProjectsJson();
     const project = projects.find((p) => p.id === projectId);
     if (!project) {
-      res.status(404).json({ error: 'Project not found' });
+      res.status(404).json({ error: 'Project not found', errorCode: 'PROJECT_NOT_FOUND' });
       return;
     }
 
     const projectDir = path.join(PROJECTS_DIR, projectId);
     if (!fs.existsSync(projectDir)) {
-      res.status(404).json({ error: 'Project directory not found' });
+      res.status(404).json({ error: 'Project directory not found', errorCode: 'PROJECT_DIR_NOT_FOUND' });
       return;
     }
 
@@ -679,7 +690,7 @@ app.post('/projects/switch', (req, res) => {
 
     res.json({ project, projects });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -692,14 +703,14 @@ app.delete('/projects/:id', (req, res) => {
     const projectIndex = projects.findIndex((p) => p.id === id);
 
     if (projectIndex === -1) {
-      res.status(404).json({ error: 'Project not found' });
+      res.status(404).json({ error: 'Project not found', errorCode: 'PROJECT_NOT_FOUND' });
       return;
     }
 
     // Don't allow deleting the currently active project
     const workspaceDir = executors.getWorkspaceDir();
     if (path.basename(workspaceDir) === id) {
-      res.status(400).json({ error: '現在アクティブなプロジェクトは削除できません。先に別のプロジェクトに切り替えてください。' });
+      res.status(400).json({ error: 'Cannot delete the currently active project. Switch to a different project first.', errorCode: 'PROJECT_DELETE_ACTIVE' });
       return;
     }
 
@@ -716,7 +727,7 @@ app.delete('/projects/:id', (req, res) => {
 
     res.json({ success: true, projects });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -751,7 +762,7 @@ app.get('/projects/files', async (_req, res) => {
     const files = await executors.listFiles();
     res.json({ files });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -759,13 +770,13 @@ app.get('/projects/file', async (req, res) => {
   try {
     const filePath = req.query.path as string;
     if (!filePath) {
-      res.status(400).json({ error: 'path query parameter is required' });
+      res.status(400).json({ error: 'path query parameter is required', errorCode: 'PATH_REQUIRED' });
       return;
     }
     const content = await executors.readFile(filePath);
     res.json({ path: filePath, content });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -787,7 +798,7 @@ app.post('/projects/checkpoint', async (_req, res) => {
     const id = await executors.createCheckpoint(workspaceDir);
     res.json({ id });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -795,7 +806,7 @@ app.post('/projects/restore', async (req, res) => {
   try {
     const { checkpointId } = req.body;
     if (!checkpointId) {
-      res.status(400).json({ error: 'checkpointId is required' });
+      res.status(400).json({ error: 'checkpointId is required', errorCode: 'CHECKPOINT_ID_REQUIRED' });
       return;
     }
     const workspaceDir = executors.getWorkspaceDir();
@@ -805,7 +816,7 @@ app.post('/projects/restore', async (req, res) => {
     startWorkspaceDevServer(workspaceDir);
     res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -817,7 +828,7 @@ app.get('/projects/checkpoints', (_req, res) => {
     checkpoints.reverse();
     res.json({ checkpoints });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -825,7 +836,7 @@ app.post('/projects/checkpoints/cleanup', (req, res) => {
   try {
     const { keepCheckpointId } = req.body;
     if (!keepCheckpointId) {
-      res.status(400).json({ error: 'keepCheckpointId is required' });
+      res.status(400).json({ error: 'keepCheckpointId is required', errorCode: 'KEEP_CHECKPOINT_ID_REQUIRED' });
       return;
     }
     const workspaceDir = executors.getWorkspaceDir();
@@ -833,7 +844,7 @@ app.post('/projects/checkpoints/cleanup', (req, res) => {
     const remaining = executors.listCheckpoints(workspaceDir).reverse();
     res.json({ checkpoints: remaining });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -854,7 +865,7 @@ app.get('/chat/history', (_req, res) => {
       res.json({ messages: [] });
     }
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -863,7 +874,7 @@ app.post('/chat/history', (req, res) => {
   try {
     const { messages } = req.body;
     if (!Array.isArray(messages)) {
-      res.status(400).json({ error: 'messages array is required' });
+      res.status(400).json({ error: 'messages array is required', errorCode: 'MESSAGES_REQUIRED' });
       return;
     }
     const workspaceDir = executors.getWorkspaceDir();
@@ -873,7 +884,25 @@ app.post('/chat/history', (req, res) => {
     fs.writeFileSync(historyPath, JSON.stringify(messages), 'utf-8');
     res.json({ success: true, count: messages.length });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
+  }
+});
+
+// ── API key management (from Rust backend, never from frontend) ───────────────
+
+/**
+ * Receive API key from the Rust backend (after keychain save or on startup).
+ * The key is stored only in process memory — never written to disk.
+ * The frontend NEVER has access to this endpoint.
+ */
+app.post('/api/config', (req, res) => {
+  const { apiKey } = req.body || {};
+  if (typeof apiKey === 'string') {
+    storedApiKey = apiKey;
+    console.log('[api/config] API key updated in sidecar memory');
+    res.json({ success: true });
+  } else {
+    res.status(400).json({ error: 'apiKey string required', errorCode: 'API_KEY_REQUIRED' });
   }
 });
 
@@ -889,22 +918,24 @@ app.get('/api/models', async (req, res) => {
   try {
     const provider = (req.query.provider as string) || 'openai';
     const customEndpoint = req.query.customEndpoint as string | undefined;
-    const apiKey = req.query.apiKey as string | undefined;
+    // Use stored key when frontend doesn't provide one.
+    // undefined lets provider SDKs fall back to environment variables.
+    const apiKey = (req.query.apiKey as string) || storedApiKey || undefined;
 
     const models = await getModelsForProvider(provider, customEndpoint, apiKey);
     res.json({ models });
   } catch (error: any) {
-    res.status(500).json({ error: `Failed to fetch models: ${error?.message || error}` });
+    res.status(500).json({ error: `Failed to fetch models: ${error?.message || error}`, errorCode: 'MODELS_FETCH_FAILED' });
   }
 });
 
 // ── Chat endpoint ────────────────────────────────────────────────────────────
 
 app.post('/chat', async (req, res) => {
-  const { messages, config } = req.body;
+  const { messages, config, simpleMode, language } = req.body;
   
   if (!messages || !Array.isArray(messages)) {
-    res.status(400).json({ error: 'messages array required' });
+    res.status(400).json({ error: 'messages array required', errorCode: 'MESSAGES_REQUIRED' });
     return;
   }
 
@@ -913,17 +944,21 @@ app.post('/chat', async (req, res) => {
     // if project is switched mid-generation.
     const workspaceDir = executors.getWorkspaceDir();
 
+    // Use stored API key (from Rust backend) when frontend doesn't send one.
+    // This ensures the frontend NEVER needs to hold the raw API key.
+    // API keys come exclusively from keychain/file (Tauri) or localStorage
+    // (browser). Environment variables are NEVER used as fallback.
+    const resolvedApiKey = config?.apiKey || storedApiKey || undefined;
+
     const model = getModel({
       provider: config?.provider || 'ollama',
-      model: config?.model || 'qwen3.5:4b',
-      apiKey: config?.apiKey || '',
+      model: config?.model,
+      apiKey: resolvedApiKey,
       customEndpoint: config?.customEndpoint,
       temperature: config?.temperature ?? 0.2,
       maxTokens: config?.maxTokens,
     });
 
-    const systemPrompt = buildSystemPrompt();
-    
     // Build message history (system message goes to `system` param, not in messages array)
     const aiMessages = messages.map((m: any) => ({
       role: m.role as 'user' | 'assistant' | 'tool',
@@ -958,15 +993,9 @@ app.post('/chat', async (req, res) => {
       }
     });
 
-    const stepManager = new StepManager(config?.maxSteps || 20);
-    let lastCheckpointId: string | null = null;
-
-    // Note: No pre-generation checkpoint here. Checkpoints are created ONLY after
-    // successful AI generation with non-empty output. This prevents checkpoint
-    // counter inflation when AI fails or returns empty.
-
-    // Create tools with execute functions that emit results via SSE
-    const toolsWithExec = {
+    // ── Build all tool execute functions ──────────────────────────────────
+    // These are later filtered by phase in the multi-agent pipeline.
+    const allToolExecs: Record<string, any> = {
       read_file: {
         ...tools.read_file,
         execute: async ({ path: filePath }: { path: string }) => {
@@ -1019,8 +1048,6 @@ app.post('/chat', async (req, res) => {
       apply_artifact: {
         ...tools.apply_artifact,
         execute: async (input: { id: string; title: string; actions: unknown[] }) => {
-          // input is already a structured object (no JSON string nesting).
-          // The AI SDK handles all serialization, so escaping issues are eliminated.
           const artifact: import('./types.js').Artifact = {
             id: input.id,
             title: input.title,
@@ -1079,7 +1106,6 @@ app.post('/chat', async (req, res) => {
             const summary = errors.length === 0
               ? 'No errors found'
               : `${errors.length} errors found`;
-            // Build a concise, actionable list for the AI
             const details = errors.map((e: any) => ({
               type: e.type,
               pattern: e.pattern,
@@ -1108,6 +1134,16 @@ app.post('/chat', async (req, res) => {
           }
         },
       },
+      // ── MCP tools (grep.app GitHub code search) ────────────────
+      ...(() => {
+        const mcp = getMCPTools();
+        if (mcp) {
+          console.log(`[mcp] Exposing tools: ${Object.keys(mcp).join(', ')}`);
+          return mcp;
+        }
+        return {};
+      })(),
+
       take_screenshot: {
         ...tools.take_screenshot,
         execute: async (input: {
@@ -1153,7 +1189,6 @@ app.post('/chat', async (req, res) => {
               `, errors=${result.layer2.consoleErrors.length}`,
             );
 
-            // Build SSE notification text (trimmed for log)
             let sseResult = isResponsive
               ? `📱 Responsive: ${result.responsive!.length} viewports captured`
               : `📸 Screenshot captured (${imageSizeKb}KB)`;
@@ -1171,7 +1206,6 @@ app.post('/chat', async (req, res) => {
               result: sseResult,
             });
 
-            // Return full result to the AI model
             return JSON.stringify(result);
           } catch (e: any) {
             const errMsg = `Screenshot failed: ${e?.message || e}`;
@@ -1188,172 +1222,128 @@ app.post('/chat', async (req, res) => {
       },
     };
 
-    // ── Auto-continuation loop ──────────────────────────────────────────
-    // Runs generateText in a loop, automatically starting a new round when
-    // the step limit is hit and the agent is still making progress.
-    let roundMessages = [...aiMessages];
-    let allResultText = '';
-    // Accumulate usage info across rounds
-    let totalInputTokens = 0;
-    let totalOutputTokens = 0;
-
+    // ── Triage + Multi-Agent Pipeline ────────────────────────────────────
+    // Phase 0: Lightweight triage classifies request complexity.
+    //   - "single": runs only Coder phase (fast path)
+    //   - "multi":  runs full pipeline (Planner → Coder → Verifier → Visual QA)
+    //
+    // Tool builder: filters allToolExecs to only the tools allowed per phase.
+    // Pipeline hooks: translate orchestrator events to SSE for the frontend.
+    //
     try {
-      do {
-        // Wrap generateText with rate-limit-aware retry.
-        // If the provider returns a rate-limit error, we wait and retry
-        // (up to maxRetries times), sending progress SSE events so the
-        // frontend can show the user what's happening.
-        const result = await withRateLimitRetry(
-          () => generateText({
-            model,
-            system: systemPrompt,
-            messages: roundMessages as any,
-            tools: toolsWithExec as any,
-            abortSignal: signal,
-            stopWhen: (opts) => stepManager.shouldStop(opts),
-            temperature: config?.temperature ?? 0.2,
-            maxOutputTokens: config?.maxTokens ?? 16384,
-            onStepFinish: (event: any) => {
-              // Record tool calls for progress tracking & loop detection
-              const toolCalls = event.toolCalls || [];
-              stepManager.recordStep(
-                toolCalls.map((tc: any) => ({
-                  toolName: tc.toolName,
-                  args: tc.input || tc.args || {},
-                })),
-              );
+      // Notify frontend that triage is starting
+      sendSSE({ type: 'triage_start', label: 'Analyzing request...' });
 
-              const { step, maxSteps, continuationRound, maxContinuations } = stepManager.getProgress();
-              console.log(`[step ${step}] toolCalls=${toolCalls.length} textLen=${event.text?.length || 0} maxSteps=${maxSteps} round=${continuationRound}`);
-
-              // Send step progress with dynamically-computed maxSteps & continuation info
-              sendSSE({
-                type: 'step_progress',
-                step,
-                maxSteps,
-                continuationRound,
-                maxContinuations,
-              });
-
-              // Forward tool calls to the frontend
-              if (toolCalls.length > 0) {
-                for (const call of toolCalls) {
-                  sendSSE({
-                    type: 'tool_call',
-                    step,
-                    toolName: call.toolName,
-                    args: call.input || call.args || {},
-                  });
-                }
-              }
-            },
-          }),
-          // onRetry callback: notify the frontend about the rate limit wait
-          (retryEvent) => {
+      const pipelineResult = await runWithTriage(
+        model,
+        aiMessages,
+        // Build filtered tool set for each phase
+        (toolNames: string[]) => {
+          const subset: Record<string, any> = {};
+          for (const name of toolNames) {
+            if (allToolExecs[name]) {
+              subset[name] = allToolExecs[name];
+            }
+          }
+          return subset;
+        },
+        signal,
+        simpleMode !== false, // default to true
+        language,
+        // Pipeline lifecycle hooks → SSE events
+        {
+          onPhaseStart: (phase) => {
+            console.log(`[pipeline] Starting phase: ${phase}`);
             sendSSE({
-              type: 'rate_limit',
-              retryCount: retryEvent.retryCount,
-              maxRetries: retryEvent.maxRetries,
-              waitMs: retryEvent.waitMs,
+              type: 'phase_start',
+              phase,
+              label: getPhaseLabel(phase),
             });
           },
-        );
 
-        allResultText += (result.text || '');
-        totalInputTokens += result.usage?.inputTokens ?? 0;
-        totalOutputTokens += result.usage?.outputTokens ?? 0;
-
-        // Create checkpoint after each round if AI produced meaningful output
-        if (result.text && result.text.trim().length > 0) {
-          try {
-            lastCheckpointId = await executors.createCheckpoint(workspaceDir);
+          onPhaseEnd: (phase, result) => {
+            console.log(`[pipeline] Phase ${phase} done: steps=${result.stepCount} textLen=${result.text?.length || 0}`);
             sendSSE({
-              type: 'checkpoint',
-              id: lastCheckpointId,
+              type: 'phase_end',
+              phase,
+              steps: result.stepCount,
+              usage: result.usage,
             });
-          } catch (e) {
-            console.warn('[chat] Failed to create checkpoint:', e);
-          }
-        }
+          },
 
-        // Check if we should auto-continue to another round
-        if (stepManager.canAutoContinue()) {
-          stepManager.prepareForContinuation();
+          onPhaseDetail: (phase, text) => {
+            sendSSE({
+              type: 'phase_detail',
+              phase,
+              text,
+              label: getPhaseLabel(phase),
+            });
+          },
 
-          sendSSE({
-            type: 'continuation',
-            round: stepManager.continuationCount,
-            maxRounds: stepManager.maxContinuations,
-          });
-          console.log(`[chat] Auto-continuation round ${stepManager.continuationCount}/${stepManager.maxContinuations}`);
+          onToolCall: (phase, toolName, args) => {
+            console.log(`[pipeline] ${phase}: ${toolName}()`, JSON.stringify(args).substring(0, 100));
+            sendSSE({ type: 'tool_call', phase, toolName, args });
+          },
 
-          // Build continuation prompt
-          roundMessages.push({
-            role: 'user' as const,
-            content: '【自動継続】前回のコード生成がステップ上限に達したため、自動的に次のラウンドに移行しました。現在のプロジェクトの状態を確認し、未完了の実装を続けてください。既に全て完了している場合は、完了報告をしてください。',
-          });
-          continue;
-        }
-        break;
-      } while (true);
+          onStepProgress: (phase, { step, maxSteps }) => {
+            sendSSE({ type: 'step_progress', phase, step, maxSteps });
+          },
 
-      // ── Post-loop: determine final text ─────────────────────────────
-      const finalState = stepManager.getFinalState();
-      const { step: stepCount, maxSteps: effectiveMaxSteps, hitLimit, stoppedReason } = finalState;
+          onRateLimit: (phase, retryCount, maxRetries, waitMs) => {
+            console.log(`[pipeline] ${phase}: rate limit (${retryCount}/${maxRetries}), waiting ${waitMs}ms`);
+            sendSSE({ type: 'rate_limit', phase, retryCount, maxRetries, waitMs });
+          },
 
-      let finalText: string;
-      if (allResultText && allResultText.trim().length > 0) {
-        finalText = allResultText;
-      } else {
-        if (hitLimit) {
-          if (stoppedReason === 'loop_detected') {
-            finalText = `⚠️ 同じ処理を繰り返していると判断されたため、生成を終了しました。「続けて」と送信することで続きの生成を試みます。`;
-            console.log(`[chat] Loop detected, stopped early (step ${stepCount}/${effectiveMaxSteps})`);
-          } else {
-            finalText = `⚠️ 最大ステップ数（${effectiveMaxSteps}）に達したため、生成を終了しました。「続けて」と送信することで続きの生成を試みます。`;
-            console.log(`[chat] Step limit reached (${effectiveMaxSteps}), sent fallback message`);
-          }
-        } else {
-          finalText = '⚠️ 応答の生成に失敗しました。もう一度お試しください。';
-          console.log(`[chat] Empty output (not from step limit).`);
-        }
+          onContinuation: (phase, round, maxRounds) => {
+            console.log(`[pipeline] ${phase}: auto-continuation ${round}/${maxRounds}`);
+            sendSSE({ type: 'continuation', phase, round, maxRounds });
+          },
+
+          onTriageResult: (result) => {
+            console.log(`[triage] mode=${result.mode} reason="${result.reason}"`);
+            sendSSE({ type: 'triage_result', mode: result.mode, reason: result.reason });
+          },
+        },
+      );
+
+      // ── Send final result ────────────────────────────────────────────
+      generationDone = true;
+
+      const { text: finalText, usage: totalUsage, phases } = pipelineResult;
+
+      // ── Create single checkpoint after pipeline completes ──────────
+      if (workspaceDir && phases.length > 0) {
+        executors.createCheckpoint(workspaceDir)
+          .then((id: string) => {
+            sendSSE({ type: 'checkpoint', phase: 'all', id });
+          })
+          .catch((e: any) => console.warn('[pipeline] Failed to create final checkpoint:', e));
       }
 
       sendSSE({
         type: 'text',
-        text: finalText,
-        usage: {
-          inputTokens: totalInputTokens,
-          outputTokens: totalOutputTokens,
-        },
-        steps: stepCount,
-        continuationRound: stepManager.continuationCount,
-        maxContinuations: stepManager.maxContinuations,
+        text: finalText || '⚠️ Response generation failed. Please try again.',
+        usage: totalUsage,
+        phases,
       });
-      console.log(`[done] textLen=${finalText?.length || 0} totalSteps=${stepCount} continuationRounds=${stepManager.continuationCount}/${stepManager.maxContinuations}`);
-      generationDone = true;
+      console.log(`[done] textLen=${finalText?.length || 0} phases=${phases.join(',')} usage=${JSON.stringify(totalUsage)}`);
     } catch (error: any) {
       generationDone = true;
-      // If the error is from the client disconnecting (AbortError), don't
-      // bother sending an SSE error — the response is already half-closed
-      // and writing would throw. The client will detect the stream ending.
       if (error?.name === 'AbortError' || error?.message === 'This operation was aborted') {
-        console.log('[chat] Generation aborted (client disconnected)');
+        console.log('[pipeline] Generation aborted (client disconnected)');
       } else {
         try {
-          // Provide a friendlier message when rate-limit retries are exhausted
           const isRateLimit = /rate limit|rate_limit|429|too many requests/i.test(
             String(error?.message || error),
           );
-          const errorMsg = isRateLimit
-            ? `レート制限に達しました。${error?.message || ''}`
-            : `Generation failed: ${error?.message || error}`;
+          const errorMsg = error?.message || String(error || '');
           sendSSE({
             type: 'error',
             error: errorMsg,
+            errorCode: isRateLimit ? 'RATE_LIMIT' : 'GENERATION_FAILED',
           });
         } catch {
-          // Best-effort: client may have already disconnected
+          // Best-effort
         }
       }
     }
@@ -1369,14 +1359,14 @@ app.post('/chat', async (req, res) => {
     // If we already flushed SSE headers, send error as SSE event instead of HTTP 500
     // which would fail silently (headers already sent).
     try {
-      res.write(`data: ${JSON.stringify({ type: 'error', error: `Server error: ${error?.message || error}` })}\n\n`);
+      res.write(`data: ${JSON.stringify({ type: 'error', error: `Server error: ${error?.message || error}`, errorCode: 'SERVER_ERROR' })}\n\n`);
       res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
       res.end();
     } catch {
       // Headers not yet sent or response already ended — fall back to JSON
       try {
         if (!res.headersSent) {
-          res.status(500).json({ error: `Server error: ${error?.message || error}` });
+          res.status(500).json({ error: `Server error: ${error?.message || error}`, errorCode: 'SERVER_ERROR' });
         }
       } catch {}
     }
@@ -1395,7 +1385,7 @@ app.put('/data-backup', (req, res) => {
     fs.writeFileSync(backupPath, JSON.stringify(req.body), 'utf-8');
     res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -1405,13 +1395,13 @@ app.get('/data-backup', (_req, res) => {
     const workspaceDir = executors.getWorkspaceDir();
     const backupPath = path.join(workspaceDir, BACKUP_FILENAME);
     if (!fs.existsSync(backupPath)) {
-      res.status(404).json({ error: 'No backup found' });
+      res.status(404).json({ error: 'No backup found', errorCode: 'NO_BACKUP_FOUND' });
       return;
     }
     const raw = fs.readFileSync(backupPath, 'utf-8');
     res.json(JSON.parse(raw));
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
 
@@ -1423,7 +1413,7 @@ app.get('/projects/:id/export', (req, res) => {
     const { id } = req.params;
     const projectDir = path.join(PROJECTS_DIR, id);
     if (!fs.existsSync(projectDir)) {
-      res.status(404).json({ error: 'Project not found' });
+      res.status(404).json({ error: 'Project not found', errorCode: 'PROJECT_NOT_FOUND' });
       return;
     }
 
@@ -1468,12 +1458,20 @@ app.get('/projects/:id/export', (req, res) => {
 
     // Send the zip file
     const zipPath = path.join(exportDir, zipName);
-    res.download(zipPath, zipName, () => {
+    // Use dotfiles: 'allow' because the export dir is under .deskspawn/
+    // Without this, Express 5's send package returns 404 for paths through hidden directories.
+    res.download(zipPath, zipName, { dotfiles: 'allow' }, (err) => {
+      if (err) {
+        console.error(`[sidecar] Export download failed for project ${id}:`, err.message);
+        if (!res.headersSent) {
+          res.status(500).json({ error: `Export download failed: ${err.message}`, errorCode: 'EXPORT_DOWNLOAD_FAILED' });
+        }
+      }
       // Cleanup temp export directory
       fs.rmSync(exportDir, { recursive: true, force: true });
     });
   } catch (e: any) {
-    res.status(500).json({ error: `Export failed: ${e.message}` });
+    res.status(500).json({ error: `Export failed: ${e.message}`, errorCode: 'EXPORT_FAILED' });
   }
 });
 
@@ -1482,7 +1480,7 @@ app.post('/projects/import', async (req, res) => {
   try {
     const { fileBase64 } = req.body;
     if (!fileBase64 || typeof fileBase64 !== 'string') {
-      res.status(400).json({ error: 'fileBase64 is required' });
+      res.status(400).json({ error: 'fileBase64 is required', errorCode: 'FILE_BASE64_REQUIRED' });
       return;
     }
 
@@ -1499,7 +1497,7 @@ app.post('/projects/import', async (req, res) => {
     const metaPath = path.join(tempDir, 'deskspawn.json');
     if (!fs.existsSync(metaPath)) {
       fs.rmSync(tempDir, { recursive: true, force: true });
-      res.status(400).json({ error: 'Invalid .deskspawn file: missing deskspawn.json' });
+      res.status(400).json({ error: 'Invalid .deskspawn file: missing deskspawn.json', errorCode: 'INVALID_IMPORT_FILE' });
       return;
     }
     const deskspawnMeta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
@@ -1563,17 +1561,74 @@ app.post('/projects/import', async (req, res) => {
 
     res.json({ project: projectMeta, projects });
   } catch (e: any) {
-    res.status(500).json({ error: `Import failed: ${e.message}` });
+    res.status(500).json({ error: `Import failed: ${e.message}`, errorCode: 'IMPORT_FAILED' });
   }
 });
 
 // ── Start ────────────────────────────────────────────────────────────────────
 
 // Cleanup on exit
-process.on('SIGTERM', () => { stopWorkspaceDevServer(); process.exit(0); });
-process.on('SIGINT', () => { stopWorkspaceDevServer(); process.exit(0); });
+process.on('SIGTERM', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
+process.on('SIGINT', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
 
-app.listen(PORT, () => {
-  console.log(`DeskSpawn sidecar HTTP server on port ${PORT}`);
-  console.log(`Workspace: ${executors.getWorkspaceDir()}`);
+/**
+ * Kill any process holding a given port (macOS/Linux).
+ * Uses lsof + kill -9. Best-effort; errors are silently swallowed.
+ */
+function killPortProcess(port: number) {
+  try {
+    const pid = execSync(`lsof -ti:${port} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim();
+    if (pid) {
+      console.log(`[sidecar] Killing process on port ${port} (PID: ${pid})...`);
+      execSync(`kill -9 ${pid} 2>/dev/null`, { timeout: 3000 });
+      execSync(`sleep 0.3`, { timeout: 3000 });
+    }
+  } catch {
+    // No process holding the port — good
+  }
+}
+
+/**
+ * Start the HTTP server with port fallback.
+ * First tries to free DESIRED_PORT, then binds; if still busy, tries fallback ports.
+ * Emits "sidecar-ready:PORT" on stdout so the Rust backend can detect the actual port.
+ */
+function startServer(port: number): Promise<void> {
+  // Try to free the first port before binding
+  if (port === DESIRED_PORT) {
+    killPortProcess(port);
+  }
+
+  return new Promise((resolve, reject) => {
+    const server = app.listen(port, () => {
+      ACTUAL_PORT = port;
+      // Signal readiness to Rust backend (parses this from stdout)
+      console.log(`sidecar-ready:${ACTUAL_PORT}`);
+      console.log(`DeskSpawn sidecar HTTP server on port ${ACTUAL_PORT}`);
+      console.log(`Workspace: ${executors.getWorkspaceDir()}`);
+      resolve();
+    });
+    server.on('error', (err: NodeJS.ErrnoException) => {
+      if (err.code === 'EADDRINUSE') {
+        const nextPort = port + 1;
+        const maxPort = DESIRED_PORT + 9;
+        if (nextPort <= maxPort) {
+          console.warn(`[sidecar] Port ${port} in use, trying ${nextPort}...`);
+          server.close(() => startServer(nextPort).then(resolve, reject));
+        } else {
+          reject(new Error(`All ports ${DESIRED_PORT}-${maxPort} in use`));
+        }
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
+
+startServer(DESIRED_PORT).then(() => {
+  // Initialise MCP clients (non-fatal if grep.app is unreachable)
+  initMCPClients();
+}).catch((err) => {
+  console.error('[sidecar] Failed to start HTTP server:', err);
+  process.exit(1);
 });

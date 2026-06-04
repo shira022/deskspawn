@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
@@ -13,11 +14,13 @@ import {
   RotateCw,
   RefreshCw,
   ChevronsUpDown,
+  DollarSign,
 } from "lucide-react";
 import { callBackend } from "@/lib/backend";
-import { SIDECAR_HEALTH_URL } from "@/lib/constants";
+import { sidecarHealthUrl, setSidecarPort } from "@/lib/constants";
 
 export function StatusBar() {
+  const { t } = useTranslation();
   const { agentStatus, agentStepCount, agentMaxSteps, errors, vitePort } =
     useAppStore();
 
@@ -27,11 +30,25 @@ export function StatusBar() {
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
-  // Poll sidecar health
+  // Initialize sidecar port from Rust backend (Tauri only)
+  useEffect(() => {
+    (async () => {
+      try {
+        const port = await callBackend<number>("sidecar_port");
+        if (typeof port === "number" && port > 0) {
+          setSidecarPort(port);
+        }
+      } catch {
+        // browser mode — use default port 3001
+      }
+    })();
+  }, []);
+
+  // Poll sidecar health (uses dynamic port)
   useEffect(() => {
     const check = async () => {
       try {
-        const res = await fetch(SIDECAR_HEALTH_URL, { signal: AbortSignal.timeout(2000) });
+        const res = await fetch(sidecarHealthUrl(), { signal: AbortSignal.timeout(2000) });
         setSidecarOnline(res.ok);
       } catch {
         setSidecarOnline(false);
@@ -79,11 +96,15 @@ export function StatusBar() {
   }, []);
 
   const statusConfig = {
-    idle: { label: "待機中", icon: <Bot className="h-3 w-3" />, variant: "outline" as const },
-    running: { label: "生成中", icon: <Loader2 className="h-3 w-3 animate-spin" />, variant: "secondary" as const },
-    error: { label: "エラー", icon: <AlertCircle className="h-3 w-3" />, variant: "destructive" as const },
-    complete: { label: "完了", icon: <CheckCircle2 className="h-3 w-3" />, variant: "success" as const },
+    idle: { label: t('status.idle'), icon: <Bot className="h-3 w-3" />, variant: "outline" as const },
+    running: { label: t('status.running'), icon: <Loader2 className="h-3 w-3 animate-spin" />, variant: "secondary" as const },
+    error: { label: t('status.error'), icon: <AlertCircle className="h-3 w-3" />, variant: "destructive" as const },
+    complete: { label: t('status.complete'), icon: <CheckCircle2 className="h-3 w-3" />, variant: "success" as const },
   };
+
+  const messages = useAppStore((s) => s.messages);
+  const totalCost = messages.reduce((sum, m) => sum + (m.usage?.estimatedCost ?? 0), 0);
+  const totalTokens = messages.reduce((sum, m) => sum + (m.usage?.inputTokens ?? 0) + (m.usage?.outputTokens ?? 0), 0);
 
   const s = statusConfig[agentStatus];
 
@@ -99,19 +120,32 @@ export function StatusBar() {
           </Badge>
           {agentStatus === "running" && (
             <span>
-              ステップ {agentStepCount}/{agentMaxSteps}
+              Step {agentStepCount}/{agentMaxSteps}
             </span>
           )}
         </div>
         {errors.length > 0 && (
           <Badge variant="destructive" className="h-5 text-[10px]">
             <AlertCircle className="h-3 w-3 mr-1" />
-            {errors.length} 件のエラー
+            {t('status.errorCount', { count: errors.length })}
           </Badge>
         )}
       </div>
 
       <div className="flex items-center gap-3">
+        {/* Token usage */}
+        {totalTokens > 0 && (
+          <>
+            <div className="flex items-center gap-1">
+              <DollarSign className="h-3 w-3 text-muted-foreground/60" />
+              <span className="text-[10px] tabular-nums">
+                {totalTokens.toLocaleString()} tokens{totalCost > 0 ? ` ($${totalCost.toFixed(4)})` : ""}
+              </span>
+            </div>
+            <Separator orientation="vertical" className="h-3" />
+          </>
+        )}
+
         {/* Sidecar status & restart dropdown */}
         <div ref={menuRef} className="relative flex items-center gap-1">
           {sidecarOnline
@@ -127,7 +161,7 @@ export function StatusBar() {
             className="h-4 w-4"
             onClick={() => setMenuOpen((v) => !v)}
             disabled={isRestarting}
-            title="再起動オプション"
+            title={t('status.restartOptions')}
           >
             {restarting
               ? <RotateCw className="h-3 w-3 animate-spin" />
@@ -144,14 +178,14 @@ export function StatusBar() {
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent"
               >
                 <RotateCw className="h-3 w-3 shrink-0" />
-                <span>Sidecar を再起動</span>
+                <span>{t('status.restartSidecar')}</span>
               </button>
               <button
                 onClick={handleTauriRestart}
                 className="flex w-full items-center gap-2 px-3 py-1.5 text-xs hover:bg-accent"
               >
                 <RefreshCw className="h-3 w-3 shrink-0" />
-                <span>Tauri を再起動</span>
+                <span>{t('status.restartTauri')}</span>
               </button>
             </div>
           )}

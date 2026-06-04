@@ -91,6 +91,9 @@ Check for:
 - **Consistency**: Matches shadcn/ui patterns? Uses existing component variants? Follows the design system?
 - **User feedback**: Actions confirmed (toast, status bar)? Destructive actions have confirmation?
 - **Visual polish**: Alignment, spacing, typography consistent? No layout shift on load?
+- **Internationalization**: All user-facing strings use translation keys? No hardcoded text in components or utilities?
+- **Translation completeness**: New translation keys added to ALL language files in `src/locales/`? Keys added to every supported language, not just one?
+- **Language config**: If a new language was added, is it registered in `src/lib/languages.ts`?
 
 ## Output: Review Report
 

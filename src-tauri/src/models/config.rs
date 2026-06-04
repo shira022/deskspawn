@@ -1,16 +1,36 @@
 use serde::{Deserialize, Serialize};
 
+/// Default storage method when none is specified (backward compat).
+fn default_storage_method() -> String {
+    "keychain".to_string()
+}
+
 // ── AI Configuration ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct AiConfig {
     pub provider: String,
+    #[serde(alias = "api_key")]
     pub api_key: String,
     pub model: String,
+    #[serde(alias = "custom_endpoint")]
     pub custom_endpoint: Option<String>,
+    #[serde(alias = "api_version")]
     pub api_version: Option<String>,
     pub temperature: f64,
+    #[serde(alias = "max_tokens")]
     pub max_tokens: Option<u32>,
+    #[serde(default)]
+    pub max_steps: Option<u32>,
+    /// True when the API key is stored (keychain or file).
+    /// The frontend uses this flag instead of the actual key value.
+    #[serde(default)]
+    pub api_key_configured: bool,
+    /// Storage method for the API key: "keychain" (OS keychain) or "file"
+    /// (encrypted credentials.json in config directory).
+    #[serde(default = "default_storage_method")]
+    pub storage_method: String,
 }
 
 // ── Environment Check ─────────────────────────────────────────────────────────
@@ -63,8 +83,6 @@ pub enum Action {
     File(FileAction),
     #[serde(rename = "diff")]
     Diff(DiffAction),
-    #[serde(rename = "template")]
-    Template(TemplateAction),
     #[serde(rename = "shell")]
     Shell(ShellAction),
 }
@@ -86,32 +104,6 @@ pub struct DiffAction {
     pub file_path: String,
     pub search: String,
     pub content: String,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TemplateAction {
-    pub table_name: String,
-    pub columns: Vec<TemplateColumn>,
-    #[serde(default)]
-    pub operations: Vec<String>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TemplateColumn {
-    pub name: String,
-    pub sql_type: String,
-    pub rust_type: String,
-    pub ts_type: String,
-    #[serde(default)]
-    pub nullable: bool,
-    #[serde(default)]
-    pub primary_key: bool,
-    #[serde(default)]
-    pub unique: bool,
-    #[serde(default)]
-    pub default: Option<String>,
-    #[serde(default)]
-    pub references: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,17 +153,4 @@ pub struct SpawnConfig {
     pub window_title: String,
 }
 
-// ── Column for template generation ────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ColumnDef {
-    pub name: String,
-    pub sql_type: String,
-    pub rust_type: String,
-    pub ts_type: String,
-    pub nullable: bool,
-    pub primary_key: bool,
-    pub unique: bool,
-    pub default: Option<String>,
-    pub references: Option<String>,
-}

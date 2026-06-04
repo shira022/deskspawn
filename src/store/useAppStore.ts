@@ -12,9 +12,14 @@ import type {
   FileNode,
   ProjectMeta,
   CheckpointInfo,
+  AppSettings,
+  Toast,
 } from "@/types";
+import { DEFAULT_SETTINGS } from "@/types";
 import { callBackend } from "@/lib/backend";
-import { SIDECAR_BASE } from "@/lib/constants";
+import { SETTINGS_KEY, sidecarBase } from "@/lib/constants";
+import { setModelCostCache, clearModelCostCache } from "@/lib/cost";
+import i18n from "@/lib/i18n";
 
 /**
  * Persist the current messages array to the sidecar so it survives page reloads.
@@ -22,7 +27,7 @@ import { SIDECAR_BASE } from "@/lib/constants";
  */
 async function persistMessages(messages: ChatMessage[]): Promise<void> {
   try {
-    await fetch(`${SIDECAR_BASE}/chat/history`, {
+    await fetch(`${sidecarBase()}/chat/history`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ messages }),
@@ -81,6 +86,7 @@ interface Store {
   updateMessage: (id: string, updates: Partial<ChatMessage>) => void;
   truncateMessages: (fromIndex: number) => void;
   clearMessages: () => void;
+  fetchChatHistory: () => Promise<void>;
 
   // Editing
   editingMessageId: string | null;
@@ -152,6 +158,21 @@ interface Store {
   // Generation reload trigger (increment to force iframe reload after generation)
   reloadCounter: number;
   triggerReload: () => void;
+
+  // Settings
+  settings: AppSettings;
+  setSettings: (settings: AppSettings) => void;
+  updateSettings: (partial: Partial<AppSettings>) => void;
+
+  // Theme
+  resolvedTheme: "light" | "dark";
+  setResolvedTheme: (theme: "light" | "dark") => void;
+
+  // Toasts
+  toasts: Toast[];
+  addToast: (toast: Omit<Toast, "id">) => void;
+  removeToast: (id: string) => void;
+
 }
 
 export const useAppStore = create<Store>((set, get) => ({
@@ -159,78 +180,84 @@ export const useAppStore = create<Store>((set, get) => ({
   setPhase: (phase) => set({ phase }),
   initialized: false,
   initialize: async () => {
+    // Load AI config from Rust backend (keychain or credentials.json)
+    let loadedConfig: AiConfig | null = null;
     try {
-      // Load AI config from backend (Tauri IPC or localStorage)
-      try {
-        const config = await callBackend<AiConfig | null>("load_ai_config");
-        if (config) {
-          set({ aiConfig: config, phase: "main" });
+      loadedConfig = await callBackend<AiConfig | null>("load_ai_config");
+      if (loadedConfig) {
+        if (loadedConfig.provider && loadedConfig.model) {
+          // Tauri: Rust backend manages the API key (keychain/file).
+          // Config existence with provider+model = properly configured.
+          loadedConfig.apiKey = "";
+          set({ aiConfig: loadedConfig, phase: "main" });
         }
-      } catch {
-        // No stored config — stay on ai-config phase
-      }
-
-      // Load projects on init
-      try {
-        const res = await fetch(`${SIDECAR_BASE}/projects/current`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.project) {
-            set({ currentProjectId: data.project.id });
-          }
-        }
-      } catch {
-        // Sidecar not running yet, that's fine
-      }
-
-      // Try loading project list
-      try {
-        const res = await fetch(`${SIDECAR_BASE}/projects/list`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.projects) {
-            set({ projects: data.projects });
-          }
-        }
-      } catch {
-        // Sidecar not running yet
-      }
-
-      // Try fetching checkpoints
-      try {
-        const res = await fetch(`${SIDECAR_BASE}/projects/checkpoints`);
-        if (res.ok) {
-          const data = await res.json();
-          const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
-            id: cp.id,
-            createdAt: new Date(cp.createdAt),
-          }));
-          set({
-            checkpoints: cps,
-            currentCheckpointIndex: cps.length > 0 ? cps.length - 1 : -1,
-          });
-        }
-      } catch {
-        // Sidecar not running yet
-      }
-
-      // Try loading chat history (so it survives page reload)
-      try {
-        const res = await fetch(`${SIDECAR_BASE}/chat/history`);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data.messages) && data.messages.length > 0) {
-            set({ messages: data.messages });
-          }
-        }
-      } catch {
-        // Sidecar not running yet
       }
     } catch (e) {
-      console.warn("Failed to load stored config:", e);
-    } finally {
-      set({ initialized: true });
+      console.warn("[initialize] Failed to load AI config:", e);
     }
+
+    // Pre-populate model cost cache for accurate cost display from the first chat
+    if (loadedConfig?.provider && loadedConfig.provider !== "ollama" && loadedConfig.provider !== "custom") {
+      try {
+        const res = await fetch(`${sidecarBase()}/api/models?provider=${loadedConfig.provider}`);
+        if (res.ok) {
+          const data = await res.json();
+          const models = data.models ?? [];
+          if (models.length > 0) {
+            clearModelCostCache();
+            setModelCostCache(models);
+          }
+        }
+      } catch {
+        // Non-critical — cache will be populated when model list is fetched later
+      }
+    }
+
+    // Load projects on init
+    try {
+      const res = await fetch(`${sidecarBase()}/projects/current`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.project) {
+          set({ currentProjectId: data.project.id });
+        }
+      }
+    } catch {
+      // Sidecar not running yet, that's fine
+    }
+
+    // Try loading project list
+    try {
+      const res = await fetch(`${sidecarBase()}/projects/list`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.projects) {
+          set({ projects: data.projects });
+        }
+      }
+    } catch {
+      // Sidecar not running yet
+    }
+
+    // Try fetching checkpoints
+    try {
+      const res = await fetch(`${sidecarBase()}/projects/checkpoints`);
+      if (res.ok) {
+        const data = await res.json();
+        const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
+          id: cp.id,
+          createdAt: new Date(cp.createdAt),
+        }));
+        set({
+          checkpoints: cps,
+          currentCheckpointIndex: cps.length > 0 ? cps.length - 1 : -1,
+        });
+      }
+    } catch {
+      // Sidecar not running yet
+    }
+
+    set({ initialized: true });
   },
 
   layoutMode: "2-pane",
@@ -238,10 +265,15 @@ export const useAppStore = create<Store>((set, get) => ({
 
   aiConfig: null,
   setAiConfig: (aiConfig) => {
-    set({ aiConfig });
+    // Save the full config (including apiKey) to Rust backend.
+    // Rust stores the key in OS keychain or credentials.json + sidecar memory.
     callBackend("save_ai_config", { config: aiConfig }).catch((e) =>
       console.warn("Failed to save AI config:", e),
     );
+
+    // Strip apiKey from frontend state for zero exposure.
+    // The key lives only in: OS keychain/file + sidecar process memory.
+    set({ aiConfig: { ...aiConfig, apiKey: "" } });
   },
 
   envChecks: defaultEnvChecks,
@@ -288,6 +320,22 @@ export const useAppStore = create<Store>((set, get) => ({
     persistMessages(get().messages);
   },
   clearMessages: () => set({ messages: [] }),
+  fetchChatHistory: async () => {
+    try {
+      const res = await fetch(`${sidecarBase()}/chat/history`);
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data.messages) && data.messages.length > 0) {
+          set({ messages: data.messages });
+        } else {
+          // Sidecar returned empty — ensure local state is clean
+          set({ messages: [] });
+        }
+      }
+    } catch {
+      // Sidecar not available — keep current messages
+    }
+  },
 
   editingMessageId: null,
   setEditingMessageId: (editingMessageId) => set({ editingMessageId }),
@@ -337,7 +385,7 @@ export const useAppStore = create<Store>((set, get) => ({
   setCurrentCheckpointIndex: (currentCheckpointIndex) => set({ currentCheckpointIndex }),
   fetchCheckpoints: async () => {
     try {
-      const res = await fetch(`${SIDECAR_BASE}/projects/checkpoints`);
+      const res = await fetch(`${sidecarBase()}/projects/checkpoints`);
       if (!res.ok) return;
       const data = await res.json();
       const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
@@ -363,4 +411,65 @@ export const useAppStore = create<Store>((set, get) => ({
   // Generation reload trigger
   reloadCounter: 0,
   triggerReload: () => set((state) => ({ reloadCounter: state.reloadCounter + 1 })),
+
+  // ── Settings ──────────────────────────────────────────────────────
+  settings: (() => {
+    const s = loadSettings();
+    i18n.changeLanguage(s.language);
+    return s;
+  })(),
+  setSettings: (settings) => {
+    saveSettings(settings);
+    if (settings.language) i18n.changeLanguage(settings.language);
+    set({ settings });
+  },
+  updateSettings: (partial) => {
+    set((state) => {
+      const next = { ...state.settings, ...partial };
+      saveSettings(next);
+      if (partial.language) i18n.changeLanguage(next.language);
+      return { settings: next };
+    });
+  },
+
+  // ── Theme ─────────────────────────────────────────────────────────
+  resolvedTheme: "light",
+  setResolvedTheme: (resolvedTheme) => set({ resolvedTheme }),
+
+  // ── Toasts ────────────────────────────────────────────────────────
+  toasts: [],
+  addToast: (toast) => {
+    const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    set((state) => ({
+      toasts: [...state.toasts, { ...toast, id }],
+    }));
+    const duration = toast.duration ?? 4000;
+    setTimeout(() => {
+      get().removeToast(id);
+    }, duration);
+  },
+  removeToast: (id) => {
+    set((state) => ({
+      toasts: state.toasts.filter((t) => t.id !== id),
+    }));
+  },
+
 }));
+
+// ── Settings persistence ────────────────────────────────────────────
+
+function loadSettings(): AppSettings {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
+    }
+  } catch {}
+  return { ...DEFAULT_SETTINGS };
+}
+
+function saveSettings(settings: AppSettings) {
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {}
+}

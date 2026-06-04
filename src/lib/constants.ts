@@ -5,16 +5,40 @@
  * 各コンポーネントはこのファイルからインポートすること。
  */
 
-/** サイドカーサーバーのベースURL */
-export const SIDECAR_BASE = "http://localhost:3001";
+let _sidecarPort = 3001;
 
-/** サイドカーチャットエンドポイント */
-export const SIDECAR_CHAT_URL = `${SIDECAR_BASE}/chat`;
+/** 現在のサイドカーポートを設定する（Rust backendから通知された場合） */
+export function setSidecarPort(port: number) {
+  if (port > 0 && port !== _sidecarPort) {
+    console.log(`[sidecar] Port updated: ${_sidecarPort} → ${port}`);
+    _sidecarPort = port;
+  }
+}
 
-/** サイドカーヘルスチェックURL */
-export const SIDECAR_HEALTH_URL = `${SIDECAR_BASE}/health`;
+/** 現在のサイドカーポートを取得する */
+export function getSidecarPort(): number {
+  return _sidecarPort;
+}
+
+/** サイドカーサーバーのベースURL（動的） */
+export function sidecarBase(): string {
+  return `http://localhost:${_sidecarPort}`;
+}
+
+/** サイドカーチャットエンドポイント（動的） */
+export function sidecarChatUrl(): string {
+  return `${sidecarBase()}/chat`;
+}
+
+/** サイドカーヘルスチェックURL（動的） */
+export function sidecarHealthUrl(): string {
+  return `${sidecarBase()}/health`;
+}
 
 import type { ProviderKind } from "@/types";
+
+/** localStorage に設定を保存するキー */
+export const SETTINGS_KEY = "deskspawn_settings";
 
 /** プロバイダー表示名マップ */
 export const providerLabels: Record<string, string> = {
@@ -22,7 +46,7 @@ export const providerLabels: Record<string, string> = {
   anthropic: "Anthropic",
   google: "Google",
   ollama: "Ollama",
-  custom: "カスタム",
+  custom: "Custom",
 };
 
 /** プロバイダーアイコンマップ */
