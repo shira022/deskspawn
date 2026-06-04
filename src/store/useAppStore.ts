@@ -14,12 +14,11 @@ import type {
   CheckpointInfo,
   AppSettings,
   Toast,
-  TokenUsage,
 } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
-import { isTauri } from "@/lib/tauri";
 import { callBackend } from "@/lib/backend";
 import { SETTINGS_KEY, sidecarBase } from "@/lib/constants";
+import { setModelCostCache, clearModelCostCache } from "@/lib/cost";
 import i18n from "@/lib/i18n";
 
 /**
@@ -174,11 +173,6 @@ interface Store {
   addToast: (toast: Omit<Toast, "id">) => void;
   removeToast: (id: string) => void;
 
-  // Token Usage
-  sessionUsage: TokenUsage[];
-  addTokenUsage: (usage: TokenUsage) => void;
-  clearSessionUsage: () => void;
-  totalSessionCost: () => number;
 }
 
 export const useAppStore = create<Store>((set, get) => ({
@@ -186,100 +180,83 @@ export const useAppStore = create<Store>((set, get) => ({
   setPhase: (phase) => set({ phase }),
   initialized: false,
   initialize: async () => {
-    // Timeout to prevent the app hanging indefinitely if IPC/fetch never settles.
-    // The UI will show after 10s regardless, and background work continues silently.
-    const INIT_TIMEOUT_MS = 10_000;
-    const timeout = new Promise<void>((resolve) => {
-      setTimeout(() => {
-        console.warn(
-          `[initialize] Timeout after ${INIT_TIMEOUT_MS}ms, forcing UI to show`,
-        );
-        resolve();
-      }, INIT_TIMEOUT_MS);
-    });
-
-    const doInit = (async () => {
-      // Load AI config from backend (Tauri IPC or localStorage)
-      try {
-        const config = await callBackend<AiConfig | null>("load_ai_config");
-        if (config) {
-          const isTauriEnv = isTauri();
-
-          if (config.provider && config.model) {
-            // Tauri mode: Rust backend manages the API key (keychain/file).
-            // Config existence with provider+model = properly configured.
-            // Browser mode: need actual key or apiKeyConfigured flag or Ollama.
-            const canProceed =
-              isTauriEnv ||
-              !!(
-                config.apiKey ||
-                config.apiKeyConfigured ||
-                config.provider === "ollama"
-              );
-
-            if (canProceed) {
-              if (isTauriEnv) {
-                config.apiKey = "";
-              }
-              set({ aiConfig: config, phase: "main" });
-            } else {
-              console.warn(
-                "[initialize] Stored AI config is incomplete; staying on setup screen.",
-                config,
-              );
-            }
-          }
+    // Load AI config from Rust backend (keychain or credentials.json)
+    let loadedConfig: AiConfig | null = null;
+    try {
+      loadedConfig = await callBackend<AiConfig | null>("load_ai_config");
+      if (loadedConfig) {
+        if (loadedConfig.provider && loadedConfig.model) {
+          // Tauri: Rust backend manages the API key (keychain/file).
+          // Config existence with provider+model = properly configured.
+          loadedConfig.apiKey = "";
+          set({ aiConfig: loadedConfig, phase: "main" });
         }
-      } catch (e) {
-        console.warn("[initialize] Failed to load AI config:", e);
       }
+    } catch (e) {
+      console.warn("[initialize] Failed to load AI config:", e);
+    }
 
-      // Load projects on init
+    // Pre-populate model cost cache for accurate cost display from the first chat
+    if (loadedConfig?.provider && loadedConfig.provider !== "ollama" && loadedConfig.provider !== "custom") {
       try {
-        const res = await fetch(`${sidecarBase()}/projects/current`);
+        const res = await fetch(`${sidecarBase()}/api/models?provider=${loadedConfig.provider}`);
         if (res.ok) {
           const data = await res.json();
-          if (data.project) {
-            set({ currentProjectId: data.project.id });
+          const models = data.models ?? [];
+          if (models.length > 0) {
+            clearModelCostCache();
+            setModelCostCache(models);
           }
         }
       } catch {
-        // Sidecar not running yet, that's fine
+        // Non-critical — cache will be populated when model list is fetched later
       }
+    }
 
-      // Try loading project list
-      try {
-        const res = await fetch(`${sidecarBase()}/projects/list`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.projects) {
-            set({ projects: data.projects });
-          }
+    // Load projects on init
+    try {
+      const res = await fetch(`${sidecarBase()}/projects/current`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.project) {
+          set({ currentProjectId: data.project.id });
         }
-      } catch {
-        // Sidecar not running yet
       }
+    } catch {
+      // Sidecar not running yet, that's fine
+    }
 
-      // Try fetching checkpoints
-      try {
-        const res = await fetch(`${sidecarBase()}/projects/checkpoints`);
-        if (res.ok) {
-          const data = await res.json();
-          const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
-            id: cp.id,
-            createdAt: new Date(cp.createdAt),
-          }));
-          set({
-            checkpoints: cps,
-            currentCheckpointIndex: cps.length > 0 ? cps.length - 1 : -1,
-          });
+    // Try loading project list
+    try {
+      const res = await fetch(`${sidecarBase()}/projects/list`);
+      if (res.ok) {
+        const data = await res.json();
+        if (data.projects) {
+          set({ projects: data.projects });
         }
-      } catch {
-        // Sidecar not running yet
       }
-    })();
+    } catch {
+      // Sidecar not running yet
+    }
 
-    await Promise.race([doInit, timeout]);
+    // Try fetching checkpoints
+    try {
+      const res = await fetch(`${sidecarBase()}/projects/checkpoints`);
+      if (res.ok) {
+        const data = await res.json();
+        const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
+          id: cp.id,
+          createdAt: new Date(cp.createdAt),
+        }));
+        set({
+          checkpoints: cps,
+          currentCheckpointIndex: cps.length > 0 ? cps.length - 1 : -1,
+        });
+      }
+    } catch {
+      // Sidecar not running yet
+    }
+
     set({ initialized: true });
   },
 
@@ -288,16 +265,15 @@ export const useAppStore = create<Store>((set, get) => ({
 
   aiConfig: null,
   setAiConfig: (aiConfig) => {
-    // Always save the full config (including apiKey) to backend.
-    // In Tauri mode, Rust stores the key in OS keychain + sidecar.
+    // Save the full config (including apiKey) to Rust backend.
+    // Rust stores the key in OS keychain or credentials.json + sidecar memory.
     callBackend("save_ai_config", { config: aiConfig }).catch((e) =>
       console.warn("Failed to save AI config:", e),
     );
 
-    // In Tauri mode, strip apiKey from frontend state for zero exposure.
-    // The key lives only in: OS keychain + sidecar process memory.
-    const safeConfig = isTauri() ? { ...aiConfig, apiKey: "" } : aiConfig;
-    set({ aiConfig: safeConfig });
+    // Strip apiKey from frontend state for zero exposure.
+    // The key lives only in: OS keychain/file + sidecar process memory.
+    set({ aiConfig: { ...aiConfig, apiKey: "" } });
   },
 
   envChecks: defaultEnvChecks,
@@ -478,17 +454,6 @@ export const useAppStore = create<Store>((set, get) => ({
     }));
   },
 
-  // ── Token Usage ───────────────────────────────────────────────────
-  sessionUsage: [],
-  addTokenUsage: (usage) => {
-    set((state) => ({
-      sessionUsage: [...state.sessionUsage, usage],
-    }));
-  },
-  clearSessionUsage: () => set({ sessionUsage: [] }),
-  totalSessionCost: () => {
-    return get().sessionUsage.reduce((sum, u) => sum + (u.estimatedCost ?? 0), 0);
-  },
 }));
 
 // ── Settings persistence ────────────────────────────────────────────
