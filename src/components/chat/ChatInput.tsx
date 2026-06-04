@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from "react";
+import { useTranslation } from "react-i18next";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Send, Square } from "lucide-react";
@@ -12,6 +13,7 @@ interface ChatInputProps {
 }
 
 export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
+  const { t } = useTranslation();
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const agentStatus = useAppStore((s) => s.agentStatus);
@@ -28,7 +30,7 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && e.shiftKey) {
+    if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSend();
     }
@@ -58,17 +60,17 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
               <span className="text-xs text-destructive font-medium truncate">
                 {agentStepCount > 0
                   ? `Step ${agentStepCount}/${agentMaxSteps}`
-                  : "AI がコードを生成しています..."}
+                  : t('chat.aiGenerating')}
               </span>
             </div>
             <button
               onClick={onStop}
               className="shrink-0 flex items-center gap-1.5 rounded-full bg-destructive text-destructive-foreground pl-2.5 pr-3 py-1 text-xs font-medium shadow-sm shadow-destructive/20 hover:bg-destructive/90 active:scale-95 transition-all duration-150"
-              title="生成を停止"
+              title={t('chat.stopGenerating')}
               style={{ animation: "pulse-ring-subtle 2s infinite" }}
             >
               <Square className="h-3 w-3 fill-current" />
-              <span>停止</span>
+              <span>{t('chat.stop')}</span>
             </button>
           </div>
         </div>
@@ -81,7 +83,7 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
             value={value}
             onChange={(e) => setValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={isRunning ? "生成中はチャットを送信できません..." : "作りたいアプリを指示してください..."}
+            placeholder={isRunning ? t('chat.inputDisabledDuringGeneration') : t('chat.inputPlaceholder')}
             className={cn(
               "min-h-[40px] max-h-[120px] resize-none pr-10 transition-[border-color,box-shadow] duration-300",
               isRunning && "border-destructive/40 focus-visible:border-destructive/60 focus-visible:ring-destructive/20"
@@ -89,11 +91,11 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
             disabled={disabled || isRunning}
             rows={1}
           />
-          {!isRunning && !value.trim() && (
-            <div className="absolute right-3 bottom-2.5 text-muted-foreground/40 pointer-events-none select-none">
-              <kbd className="text-[10px] border border-border rounded px-1 py-0.5 font-sans">Shift+Enter</kbd>
-            </div>
-          )}
+            {!isRunning && !value.trim() && (
+              <div className="absolute right-3 bottom-2.5 text-muted-foreground/40 pointer-events-none select-none">
+                <kbd className="text-[10px] border border-border rounded px-1 py-0.5 font-sans">⌃+Enter</kbd>
+              </div>
+            )}
         </div>
 
         <Button
@@ -101,7 +103,7 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
           className="h-10 w-10 shrink-0 rounded-xl"
           onClick={handleSend}
           disabled={disabled || !value.trim() || isRunning}
-          title="送信 (Shift+Enter)"
+          title={t('chat.sendTitle')}
         >
           <Send className={cn("h-4 w-4", isRunning && "opacity-50")} />
         </Button>

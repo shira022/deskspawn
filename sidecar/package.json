@@ -10,21 +10,22 @@
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.78",
     "@ai-sdk/google": "^3.0.78",
+    "@ai-sdk/mcp": "^1.0.45",
     "@ai-sdk/openai": "^3.0.64",
     "@ai-sdk/openai-compatible": "^2.0.47",
     "ai": "^6.0.188",
     "cors": "^2.8.6",
     "express": "^5.2.1",
-    "pixelmatch": "^6.0.0",
+    "pixelmatch": "^7.2.0",
     "puppeteer-core": "^24.0.0",
     "sharp": "^0.34.5",
-    "zod": "^3.23.0"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^22.0.0",
     "tsx": "^4.0.0",
-    "typescript": "^5.6.0"
+    "typescript": "^6.0.3"
   }
 }

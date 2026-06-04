@@ -26,3 +26,9 @@ chrono = { version = "0.4", features = ["serde"] }
 log = "0.4"
 env_logger = "0.11"
 tiny_http = "0.12"
+
+# Cross-platform OS keychain for API key storage
+keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service"] }
+
+# HTTP client for pushing API key to sidecar
+ureq = { version = "3", features = ["json"] }

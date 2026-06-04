@@ -1,5 +1,5 @@
 import type { CheckpointInfo, ChatMessage } from "@/types";
-import { SIDECAR_BASE } from "@/lib/constants";
+import { sidecarBase } from "@/lib/constants";
 
 /**
  * Given the current checkpoint index (as used by the preview slider),
@@ -48,7 +48,7 @@ export function getMessageCountForCheckpoint(
  * Throws if the restore fails.
  */
 export async function restoreCheckpoint(checkpointId: string): Promise<void> {
-  const restoreRes = await fetch(`${SIDECAR_BASE}/projects/restore`, {
+  const restoreRes = await fetch(`${sidecarBase()}/projects/restore`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ checkpointId }),
@@ -58,7 +58,7 @@ export async function restoreCheckpoint(checkpointId: string): Promise<void> {
   }
 
   // Clean up checkpoints after the restored one (undo-style)
-  const cleanupRes = await fetch(`${SIDECAR_BASE}/projects/checkpoints/cleanup`, {
+  const cleanupRes = await fetch(`${sidecarBase()}/projects/checkpoints/cleanup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ keepCheckpointId: checkpointId }),

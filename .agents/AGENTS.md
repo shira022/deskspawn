@@ -158,6 +158,7 @@ Hierarchical  feature/*   local      separate    separate │
 - Build system: Vite (frontend), Cargo (backend)
 - Testing: vitest (frontend), cargo test (backend)
 - Linting: ESLint (frontend), clippy (backend)
+- **i18n:** All user-facing UI strings must use the i18n system (`useTranslation()` hook in React components, `i18n.t()` in non-React code). Translation keys are defined in `src/locales/*/common.json`. Language configuration is in `src/lib/languages.ts`. Never hardcode display strings in components or utilities.
 
 ## Allowed Package List
 

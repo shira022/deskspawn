@@ -50,6 +50,7 @@
   --accent: oklch(0.97 0 0);
   --accent-foreground: oklch(0.205 0 0);
   --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.145 0 0);
   --border: oklch(0.922 0 0);
   --input: oklch(0.922 0 0);
   --ring: oklch(0.708 0 0);
@@ -75,6 +76,7 @@
   --accent: oklch(0.269 0 0);
   --accent-foreground: oklch(0.985 0 0);
   --destructive: oklch(0.704 0.191 22.216);
+  --destructive-foreground: oklch(0.985 0 0);
   --border: oklch(1 0 0 / 10%);
   --input: oklch(1 0 0 / 15%);
   --ring: oklch(0.556 0 0);
@@ -108,4 +110,60 @@
 @keyframes generating-pulse {
   0%, 100% { opacity: 0.4; }
   50% { opacity: 0.7; }
+}
+
+/* ── Search highlight ────────────────────────────────────── */
+mark.search-highlight {
+  background-color: oklch(0.85 0.14 84 / 0.55);
+  border-radius: 0.125rem;
+  padding: 0 0.125rem;
+  color: inherit;
+}
+.dark mark.search-highlight {
+  background-color: oklch(0.6 0.13 84 / 0.4);
+}
+
+/* Persistent match indicator — thin left border for all matched messages */
+.chat-message-match {
+  position: relative;
+}
+.chat-message-match::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 6px;
+  bottom: 6px;
+  width: 2px;
+  border-radius: 2px;
+  background-color: oklch(0.75 0.16 84 / 0.35);
+}
+.dark .chat-message-match::before {
+  background-color: oklch(0.6 0.13 84 / 0.25);
+}
+
+/* Active match — stronger left border + subtle background tint */
+.chat-message-active-match {
+  position: relative;
+}
+.chat-message-active-match::before {
+  content: "";
+  position: absolute;
+  left: -8px;
+  top: 2px;
+  bottom: 2px;
+  width: 3px;
+  border-radius: 2px;
+  background-color: oklch(0.65 0.2 84 / 0.85);
+  box-shadow: 0 0 6px oklch(0.65 0.2 84 / 0.25);
+}
+.dark .chat-message-active-match::before {
+  background-color: oklch(0.6 0.18 84 / 0.7);
+  box-shadow: 0 0 6px oklch(0.6 0.18 84 / 0.2);
+}
+/* Active match message bubble tint */
+.chat-message-active-match .chat-bubble {
+  box-shadow: inset 2px 0 0 0 oklch(0.65 0.2 84 / 0.2);
+}
+.dark .chat-message-active-match .chat-bubble {
+  box-shadow: inset 2px 0 0 0 oklch(0.6 0.18 84 / 0.15);
 }
