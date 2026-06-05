@@ -17,8 +17,21 @@ import { execSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import sharp from 'sharp';
 import pixelmatch from 'pixelmatch';
+
+// sharp is a native (libvips) addon that cannot be bundled into standalone binaries.
+// We lazy-load it so the sidecar works without it; screenshot diff gracefully degrades.
+let sharpModule: typeof import('sharp') | null = null;
+async function getSharp(): Promise<typeof import('sharp') | null> {
+  if (sharpModule !== undefined) return sharpModule;
+  try {
+    sharpModule = (await import('sharp')).default;
+  } catch {
+    console.warn('[screenshot] sharp not available — screenshot diff disabled');
+    sharpModule = null;
+  }
+  return sharpModule;
+}
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -232,6 +245,12 @@ async function compareImages(
   img2Buffer: Buffer,
   _label: string,
 ): Promise<DiffInfo> {
+  const sharp = await getSharp();
+  if (!sharp) {
+    // sharp not available — report diff as unknown
+    return { hasChanges: true, changedPercent: 0, changedPixels: 0, regions: [], diffImage: '' };
+  }
+
   // Decode both images to raw RGBA at the same dimensions
   const meta1 = await sharp(img1Buffer).metadata();
   const meta2 = await sharp(img2Buffer).metadata();

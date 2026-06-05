@@ -1,170 +1,156 @@
-use std::io::BufRead;
-use std::process::{Child, Command, Stdio};
 use std::sync::{Arc, Mutex, atomic::{AtomicBool, Ordering}};
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 use tauri::State;
+use tauri_plugin_shell::ShellExt;
+use tauri_plugin_shell::process::CommandEvent;
 
 /// Timeout (seconds) to wait for the sidecar HTTP server to be ready.
 const READY_TIMEOUT_SECS: u64 = 20;
 
-/// Timeout (seconds) to wait for graceful shutdown after SIGTERM.
-const GRACEFUL_STOP_TIMEOUT_SECS: u64 = 5;
-
 /// Default sidecar port.
 const DEFAULT_SIDECAR_PORT: u16 = 3001;
 
-/// Manages the sidecar Node.js process lifecycle.
+/// Manages the sidecar process lifecycle via Tauri's shell plugin.
 ///
-/// The sidecar is spawned as a child process managed by the Tauri backend.
-/// This allows:
-/// - Auto-start on Tauri launch
-/// - Graceful restart via Tauri command
-/// - Auto-cleanup on Tauri exit
+/// The sidecar is compiled via `bun build --compile` into a standalone
+/// binary and bundled into the .app via `bundle.externalBin`. Tauri's
+/// shell plugin handles path resolution in both dev and production.
 pub struct SidecarManager {
-    process: Mutex<Option<Child>>,
+    process: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     project_root: PathBuf,
-    sidecar_script: PathBuf,
     security_port: u16,
     /// Actual port the sidecar is listening on (may differ from 3001 if fallback)
     actual_port: Arc<Mutex<u16>>,
     /// Whether the sidecar has been verified as ready (HTTP server is listening)
     ready: Arc<AtomicBool>,
+    /// Tracks if the sidecar process has terminated (via CommandEvent::Terminated)
+    terminated: Arc<AtomicBool>,
+    /// Cached PID for status reporting
+    pid: Arc<Mutex<Option<u32>>>,
 }
 
 impl SidecarManager {
     pub fn new(workspace_path: PathBuf, security_port: u16) -> Self {
-        // Determine the sidecar script path using the compile-time CARGO_MANIFEST_DIR.
-        // In development (cargo build / cargo run), CARGO_MANIFEST_DIR = src-tauri/
-        // The sidecar lives at the project root: <project>/sidecar/src/server.ts
-        // In release builds, we fall back to a relative path (assumes CWD is project root).
-        let sidecar_script = if cfg!(debug_assertions) {
-            // CARGO_MANIFEST_DIR is the directory containing this package's Cargo.toml
-            let crate_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            // Go up one level: src-tauri/../ = project root
-            let project_root = crate_dir.parent()
-                .unwrap_or(&crate_dir);
-            project_root.join("sidecar").join("src").join("server.ts")
-        } else {
-            // Release build: assume the bundler places sidecar/ relative to the binary
-            PathBuf::from("sidecar/src/server.ts")
-        };
-
-        log::info!("Sidecar script path: {:?}", sidecar_script);
+        log::info!("SidecarManager created (workspace: {:?})", workspace_path);
 
         Self {
             process: Mutex::new(None),
             project_root: workspace_path,
-            sidecar_script,
             security_port,
             actual_port: Arc::new(Mutex::new(DEFAULT_SIDECAR_PORT)),
             ready: Arc::new(AtomicBool::new(false)),
+            terminated: Arc::new(AtomicBool::new(true)), // start as terminated
+            pid: Arc::new(Mutex::new(None)),
         }
     }
 
-    /// Start (or restart) the sidecar HTTP server.
-    /// After spawning, waits for the sidecar to be ready (HTTP /health responding).
-    pub fn start(&self) -> Result<(), String> {
+    /// Start (or restart) the sidecar binary.
+    /// Uses the Tauri shell plugin's sidecar API to resolve the binary
+    /// path in both dev (src-tauri/binaries/) and production (.app bundle).
+    pub fn start(&self, app_handle: &tauri::AppHandle) -> Result<(), String> {
         let mut guard = self.process.lock().map_err(|e| format!("Lock error: {}", e))?;
 
-        // Kill existing process if running
+        // Mark not-ready, kill existing process if running
         self.ready.store(false, Ordering::SeqCst);
-        if let Some(ref mut child) = *guard {
-            Self::graceful_kill(child);
-        }
+        self.terminated.store(false, Ordering::SeqCst);
+        Self::kill_child(&mut *guard);
 
-        // Verify the sidecar script exists
-        if !self.sidecar_script.exists() {
-            return Err(format!(
-                "Sidecar script not found at: {:?}. Make sure the sidecar/ directory exists at the project root.",
-                self.sidecar_script
-            ));
-        }
+        log::info!(
+            "Starting sidecar binary (security port: {})...",
+            self.security_port
+        );
 
-        let script_str = self.sidecar_script.to_string_lossy().to_string();
-        log::info!("Starting sidecar script: {:?} (workspace: {:?}, security port: {})", script_str, self.project_root, self.security_port);
+        // Build the sidecar command via Tauri shell plugin.
+        // Binary location: src-tauri/binaries/deskspawn-sidecar-<target-triple>
+        // Dev mode  → found at project root
+        // Build mode → bundled inside .app bundle
+        let sidecar = app_handle
+            .shell()
+            .sidecar("deskspawn-sidecar")
+            .map_err(|e| format!("Failed to create sidecar command: {}", e))?
+            .env("DESKSPAWN_SECURITY_PORT", self.security_port.to_string());
 
-        let mut child = Command::new("npx")
-            .args(["tsx", &script_str])
-            .env("DESKSPAWN_SECURITY_PORT", self.security_port.to_string())
-            .current_dir(&self.project_root)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+        let (mut rx, child) = sidecar
             .spawn()
-            .map_err(|e| format!("Failed to start sidecar: {}", e))?;
+            .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
 
-        let child_pid = child.id();
-        log::info!("Sidecar process spawned (PID: {})", child_pid);
+        log::info!("Sidecar process spawned");
 
-        // Shared state for stdout parsing
+        // Store PID
+        if let Ok(mut p) = self.pid.lock() {
+            *p = Some(child.pid());
+        }
+
+        // Shared state for event handler
         let actual_port = self.actual_port.clone();
         let ready = self.ready.clone();
+        let terminated = self.terminated.clone();
 
-        // Drain stdout — parse "sidecar-ready:PORT" signal, log everything else
-        if let Some(stdout) = child.stdout.take() {
-            thread::spawn(move || {
-                let mut buf = String::new();
-                let mut reader = std::io::BufReader::new(stdout);
-                loop {
-                    buf.clear();
-                    match reader.read_line(&mut buf) {
-                        Ok(0) => break,
-                        Err(_) => break,
-                        Ok(_) => {
-                            let line = buf.trim();
+        // Spawn an async task to read stdout/stderr events
+        tauri::async_runtime::spawn(async move {
+            while let Some(event) = rx.recv().await {
+                match event {
+                    CommandEvent::Stdout(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        for line in text.lines() {
+                            let trimmed = line.trim();
                             // Check for ready signal: "sidecar-ready:3001"
-                            if let Some(port_str) = line.strip_prefix("sidecar-ready:") {
+                            if let Some(port_str) =
+                                trimmed.strip_prefix("sidecar-ready:")
+                            {
                                 if let Ok(port) = port_str.parse::<u16>() {
                                     if let Ok(mut p) = actual_port.lock() {
                                         *p = port;
                                     }
                                     ready.store(true, Ordering::SeqCst);
-                                    log::info!("Sidecar ready signal received (port {})", port);
+                                    log::info!(
+                                        "Sidecar ready signal received (port {})",
+                                        port
+                                    );
                                 }
-                            } else if !line.is_empty() && !line.starts_with("sidecar-") {
-                                // Log sidecar stdout for debugging
-                                log::info!("[sidecar] {}", line);
+                            } else if !trimmed.is_empty()
+                                && !trimmed.starts_with("sidecar-")
+                            {
+                                log::info!("[sidecar] {}", trimmed);
                             }
                         }
                     }
-                }
-            });
-        }
-
-        // Drain stderr — log warnings to Rust log
-        if let Some(stderr) = child.stderr.take() {
-            thread::spawn(|| {
-                let mut buf = String::new();
-                let mut reader = std::io::BufReader::new(stderr);
-                loop {
-                    buf.clear();
-                    match reader.read_line(&mut buf) {
-                        Ok(0) | Err(_) => break,
-                        Ok(_) => {
-                            let line = buf.trim();
-                            if !line.is_empty() {
-                                log::warn!("[sidecar:err] {}", line);
+                    CommandEvent::Stderr(bytes) => {
+                        let text = String::from_utf8_lossy(&bytes);
+                        for line in text.lines() {
+                            let trimmed = line.trim();
+                            if !trimmed.is_empty() {
+                                log::warn!("[sidecar:err] {}", trimmed);
                             }
                         }
                     }
+                    CommandEvent::Terminated(_) => {
+                        terminated.store(true, Ordering::SeqCst);
+                        log::info!("Sidecar process terminated");
+                    }
+                    _ => {}
                 }
-            });
-        }
+            }
+            log::info!("Sidecar event stream ended");
+        });
 
         *guard = Some(child);
-        // Drop the guard before wait_for_ready — otherwise is_running()
-        // inside the loop will deadlock on the same mutex.
+        // Drop guard before wait_for_ready to avoid deadlock on
+        // process lock inside is_running().
         drop(guard);
 
-        // Wait for the sidecar to be ready
         self.wait_for_ready()
     }
 
     /// Poll the sidecar health endpoint until it responds or timeout.
     fn wait_for_ready(&self) -> Result<(), String> {
         let start = std::time::Instant::now();
-        let port = *self.actual_port.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let port = *self
+            .actual_port
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         let health_url = format!("http://127.0.0.1:{}/health", port);
 
         log::info!("Waiting for sidecar to be ready at {}...", health_url);
@@ -189,7 +175,6 @@ impl SidecarManager {
                     return Ok(());
                 }
                 _ => {
-                    // Not ready yet — wait and retry
                     if start.elapsed().as_secs() >= READY_TIMEOUT_SECS {
                         return Err(format!(
                             "Sidecar did not become ready within {} seconds (last check: {})",
@@ -202,62 +187,33 @@ impl SidecarManager {
         }
     }
 
-    /// Gracefully stop the sidecar process.
-    /// Sends SIGTERM first, waits, then SIGKILL if still running.
-    fn graceful_kill(child: &mut Child) {
-        let pid = child.id();
-        log::info!("Stopping sidecar (PID: {})...", pid);
-
-        // Send SIGTERM for graceful shutdown
-        #[cfg(unix)]
-        {
-            let status = Command::new("kill")
-                .args(["-TERM", &pid.to_string()])
-                .status();
-            match status {
-                Ok(_) => log::info!("Sent SIGTERM to sidecar (PID: {})", pid),
-                Err(e) => log::warn!("Failed to send SIGTERM to sidecar: {}", e),
-            }
-
-            // Wait for graceful shutdown
-            let deadline = std::time::Instant::now() + Duration::from_secs(GRACEFUL_STOP_TIMEOUT_SECS);
-            loop {
-                match child.try_wait() {
-                    Ok(Some(_)) => {
-                        log::info!("Sidecar (PID: {}) exited gracefully", pid);
-                        return;
-                    }
-                    Ok(None) => {
-                        if std::time::Instant::now() >= deadline {
-                            log::warn!("Sidecar (PID: {}) did not stop gracefully after {}s, sending SIGKILL", pid, GRACEFUL_STOP_TIMEOUT_SECS);
-                            break;
-                        }
-                        thread::sleep(Duration::from_millis(100));
-                    }
-                    Err(e) => {
-                        log::warn!("Error waiting for sidecar: {}", e);
-                        break;
-                    }
-                }
+    /// Kill a child process, taking ownership of it.
+    /// CommandChild::kill() takes self by value (no &mut self variant).
+    fn kill_child(child: &mut Option<tauri_plugin_shell::process::CommandChild>) {
+        if let Some(c) = child.take() {
+            let pid = c.pid();
+            if let Err(e) = c.kill() {
+                log::warn!("Failed to kill sidecar (PID {}): {}", pid, e);
+            } else {
+                log::info!("Sidecar (PID {}) killed", pid);
             }
         }
-
-        // Force kill (SIGKILL) as fallback
-        let _ = child.kill();
-        let _ = child.wait();
-        log::info!("Sidecar (PID: {}) forcefully killed", pid);
     }
 
     /// Check if the sidecar process is still running.
+    /// Uses the Terminated event flag rather than try_wait(), which
+    /// is not available on tauri_plugin_shell::process::CommandChild.
     pub fn is_running(&self) -> bool {
-        if let Ok(mut guard) = self.process.lock() {
-            if let Some(ref mut child) = *guard {
-                if let Ok(None) = child.try_wait() {
-                    return true; // still alive
-                }
+        // If process was removed from the mutex (e.g. after kill), not running.
+        if let Ok(guard) = self.process.lock() {
+            if guard.is_none() {
+                return false;
             }
+        } else {
+            return false;
         }
-        false
+        // Check termination flag set by event handler
+        !self.terminated.load(Ordering::SeqCst)
     }
 
     /// Check if the sidecar has been verified as ready (HTTP server is listening).
@@ -267,33 +223,39 @@ impl SidecarManager {
 
     /// Get the actual port the sidecar is listening on.
     pub fn actual_port(&self) -> u16 {
-        self.actual_port.lock().map(|p| *p).unwrap_or(DEFAULT_SIDECAR_PORT)
+        self.actual_port
+            .lock()
+            .map(|p| *p)
+            .unwrap_or(DEFAULT_SIDECAR_PORT)
     }
 
     /// Get the PID if the sidecar is running.
     pub fn pid(&self) -> Option<u32> {
-        if let Ok(guard) = self.process.lock() {
-            guard.as_ref().map(|c| c.id())
-        } else {
-            None
-        }
+        self.pid.lock().ok().and_then(|p| *p)
     }
 
-    /// Stop the sidecar (public wrapper around graceful_kill).
+    /// Stop the sidecar process.
     pub fn stop(&self) -> Result<(), String> {
-        let mut guard = self.process.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let mut guard = self
+            .process
+            .lock()
+            .map_err(|e| format!("Lock error: {}", e))?;
         self.ready.store(false, Ordering::SeqCst);
-        if let Some(ref mut child) = *guard {
-            Self::graceful_kill(child);
+        self.terminated.store(true, Ordering::SeqCst);
+        Self::kill_child(&mut *guard);
+        if let Ok(mut p) = self.pid.lock() {
+            *p = None;
         }
-        *guard = None;
+        log::info!("Sidecar stopped");
         Ok(())
     }
 }
 
 impl Drop for SidecarManager {
     fn drop(&mut self) {
-        let _ = self.stop();
+        if let Ok(mut guard) = self.process.lock() {
+            Self::kill_child(&mut *guard);
+        }
     }
 }
 
@@ -310,11 +272,12 @@ pub fn restart_tauri(app: tauri::AppHandle) {
 #[tauri::command]
 pub fn restart_sidecar(
     sidecar: State<'_, SidecarManager>,
+    app: tauri::AppHandle,
 ) -> Result<String, String> {
     sidecar.stop()?;
-    // Brief pause to ensure port is released after graceful shutdown
+    // Brief pause to ensure port is released
     std::thread::sleep(std::time::Duration::from_millis(500));
-    sidecar.start()?;
+    sidecar.start(&app)?;
     Ok(format!("Sidecar restarted (port {})", sidecar.actual_port()))
 }
 
@@ -340,7 +303,7 @@ pub fn sidecar_status(
     }))
 }
 
-/// Get the actual sidecar port (useful if port fallback changed it).
+/// Get the actual sidecar port.
 #[tauri::command]
 pub fn sidecar_port(
     sidecar: State<'_, SidecarManager>,
