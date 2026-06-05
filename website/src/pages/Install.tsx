@@ -10,6 +10,39 @@ function getMacArch(): "aarch64" | "x64" {
   return "x64";
 }
 
+// Fetch actual release assets from GitHub API.
+async function fetchOsDownloadUrl(tab: string): Promise<string> {
+  const res = await fetch(
+    "https://api.github.com/repos/shira022/deskspawn/releases/latest"
+  );
+  if (!res.ok) throw new Error("GitHub API error");
+  const release = await res.json();
+  const assets: { name: string; browser_download_url: string }[] =
+    release.assets;
+
+  switch (tab) {
+    case "windows": {
+      const msi = assets.find((a) => a.name.endsWith(".msi"));
+      return msi?.browser_download_url ?? FALLBACK_URL;
+    }
+    case "macos": {
+      const macArch = getMacArch();
+      const dmg =
+        assets.find((a) => a.name.endsWith(".dmg") && a.name.includes(macArch)) ??
+        assets.find((a) => a.name.endsWith(".dmg"));
+      return dmg?.browser_download_url ?? FALLBACK_URL;
+    }
+    case "linux": {
+      const deb =
+        assets.find((a) => a.name.endsWith(".deb")) ??
+        assets.find((a) => a.name.endsWith(".AppImage"));
+      return deb?.browser_download_url ?? FALLBACK_URL;
+    }
+    default:
+      return FALLBACK_URL;
+  }
+}
+
 const tabs = [
   { id: "windows", label: "Windows" },
   { id: "macos", label: "macOS" },
@@ -103,15 +136,6 @@ const osContent: Record<OSTab, {
   },
 };
 
-function buildDownloadUrl(tab: OSTab, version: string): string {
-  const base = `https://github.com/shira022/deskspawn/releases/download/v${version}`;
-  switch (tab) {
-    case "windows": return `${base}/DeskSpawn_${version}_x64_en-US.msi`;
-    case "macos": return `${base}/DeskSpawn_${version}_${getMacArch()}.dmg`;
-    case "linux": return `${base}/DeskSpawn_${version}_amd64.deb`;
-  }
-}
-
 export default function Install() {
   const [activeTab, setActiveTab] = useState<OSTab>("windows");
   const [downloadUrl, setDownloadUrl] = useState<string>(FALLBACK_URL);
@@ -119,19 +143,9 @@ export default function Install() {
   const content = osContent[activeTab];
 
   useEffect(() => {
-    fetch("/deskspawn/updates.json")
-      .then((res) => {
-        if (!res.ok) throw new Error("updates.json not available");
-        return res.json();
-      })
-      .then((data) => {
-        if (data.version) {
-          setDownloadUrl(buildDownloadUrl(activeTab, data.version));
-        }
-      })
-      .catch(() => {
-        setDownloadUrl(FALLBACK_URL);
-      });
+    fetchOsDownloadUrl(activeTab)
+      .then(setDownloadUrl)
+      .catch(() => setDownloadUrl(FALLBACK_URL));
   }, [activeTab]);
 
   return (
