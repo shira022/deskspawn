@@ -64,6 +64,12 @@ jobs:
           node-version: 20
           cache: npm
 
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install sidecar dependencies
+        run: npm ci
+        working-directory: sidecar
+
       - name: Install Linux deps
         if: runner.os == 'Linux'
         run: |
