@@ -7,8 +7,8 @@ const docSections = [
     title: "Getting Started",
     description:
       "Learn the basics of DeskSpawn — create your first project, understand the UI, and explore key concepts.",
-    link: "https://github.com/shira022/deskspawn/tree/main/docs",
-    external: true,
+    link: "/install",
+    external: false,
   },
   {
     icon: Download,
