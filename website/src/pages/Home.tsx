@@ -10,12 +10,50 @@ interface DownloadUrls {
 
 const FALLBACK_URL = "https://github.com/shira022/deskspawn/releases/latest";
 
+function detectOS(): string {
+  if (typeof window === "undefined") return "unknown";
+  const ua = navigator.userAgent;
+  if (ua.includes("Win")) return "Windows";
+  if (ua.includes("Mac")) return "macOS";
+  if (ua.includes("Linux")) return "Linux";
+  return "unknown";
+}
+
 function getMacArch(): "aarch64" | "x64" {
   if (typeof window === "undefined") return "aarch64";
   const ua = navigator.userAgent;
-  // Apple Silicon detection: Mac with ARM
   if (ua.includes("Mac") && !ua.includes("Intel")) return "aarch64";
-  return "x64"; // fallback to Intel
+  return "x64";
+}
+
+// Fetch actual release assets from GitHub API and find the right installer
+// for each OS. This is robust against changes in naming conventions.
+async function fetchDownloadUrls(): Promise<DownloadUrls> {
+  const res = await fetch(
+    "https://api.github.com/repos/shira022/deskspawn/releases/latest"
+  );
+  if (!res.ok) throw new Error("GitHub API error");
+  const release = await res.json();
+  const assets: { name: string; browser_download_url: string }[] =
+    release.assets;
+
+  const macArch = getMacArch();
+
+  // Windows: prefer .msi installer
+  const msi = assets.find((a) => a.name.endsWith(".msi"));
+  // macOS: prefer .dmg matching user's arch, fallback to any .dmg
+  const dmg =
+    assets.find((a) => a.name.endsWith(".dmg") && a.name.includes(macArch)) ??
+    assets.find((a) => a.name.endsWith(".dmg"));
+  // Linux: prefer .deb, fallback to .AppImage
+  const deb = assets.find((a) => a.name.endsWith(".deb")) ??
+    assets.find((a) => a.name.endsWith(".AppImage"));
+
+  return {
+    windows: msi?.browser_download_url ?? FALLBACK_URL,
+    macos: dmg?.browser_download_url ?? FALLBACK_URL,
+    linux: deb?.browser_download_url ?? FALLBACK_URL,
+  };
 }
 
 const features = [
@@ -45,25 +83,6 @@ const features = [
   },
 ];
 
-function detectOS(): string {
-  if (typeof window === "undefined") return "unknown";
-  const ua = navigator.userAgent;
-  if (ua.includes("Win")) return "Windows";
-  if (ua.includes("Mac")) return "macOS";
-  if (ua.includes("Linux")) return "Linux";
-  return "unknown";
-}
-
-function buildDownloadUrls(version: string): DownloadUrls {
-  const base = `https://github.com/shira022/deskspawn/releases/download/v${version}`;
-  const macArch = getMacArch();
-  return {
-    windows: `${base}/DeskSpawn_${version}_x64_en-US.msi`,
-    macos: `${base}/DeskSpawn_${version}_${macArch}.dmg`,
-    linux: `${base}/DeskSpawn_${version}_amd64.deb`,
-  };
-}
-
 export default function Home() {
   const [detectedOS, setDetectedOS] = useState("");
   const [downloads, setDownloads] = useState<DownloadUrls | null>(null);
@@ -71,21 +90,9 @@ export default function Home() {
   useEffect(() => {
     setDetectedOS(detectOS());
 
-    // Fetch latest version from deployed updates.json
-    fetch("/deskspawn/updates.json")
-      .then((res) => {
-        if (!res.ok) throw new Error("updates.json not available");
-        return res.json();
-      })
-      .then((data) => {
-        if (data.version) {
-          setDownloads(buildDownloadUrls(data.version));
-        }
-      })
-      .catch(() => {
-        // Fallback: use releases/latest
-        setDownloads(null);
-      });
+    fetchDownloadUrls()
+      .then(setDownloads)
+      .catch(() => setDownloads(null));
   }, []);
 
   return (
