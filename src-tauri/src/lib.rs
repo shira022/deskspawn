@@ -44,9 +44,10 @@ pub fn run() {
 
             // Initialize and start the sidecar manager (pass security port)
             let sidecar_manager = SidecarManager::new(workspace_path.clone(), security_port);
+            let app_handle = app.handle().clone();
             let mut sidecar_started = false;
             for attempt in 1..=3 {
-                match sidecar_manager.start() {
+                match sidecar_manager.start(&app_handle) {
                     Ok(()) => {
                         log::info!("Sidecar started successfully (port {}).", sidecar_manager.actual_port());
                         sidecar_started = true;
@@ -78,7 +79,7 @@ pub fn run() {
             } else {
                 log::error!(
                     "Sidecar failed to start after 3 attempts. The frontend will show 'Sidecar Offline'. \
-                     Use the restart button or run 'npm run sidecar' manually."
+                     Use the restart button to try again."
                 );
             }
             app.manage(sidecar_manager);

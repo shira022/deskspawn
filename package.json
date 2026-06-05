@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
     "sidecar": "tsx sidecar/src/server.ts",
-    "sidecar:restart": "kill -9 $(lsof -ti:3001) 2>/dev/null; sleep 0.5; npx tsx sidecar/src/server.ts &",
     "sidecar:stop": "kill -9 $(lsof -ti:3001) 2>/dev/null; echo 'Sidecar stopped (if running)'",
     "lint": "eslint . --ext ts,tsx"
   },
@@ -19,7 +19,7 @@
     "@tauri-apps/api": "^2.0.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
-    "i18next": "^26.3.0",
+    "i18next": "^26.3.1",
     "i18next-browser-languagedetector": "^8.2.1",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
@@ -29,7 +29,7 @@
     "react-resizable-panels": "^4.11.2",
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.6.0",
-    "zustand": "^5.0.2"
+    "zustand": "^5.0.14"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
