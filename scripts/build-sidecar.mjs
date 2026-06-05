@@ -12,8 +12,8 @@
  */
 
 import { execSync } from "child_process";
-import { existsSync, renameSync, statSync } from "fs";
-import { resolve } from "path";
+import { existsSync, renameSync, statSync, readdirSync } from "fs";
+import { resolve, join, relative } from "path";
 import { platform } from "os";
 
 const isDev = process.argv.includes("--dev");
@@ -26,7 +26,7 @@ const binExtension = isWindows ? ".exe" : "";
 try {
   execSync("bun --version", { stdio: "pipe" });
 } catch {
-  console.error("[sidecar] bun is required but not found on PATH. Install it: brew install bun");
+  console.error("[sidecar] bun is required but not found on PATH. Install it: https://bun.sh/docs/installation");
   process.exit(1);
 }
 
@@ -47,21 +47,24 @@ const binaryPath = resolve(`src-tauri/binaries/deskspawn-sidecar-${targetTriple}
 // ── Dev mode: skip rebuild if binary is up to date ──────────────────
 
 if (isDev && existsSync(binaryPath)) {
-  // Check if binary is newer than all sidecar source files
-  const sidecarSources = [
-    "sidecar/src/server.ts",
-    "sidecar/src/screenshot.ts",
-    "sidecar/src/tool-executors.ts",
-    "sidecar/src/providers.ts",
-    "sidecar/src/orchestrator.ts",
-    "sidecar/src/agent.ts",
-  ];
+  // Recursively collect all .ts files under sidecar/src/ and compare mtimes
+  const srcDir = resolve("sidecar/src");
   const binMtime = statSync(binaryPath).mtimeMs;
-  const anyStale = sidecarSources.some((srcPath) => {
-    const fullPath = resolve(srcPath);
-    if (!existsSync(fullPath)) return false;
-    return statSync(fullPath).mtimeMs > binMtime;
-  });
+  let anyStale = false;
+  function checkDir(dir) {
+    if (anyStale) return;
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = join(dir, entry.name);
+      if (entry.isDirectory() && entry.name !== "node_modules") {
+        checkDir(full);
+      } else if (entry.name.endsWith(".ts") && statSync(full).mtimeMs > binMtime) {
+        console.log(`[sidecar] Source changed: ${relative(resolve(), full)}`);
+        anyStale = true;
+        return;
+      }
+    }
+  }
+  checkDir(srcDir);
   if (!anyStale) {
     console.log(`[sidecar] Binary up to date: ${binaryPath}`);
     process.exit(0);
