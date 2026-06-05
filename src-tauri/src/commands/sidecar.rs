@@ -9,6 +9,9 @@ use tauri_plugin_shell::process::CommandEvent;
 /// Timeout (seconds) to wait for the sidecar HTTP server to be ready.
 const READY_TIMEOUT_SECS: u64 = 20;
 
+/// Timeout (seconds) to wait for graceful shutdown after SIGTERM.
+const GRACEFUL_STOP_TIMEOUT_SECS: u64 = 5;
+
 /// Default sidecar port.
 const DEFAULT_SIDECAR_PORT: u16 = 3001;
 
@@ -19,7 +22,6 @@ const DEFAULT_SIDECAR_PORT: u16 = 3001;
 /// shell plugin handles path resolution in both dev and production.
 pub struct SidecarManager {
     process: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
-    project_root: PathBuf,
     security_port: u16,
     /// Actual port the sidecar is listening on (may differ from 3001 if fallback)
     actual_port: Arc<Mutex<u16>>,
@@ -27,7 +29,7 @@ pub struct SidecarManager {
     ready: Arc<AtomicBool>,
     /// Tracks if the sidecar process has terminated (via CommandEvent::Terminated)
     terminated: Arc<AtomicBool>,
-    /// Cached PID for status reporting
+    /// Cached PID for graceful shutdown and status reporting
     pid: Arc<Mutex<Option<u32>>>,
 }
 
@@ -37,7 +39,6 @@ impl SidecarManager {
 
         Self {
             process: Mutex::new(None),
-            project_root: workspace_path,
             security_port,
             actual_port: Arc::new(Mutex::new(DEFAULT_SIDECAR_PORT)),
             ready: Arc::new(AtomicBool::new(false)),
@@ -55,7 +56,7 @@ impl SidecarManager {
         // Mark not-ready, kill existing process if running
         self.ready.store(false, Ordering::SeqCst);
         self.terminated.store(false, Ordering::SeqCst);
-        Self::kill_child(&mut *guard);
+        self.graceful_kill();
 
         log::info!(
             "Starting sidecar binary (security port: {})...",
@@ -88,17 +89,24 @@ impl SidecarManager {
         let ready = self.ready.clone();
         let terminated = self.terminated.clone();
 
+        // Line buffer for stdout: CommandEvent::Stdout delivers raw byte chunks
+        // that may not align to line boundaries. We accumulate partial lines here.
+        let mut line_buf = String::new();
+
         // Spawn an async task to read stdout/stderr events
         tauri::async_runtime::spawn(async move {
             while let Some(event) = rx.recv().await {
                 match event {
                     CommandEvent::Stdout(bytes) => {
-                        let text = String::from_utf8_lossy(&bytes);
-                        for line in text.lines() {
-                            let trimmed = line.trim();
+                        line_buf.push_str(&String::from_utf8_lossy(&bytes));
+                        // Process all complete lines from the buffer
+                        while let Some(newline_pos) = line_buf.find('\n') {
+                            let line = line_buf[..newline_pos].trim().to_string();
+                            line_buf = line_buf[newline_pos + 1..].to_string();
+
                             // Check for ready signal: "sidecar-ready:3001"
                             if let Some(port_str) =
-                                trimmed.strip_prefix("sidecar-ready:")
+                                line.strip_prefix("sidecar-ready:")
                             {
                                 if let Ok(port) = port_str.parse::<u16>() {
                                     if let Ok(mut p) = actual_port.lock() {
@@ -110,10 +118,10 @@ impl SidecarManager {
                                         port
                                     );
                                 }
-                            } else if !trimmed.is_empty()
-                                && !trimmed.starts_with("sidecar-")
+                            } else if !line.is_empty()
+                                && !line.starts_with("sidecar-")
                             {
-                                log::info!("[sidecar] {}", trimmed);
+                                log::info!("[sidecar] {}", line);
                             }
                         }
                     }
@@ -187,15 +195,61 @@ impl SidecarManager {
         }
     }
 
-    /// Kill a child process, taking ownership of it.
-    /// CommandChild::kill() takes self by value (no &mut self variant).
-    fn kill_child(child: &mut Option<tauri_plugin_shell::process::CommandChild>) {
-        if let Some(c) = child.take() {
-            let pid = c.pid();
-            if let Err(e) = c.kill() {
-                log::warn!("Failed to kill sidecar (PID {}): {}", pid, e);
-            } else {
-                log::info!("Sidecar (PID {}) killed", pid);
+    /// Gracefully stop the sidecar process.
+    /// Sends SIGTERM first, waits up to GRACEFUL_STOP_TIMEOUT_SECS, then SIGKILL.
+    fn graceful_kill(&self) {
+        let pid = self.pid.lock().ok().and_then(|p| *p);
+        let pid = match pid {
+            Some(pid) => pid,
+            None => return, // no process to kill
+        };
+
+        log::info!("Gracefully stopping sidecar (PID: {})...", pid);
+
+        // Send SIGTERM on Unix for graceful shutdown
+        #[cfg(unix)]
+        {
+            let status = std::process::Command::new("kill")
+                .args(["-TERM", &pid.to_string()])
+                .status();
+            match status {
+                Ok(_) => log::info!("Sent SIGTERM to sidecar (PID: {})", pid),
+                Err(e) => log::warn!("Failed to send SIGTERM: {}", e),
+            }
+
+            // Wait for graceful shutdown (poll terminated flag)
+            let deadline =
+                std::time::Instant::now() + Duration::from_secs(GRACEFUL_STOP_TIMEOUT_SECS);
+            loop {
+                if self.terminated.load(Ordering::SeqCst) {
+                    log::info!("Sidecar (PID: {}) exited gracefully", pid);
+                    // Clear process state after graceful exit
+                    if let Ok(mut guard) = self.process.lock() {
+                        let _ = guard.take();
+                    }
+                    return;
+                }
+                if std::time::Instant::now() >= deadline {
+                    log::warn!(
+                        "Sidecar (PID: {}) did not stop gracefully after {}s, sending SIGKILL",
+                        pid,
+                        GRACEFUL_STOP_TIMEOUT_SECS
+                    );
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+
+        // Force kill (SIGKILL) via CommandChild as fallback
+        if let Ok(mut guard) = self.process.lock() {
+            if let Some(child) = guard.take() {
+                let pid = child.pid();
+                if let Err(e) = child.kill() {
+                    log::warn!("Failed to kill sidecar (PID {}): {}", pid, e);
+                } else {
+                    log::info!("Sidecar (PID {}) force killed", pid);
+                }
             }
         }
     }
@@ -234,15 +288,11 @@ impl SidecarManager {
         self.pid.lock().ok().and_then(|p| *p)
     }
 
-    /// Stop the sidecar process.
+    /// Stop the sidecar process (public API).
     pub fn stop(&self) -> Result<(), String> {
-        let mut guard = self
-            .process
-            .lock()
-            .map_err(|e| format!("Lock error: {}", e))?;
         self.ready.store(false, Ordering::SeqCst);
         self.terminated.store(true, Ordering::SeqCst);
-        Self::kill_child(&mut *guard);
+        self.graceful_kill();
         if let Ok(mut p) = self.pid.lock() {
             *p = None;
         }
@@ -253,8 +303,12 @@ impl SidecarManager {
 
 impl Drop for SidecarManager {
     fn drop(&mut self) {
+        self.ready.store(false, Ordering::SeqCst);
+        self.terminated.store(true, Ordering::SeqCst);
         if let Ok(mut guard) = self.process.lock() {
-            Self::kill_child(&mut *guard);
+            if let Some(child) = guard.take() {
+                let _ = child.kill();
+            }
         }
     }
 }

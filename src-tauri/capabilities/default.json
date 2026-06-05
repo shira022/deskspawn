@@ -8,8 +8,6 @@
     "core:window:allow-close",
     "core:window:allow-set-title",
     "shell:default",
-    "shell:allow-execute",
-    "shell:allow-spawn",
     {
       "identifier": "shell:allow-spawn",
       "allow": [

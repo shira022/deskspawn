@@ -21,7 +21,8 @@ import pixelmatch from 'pixelmatch';
 
 // sharp is a native (libvips) addon that cannot be bundled into standalone binaries.
 // We lazy-load it so the sidecar works without it; screenshot diff gracefully degrades.
-let sharpModule: typeof import('sharp') | null = null;
+// Use |undefined sentinel: undefined = not yet loaded, null = tried and failed.
+let sharpModule: typeof import('sharp') | null | undefined = undefined;
 async function getSharp(): Promise<typeof import('sharp') | null> {
   if (sharpModule !== undefined) return sharpModule;
   try {
