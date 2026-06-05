@@ -4,6 +4,7 @@ target/
 .env
 .env.local
 *.log
+!.github/
 .DS_Store
 src-tauri/gen/
 .deskspawn/
@@ -12,6 +13,7 @@ src-tauri/gen/
 .vite/
 *.tsbuildinfo
 sidecar/dist/
+src-tauri/binaries/
 
 # Agent artifacts
 .agents/artifacts/

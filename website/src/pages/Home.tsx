@@ -2,6 +2,60 @@ import { useEffect, useState } from "react";
 import { Sparkles, Monitor, Folder, Server, ArrowDown } from "lucide-react";
 import { Link } from "react-router-dom";
 
+interface DownloadUrls {
+  windows: string;
+  macos: string;
+  linux: string;
+}
+
+const FALLBACK_URL = "https://github.com/shira022/deskspawn/releases/latest";
+
+function detectOS(): string {
+  if (typeof window === "undefined") return "unknown";
+  const ua = navigator.userAgent;
+  if (ua.includes("Win")) return "Windows";
+  if (ua.includes("Mac")) return "macOS";
+  if (ua.includes("Linux")) return "Linux";
+  return "unknown";
+}
+
+function getMacArch(): "aarch64" | "x64" {
+  if (typeof window === "undefined") return "aarch64";
+  const ua = navigator.userAgent;
+  if (ua.includes("Mac") && !ua.includes("Intel")) return "aarch64";
+  return "x64";
+}
+
+// Fetch actual release assets from GitHub API and find the right installer
+// for each OS. This is robust against changes in naming conventions.
+async function fetchDownloadUrls(): Promise<DownloadUrls> {
+  const res = await fetch(
+    "https://api.github.com/repos/shira022/deskspawn/releases/latest"
+  );
+  if (!res.ok) throw new Error("GitHub API error");
+  const release = await res.json();
+  const assets: { name: string; browser_download_url: string }[] =
+    release.assets;
+
+  const macArch = getMacArch();
+
+  // Windows: prefer .msi installer
+  const msi = assets.find((a) => a.name.endsWith(".msi"));
+  // macOS: prefer .dmg matching user's arch, fallback to any .dmg
+  const dmg =
+    assets.find((a) => a.name.endsWith(".dmg") && a.name.includes(macArch)) ??
+    assets.find((a) => a.name.endsWith(".dmg"));
+  // Linux: prefer .deb, fallback to .AppImage
+  const deb = assets.find((a) => a.name.endsWith(".deb")) ??
+    assets.find((a) => a.name.endsWith(".AppImage"));
+
+  return {
+    windows: msi?.browser_download_url ?? FALLBACK_URL,
+    macos: dmg?.browser_download_url ?? FALLBACK_URL,
+    linux: deb?.browser_download_url ?? FALLBACK_URL,
+  };
+}
+
 const features = [
   {
     icon: Sparkles,
@@ -29,20 +83,16 @@ const features = [
   },
 ];
 
-function detectOS(): string {
-  if (typeof window === "undefined") return "unknown";
-  const ua = navigator.userAgent;
-  if (ua.includes("Win")) return "Windows";
-  if (ua.includes("Mac")) return "macOS";
-  if (ua.includes("Linux")) return "Linux";
-  return "unknown";
-}
-
 export default function Home() {
   const [detectedOS, setDetectedOS] = useState("");
+  const [downloads, setDownloads] = useState<DownloadUrls | null>(null);
 
   useEffect(() => {
     setDetectedOS(detectOS());
+
+    fetchDownloadUrls()
+      .then(setDownloads)
+      .catch(() => setDownloads(null));
   }, []);
 
   return (
@@ -63,7 +113,7 @@ export default function Home() {
         {/* Download buttons */}
         <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
           <a
-            href="https://github.com/shira022/deskspawn/releases/latest"
+            href={downloads?.windows ?? FALLBACK_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 transition-opacity"
@@ -72,7 +122,7 @@ export default function Home() {
             Download for Windows
           </a>
           <a
-            href="https://github.com/shira022/deskspawn/releases/latest"
+            href={downloads?.macos ?? FALLBACK_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-6 py-3 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
@@ -81,7 +131,7 @@ export default function Home() {
             Download for macOS
           </a>
           <a
-            href="https://github.com/shira022/deskspawn/releases/latest"
+            href={downloads?.linux ?? FALLBACK_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg border border-border px-6 py-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
@@ -91,10 +141,15 @@ export default function Home() {
           </a>
         </div>
 
-        {/* OS detection */}
+        {/* OS and arch detection */}
         {detectedOS && (
           <p className="mt-4 text-sm text-muted-foreground">
-            Detected OS: <span className="font-medium text-foreground">{detectedOS}</span>
+            Detected: <span className="font-medium text-foreground">{detectedOS} ({getMacArch()})</span>
+            {!downloads && (
+              <span className="ml-2 text-xs text-muted-foreground/60">
+                (browsing latest release)
+              </span>
+            )}
           </p>
         )}
 

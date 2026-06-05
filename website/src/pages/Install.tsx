@@ -1,5 +1,47 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowDown, Terminal, AlertTriangle, Info } from "lucide-react";
+
+const FALLBACK_URL = "https://github.com/shira022/deskspawn/releases/latest";
+
+function getMacArch(): "aarch64" | "x64" {
+  if (typeof window === "undefined") return "aarch64";
+  const ua = navigator.userAgent;
+  if (ua.includes("Mac") && !ua.includes("Intel")) return "aarch64";
+  return "x64";
+}
+
+// Fetch actual release assets from GitHub API.
+async function fetchOsDownloadUrl(tab: string): Promise<string> {
+  const res = await fetch(
+    "https://api.github.com/repos/shira022/deskspawn/releases/latest"
+  );
+  if (!res.ok) throw new Error("GitHub API error");
+  const release = await res.json();
+  const assets: { name: string; browser_download_url: string }[] =
+    release.assets;
+
+  switch (tab) {
+    case "windows": {
+      const msi = assets.find((a) => a.name.endsWith(".msi"));
+      return msi?.browser_download_url ?? FALLBACK_URL;
+    }
+    case "macos": {
+      const macArch = getMacArch();
+      const dmg =
+        assets.find((a) => a.name.endsWith(".dmg") && a.name.includes(macArch)) ??
+        assets.find((a) => a.name.endsWith(".dmg"));
+      return dmg?.browser_download_url ?? FALLBACK_URL;
+    }
+    case "linux": {
+      const deb =
+        assets.find((a) => a.name.endsWith(".deb")) ??
+        assets.find((a) => a.name.endsWith(".AppImage"));
+      return deb?.browser_download_url ?? FALLBACK_URL;
+    }
+    default:
+      return FALLBACK_URL;
+  }
+}
 
 const tabs = [
   { id: "windows", label: "Windows" },
@@ -10,6 +52,7 @@ const tabs = [
 type OSTab = (typeof tabs)[number]["id"];
 
 const osContent: Record<OSTab, {
+  id: OSTab;
   title: string;
   downloadLabel: string;
   steps: string[];
@@ -17,6 +60,7 @@ const osContent: Record<OSTab, {
   requirements: string[];
 }> = {
   windows: {
+    id: "windows",
     title: "Windows",
     downloadLabel: "Download DeskSpawn for Windows (.msi)",
     steps: [
@@ -40,6 +84,7 @@ const osContent: Record<OSTab, {
     ],
   },
   macos: {
+    id: "macos",
     title: "macOS",
     downloadLabel: "Download DeskSpawn for macOS (.dmg)",
     steps: [
@@ -64,6 +109,7 @@ const osContent: Record<OSTab, {
     ],
   },
   linux: {
+    id: "linux",
     title: "Linux",
     downloadLabel: "Download DeskSpawn for Linux (.AppImage)",
     steps: [
@@ -92,8 +138,15 @@ const osContent: Record<OSTab, {
 
 export default function Install() {
   const [activeTab, setActiveTab] = useState<OSTab>("windows");
+  const [downloadUrl, setDownloadUrl] = useState<string>(FALLBACK_URL);
 
   const content = osContent[activeTab];
+
+  useEffect(() => {
+    fetchOsDownloadUrl(activeTab)
+      .then(setDownloadUrl)
+      .catch(() => setDownloadUrl(FALLBACK_URL));
+  }, [activeTab]);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-16 sm:px-6">
@@ -123,7 +176,7 @@ export default function Install() {
       <div className="mt-8">
         {/* Download button */}
         <a
-          href="https://github.com/shira022/deskspawn/releases/latest"
+          href={downloadUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 transition-opacity"

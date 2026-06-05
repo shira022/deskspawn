@@ -9,8 +9,8 @@
     "preview": "vite preview",
     "tauri": "tauri",
     "tauri:dev": "tauri dev",
+    "build:sidecar": "node scripts/build-sidecar.mjs",
     "sidecar": "tsx sidecar/src/server.ts",
-    "sidecar:restart": "kill -9 $(lsof -ti:3001) 2>/dev/null; sleep 0.5; npx tsx sidecar/src/server.ts &",
     "sidecar:stop": "kill -9 $(lsof -ti:3001) 2>/dev/null; echo 'Sidecar stopped (if running)'",
     "lint": "eslint . --ext ts,tsx"
   },
