@@ -12,7 +12,35 @@ permissions:
   contents: write
 
 jobs:
+  # Auto-update version files on main to match the release tag
+  update-version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set version from release tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting version to v$VERSION"
+
+          # package.json
+          npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
+
+          # Cargo.toml
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+
+          # tauri.conf.json
+          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+
+          git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
+          git diff --staged --quiet || git commit -m "chore: bump version to v$VERSION"
+          git push
+
   build:
+    needs: update-version
     strategy:
       fail-fast: false
       matrix:
@@ -54,6 +82,14 @@ jobs:
         shell: pwsh
 
       - run: npm ci
+
+      # Ensure version files match the release tag (tag code may lag behind main)
+      - name: Sync version to release tag
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Syncing version to v$VERSION for build"
+          npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
+          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
 
       - name: Build Tauri (${{ matrix.target }})
         run: npx tauri build
@@ -99,139 +135,3 @@ jobs:
           done
         env:
           GH_TOKEN: ${{ github.token }}
-
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pages: write
-      id-token: write
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Download release assets
-        run: |
-          gh release download "${{ github.ref_name }}" --dir release-assets
-          ls -la release-assets/
-        env:
-          GH_TOKEN: ${{ github.token }}
-
-      - name: Generate updates.json
-        run: |
-          cat > /tmp/generate-updates.js << 'EOF'
-          const fs = require("fs");
-          const path = require("path");
-
-          const repo = process.env.REPO;
-          const tag = process.env.TAG;
-          const version = tag.replace(/^v/, "");
-          const baseUrl = "https://github.com/" + repo + "/releases/download/" + tag;
-          const assetsDir = "release-assets";
-          const platforms = {};
-          const targetOrder = [
-            "darwin-aarch64", "darwin-x86_64",
-            "linux-x86_64",
-            "windows-x86_64"
-          ];
-
-          if (!fs.existsSync(assetsDir)) {
-            console.log("No release assets found, skipping updates.json generation.");
-            const empty = {
-              version: version,
-              notes: "No update artifacts available.",
-              pub_date: new Date().toISOString(),
-              platforms: {}
-            };
-            fs.writeFileSync("website/public/updates.json", JSON.stringify(empty, null, 2));
-            process.exit(0);
-          }
-
-          const files = fs.readdirSync(assetsDir);
-
-          // Helper: determine target from Tauri updater .sig filename
-          function detectTarget(name) {
-            const lower = name.toLowerCase();
-            if (lower.includes("darwin-aarch64")) return "darwin-aarch64";
-            if (lower.includes("darwin-x86_64")) return "darwin-x86_64";
-            if (lower.includes("amd64") && (lower.includes("appimage") || lower.includes(".deb"))) return "linux-x86_64";
-            if ((lower.includes(".msi") || lower.includes("nsis")) && lower.includes("x64")) return "windows-x86_64";
-            return null;
-          }
-
-          const sigFiles = files.filter(function(f) { return f.endsWith(".sig"); });
-          console.log("Found .sig files:", sigFiles);
-
-          sigFiles.forEach(function(sigFile) {
-            const sigContent = fs.readFileSync(path.join(assetsDir, sigFile), "utf8").trim();
-            const bundleName = sigFile.replace(/\.sig$/, "");
-            const target = detectTarget(sigFile);
-
-            if (target) {
-              const bundleExists = files.includes(bundleName);
-              const url = baseUrl + "/" + encodeURIComponent(bundleExists ? bundleName : sigFile.replace(/\.sig$/, ""));
-              platforms[target] = {
-                signature: sigContent,
-                url: url
-              };
-              console.log("  " + target + ": " + bundleName + " (exists: " + bundleExists + ")");
-            } else {
-              console.log("  SKIPPED (unknown target): " + sigFile);
-            }
-          });
-
-          var sorted = {};
-          targetOrder.forEach(function(t) { if (platforms[t]) sorted[t] = platforms[t]; });
-          Object.keys(platforms).forEach(function(k) { if (!sorted[k]) sorted[k] = platforms[k]; });
-
-          var manifest = {
-            version: version,
-            notes: "See [GitHub Releases](https://github.com/" + repo + "/releases/tag/" + tag + ") for details.",
-            pub_date: new Date().toISOString(),
-            platforms: sorted
-          };
-
-          var jsonStr = JSON.stringify(manifest, null, 2);
-          console.log("\nGenerated updates.json:");
-          console.log(jsonStr);
-
-          fs.mkdirSync("website/public", { recursive: true });
-          fs.writeFileSync("website/public/updates.json", jsonStr);
-          EOF
-          node /tmp/generate-updates.js
-        env:
-          REPO: ${{ github.repository }}
-          TAG: ${{ github.ref_name }}
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Install website dependencies
-        run: npm ci
-        working-directory: website
-
-      - name: Build website
-        run: npm run build
-        working-directory: website
-
-      - name: Verify updates.json in dist
-        run: |
-          if [ -f website/dist/updates.json ]; then
-            echo "updates.json found in dist:"
-            cat website/dist/updates.json
-          else
-            echo "WARNING: updates.json not found in website/dist/"
-          fi
-
-      - name: Setup Pages
-        uses: actions/configure-pages@v4
-
-      - name: Upload Pages artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: website/dist
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
