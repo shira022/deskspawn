@@ -61,6 +61,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # macOS updater artifacts (DeskSpawn.app.tar.gz + .sig) have no arch in name,
+      # causing collisions between darwin-x86_64 and darwin-aarch64 builds.
+      # Rename them to include the target before uploading.
+      - name: Rename macOS updater artifacts
+        if: runner.os == 'macOS'
+        shell: bash
+        run: |
+          cd src-tauri/target/release/bundle/macos
+          for src in DeskSpawn.app.tar.gz DeskSpawn.app.tar.gz.sig; do
+            if [ -f "$src" ]; then
+              dst="DeskSpawn_${{ matrix.target }}.app.tar.gz${src#DeskSpawn.app.tar.gz}"
+              mv "$src" "$dst"
+              echo "Renamed $src -> $dst"
+            fi
+          done
+
       - name: Upload release assets
         shell: bash
         run: |
@@ -139,10 +155,12 @@ jobs:
             const files = fs.readdirSync(assetsDir);
 
             // Helper: determine target from Tauri updater .sig filename
+            // macOS artifacts renamed to include target (DeskSpawn_darwin-aarch64.app.tar.gz.sig)
+            // Other platforms use Tauri's default naming.
             function detectTarget(name) {
               const lower = name.toLowerCase();
-              if (lower.includes("aarch64") && lower.includes(".app")) return "darwin-aarch64";
-              if (lower.includes("x64") && lower.includes(".app")) return "darwin-x86_64";
+              if (lower.includes("darwin-aarch64")) return "darwin-aarch64";
+              if (lower.includes("darwin-x86_64")) return "darwin-x86_64";
               if (lower.includes("amd64") && (lower.includes("appimage") || lower.includes(".deb"))) return "linux-x86_64";
               if ((lower.includes(".msi") || lower.includes("nsis")) && lower.includes("x64")) return "windows-x86_64";
               return null;
@@ -155,7 +173,7 @@ jobs:
             sigFiles.forEach(sigFile => {
               const sigContent = fs.readFileSync(path.join(assetsDir, sigFile), "utf8").trim();
               // Derive bundle name from .sig — remove trailing .sig
-              // e.g. deskspawn_0.1.0_x64.app.tar.gz.sig -> deskspawn_0.1.0_x64.app.tar.gz
+              // e.g. DeskSpawn_darwin-aarch64.app.tar.gz.sig -> DeskSpawn_darwin-aarch64.app.tar.gz
               const bundleName = sigFile.replace(/\.sig$/, "");
               const target = detectTarget(sigFile);
 
