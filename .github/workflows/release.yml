@@ -140,14 +140,13 @@ jobs:
 
             const files = fs.readdirSync(assetsDir);
 
-            // Helper: determine target from filename
+            // Helper: determine target from Tauri updater .sig filename
             function detectTarget(name) {
               const lower = name.toLowerCase();
-              if (lower.includes("aarch64") || lower.includes("arm64")) return "darwin-aarch64";
-              if (lower.includes("amd64") || lower.includes("appimage") || lower.includes(".deb")) return "linux-x86_64";
-              if (lower.includes(".app.tar.gz") && lower.includes("x64")) return "darwin-x86_64";
-              if (lower.includes(".msi") || lower.includes("nsis")) return "windows-x86_64";
-              if (lower.includes(".dmg")) return "darwin-x86_64"; // default Intel macOS for .dmg
+              if (lower.includes("aarch64") && lower.includes(".app")) return "darwin-aarch64";
+              if (lower.includes("x64") && lower.includes(".app")) return "darwin-x86_64";
+              if (lower.includes("amd64") && (lower.includes("appimage") || lower.includes(".deb"))) return "linux-x86_64";
+              if ((lower.includes(".msi") || lower.includes("nsis")) && lower.includes("x64")) return "windows-x86_64";
               return null;
             }
 
@@ -173,27 +172,6 @@ jobs:
                 console.log(`  ${target}: ${bundleName} (exists: ${bundleExists})`);
               } else {
                 console.log(`  SKIPPED (unknown target): ${sigFile}`);
-              }
-            });
-
-            // Fallback: for platforms without .sig files, add direct installer URLs
-            // (useful for initial release testing when updater artifacts aren't available)
-            const installers = {
-              "darwin-x86_64": files.find(f => f.endsWith(".dmg") && !f.includes("aarch64")),
-              "darwin-aarch64": files.find(f => f.endsWith(".dmg") && f.includes("aarch64")),
-              "linux-x86_64": files.find(f => f.endsWith(".deb") || f.endsWith(".AppImage")),
-              "windows-x86_64": files.find(f => f.endsWith(".msi") || f.endsWith(".nsis.zip"))
-            };
-
-            Object.entries(installers).forEach(([target, file]) => {
-              if (file && !platforms[target]) {
-                // No updater artifact for this platform — include installer URL with empty sig
-                // (updater plugin will skip unsigned entries, but the JSON is valid)
-                platforms[target] = {
-                  signature: "",
-                  url: `${baseUrl}/${encodeURIComponent(file)}`
-                };
-                console.log(`  ${target}: installer-only (${file}) — no .sig, updater will skip`);
               }
             });
 
