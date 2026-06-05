@@ -2,6 +2,22 @@ import { useEffect, useState } from "react";
 import { Sparkles, Monitor, Folder, Server, ArrowDown } from "lucide-react";
 import { Link } from "react-router-dom";
 
+interface DownloadUrls {
+  windows: string;
+  macos: string;
+  linux: string;
+}
+
+const FALLBACK_URL = "https://github.com/shira022/deskspawn/releases/latest";
+
+function getMacArch(): "aarch64" | "x64" {
+  if (typeof window === "undefined") return "aarch64";
+  const ua = navigator.userAgent;
+  // Apple Silicon detection: Mac with ARM
+  if (ua.includes("Mac") && !ua.includes("Intel")) return "aarch64";
+  return "x64"; // fallback to Intel
+}
+
 const features = [
   {
     icon: Sparkles,
@@ -38,11 +54,38 @@ function detectOS(): string {
   return "unknown";
 }
 
+function buildDownloadUrls(version: string): DownloadUrls {
+  const base = `https://github.com/shira022/deskspawn/releases/download/v${version}`;
+  const macArch = getMacArch();
+  return {
+    windows: `${base}/DeskSpawn_${version}_x64_en-US.msi`,
+    macos: `${base}/DeskSpawn_${version}_${macArch}.dmg`,
+    linux: `${base}/DeskSpawn_${version}_amd64.deb`,
+  };
+}
+
 export default function Home() {
   const [detectedOS, setDetectedOS] = useState("");
+  const [downloads, setDownloads] = useState<DownloadUrls | null>(null);
 
   useEffect(() => {
     setDetectedOS(detectOS());
+
+    // Fetch latest version from deployed updates.json
+    fetch("/deskspawn/updates.json")
+      .then((res) => {
+        if (!res.ok) throw new Error("updates.json not available");
+        return res.json();
+      })
+      .then((data) => {
+        if (data.version) {
+          setDownloads(buildDownloadUrls(data.version));
+        }
+      })
+      .catch(() => {
+        // Fallback: use releases/latest
+        setDownloads(null);
+      });
   }, []);
 
   return (
@@ -63,7 +106,7 @@ export default function Home() {
         {/* Download buttons */}
         <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
           <a
-            href="https://github.com/shira022/deskspawn/releases/latest"
+            href={downloads?.windows ?? FALLBACK_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 transition-opacity"
@@ -72,7 +115,7 @@ export default function Home() {
             Download for Windows
           </a>
           <a
-            href="https://github.com/shira022/deskspawn/releases/latest"
+            href={downloads?.macos ?? FALLBACK_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-6 py-3 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
@@ -81,7 +124,7 @@ export default function Home() {
             Download for macOS
           </a>
           <a
-            href="https://github.com/shira022/deskspawn/releases/latest"
+            href={downloads?.linux ?? FALLBACK_URL}
             target="_blank"
             rel="noopener noreferrer"
             className="inline-flex items-center gap-2 rounded-lg border border-border px-6 py-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
@@ -91,10 +134,15 @@ export default function Home() {
           </a>
         </div>
 
-        {/* OS detection */}
+        {/* OS and arch detection */}
         {detectedOS && (
           <p className="mt-4 text-sm text-muted-foreground">
-            Detected OS: <span className="font-medium text-foreground">{detectedOS}</span>
+            Detected: <span className="font-medium text-foreground">{detectedOS} ({getMacArch()})</span>
+            {!downloads && (
+              <span className="ml-2 text-xs text-muted-foreground/60">
+                (browsing latest release)
+              </span>
+            )}
           </p>
         )}
 

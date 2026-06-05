@@ -1,5 +1,14 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { ArrowDown, Terminal, AlertTriangle, Info } from "lucide-react";
+
+const FALLBACK_URL = "https://github.com/shira022/deskspawn/releases/latest";
+
+function getMacArch(): "aarch64" | "x64" {
+  if (typeof window === "undefined") return "aarch64";
+  const ua = navigator.userAgent;
+  if (ua.includes("Mac") && !ua.includes("Intel")) return "aarch64";
+  return "x64";
+}
 
 const tabs = [
   { id: "windows", label: "Windows" },
@@ -10,6 +19,7 @@ const tabs = [
 type OSTab = (typeof tabs)[number]["id"];
 
 const osContent: Record<OSTab, {
+  id: OSTab;
   title: string;
   downloadLabel: string;
   steps: string[];
@@ -17,6 +27,7 @@ const osContent: Record<OSTab, {
   requirements: string[];
 }> = {
   windows: {
+    id: "windows",
     title: "Windows",
     downloadLabel: "Download DeskSpawn for Windows (.msi)",
     steps: [
@@ -40,6 +51,7 @@ const osContent: Record<OSTab, {
     ],
   },
   macos: {
+    id: "macos",
     title: "macOS",
     downloadLabel: "Download DeskSpawn for macOS (.dmg)",
     steps: [
@@ -64,6 +76,7 @@ const osContent: Record<OSTab, {
     ],
   },
   linux: {
+    id: "linux",
     title: "Linux",
     downloadLabel: "Download DeskSpawn for Linux (.AppImage)",
     steps: [
@@ -90,10 +103,36 @@ const osContent: Record<OSTab, {
   },
 };
 
+function buildDownloadUrl(tab: OSTab, version: string): string {
+  const base = `https://github.com/shira022/deskspawn/releases/download/v${version}`;
+  switch (tab) {
+    case "windows": return `${base}/DeskSpawn_${version}_x64_en-US.msi`;
+    case "macos": return `${base}/DeskSpawn_${version}_${getMacArch()}.dmg`;
+    case "linux": return `${base}/DeskSpawn_${version}_amd64.deb`;
+  }
+}
+
 export default function Install() {
   const [activeTab, setActiveTab] = useState<OSTab>("windows");
+  const [downloadUrl, setDownloadUrl] = useState<string>(FALLBACK_URL);
 
   const content = osContent[activeTab];
+
+  useEffect(() => {
+    fetch("/deskspawn/updates.json")
+      .then((res) => {
+        if (!res.ok) throw new Error("updates.json not available");
+        return res.json();
+      })
+      .then((data) => {
+        if (data.version) {
+          setDownloadUrl(buildDownloadUrl(activeTab, data.version));
+        }
+      })
+      .catch(() => {
+        setDownloadUrl(FALLBACK_URL);
+      });
+  }, [activeTab]);
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-16 sm:px-6">
@@ -123,7 +162,7 @@ export default function Install() {
       <div className="mt-8">
         {/* Download button */}
         <a
-          href="https://github.com/shira022/deskspawn/releases/latest"
+          href={downloadUrl}
           target="_blank"
           rel="noopener noreferrer"
           className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 transition-opacity"

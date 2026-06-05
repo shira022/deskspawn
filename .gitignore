@@ -4,6 +4,7 @@ target/
 .env
 .env.local
 *.log
+!.github/
 .DS_Store
 src-tauri/gen/
 .deskspawn/
