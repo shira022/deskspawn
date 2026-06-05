@@ -182,23 +182,21 @@ async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
                     .blocking_show();
 
                 if !confirmed {
-                    return Ok("Update skipped by user.".into());
+                    Ok("Update skipped by user.".into())
+                } else {
+                    update
+                        .download_and_install(
+                            |_chunk_length, _content_length| {},
+                            || log::info!("Update download finished, installing..."),
+                        )
+                        .await
+                        .map_err(|e| format!("Download/install failed: {e}"))?;
+
+                    // restart() terminates the current process to apply the update
+                    app.restart();
                 }
-
-                update
-                    .download_and_install(
-                        |_chunk_length, _content_length| {},
-                        || log::info!("Update download finished, installing..."),
-                    )
-                    .await
-                    .map_err(|e| format!("Download/install failed: {e}"))?;
-
-                // restart() terminates the current process to apply the update
-                app.restart();
             }
-            None => {
-                return Ok("Already up to date.".into());
-            }
+            None => Ok("Already up to date.".into()),
         }
     }
 
