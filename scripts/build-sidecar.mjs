@@ -14,8 +14,11 @@
 import { execSync } from "child_process";
 import { existsSync, renameSync, statSync } from "fs";
 import { resolve } from "path";
+import { platform } from "os";
 
 const isDev = process.argv.includes("--dev");
+const isWindows = platform() === "win32";
+const binExtension = isWindows ? ".exe" : "";
 
 // ── Prerequisite checks (cross-platform) ────────────────────────────
 
@@ -39,7 +42,7 @@ try {
   process.exit(1);
 }
 
-const binaryPath = resolve(`src-tauri/binaries/deskspawn-sidecar-${targetTriple}`);
+const binaryPath = resolve(`src-tauri/binaries/deskspawn-sidecar-${targetTriple}${binExtension}`);
 
 // ── Dev mode: skip rebuild if binary is up to date ──────────────────
 
@@ -71,15 +74,19 @@ if (isDev && existsSync(binaryPath)) {
 console.log(`[sidecar] Building binary for ${targetTriple}...`);
 
 execSync(
-  "bun build --compile ./sidecar/src/server.ts --outfile ./src-tauri/binaries/deskspawn-sidecar",
+  `bun build --compile ./sidecar/src/server.ts --outfile ./src-tauri/binaries/deskspawn-sidecar${binExtension}`,
   { stdio: "inherit", cwd: process.cwd() },
 );
 
-const builtPath = resolve("./src-tauri/binaries/deskspawn-sidecar");
-if (existsSync(builtPath)) {
+// Bun adds .exe on Windows, no extension on Unix
+const builtPaths = [
+  resolve(`./src-tauri/binaries/deskspawn-sidecar${binExtension}`),
+];
+const builtPath = builtPaths.find((p) => existsSync(p));
+if (builtPath) {
   renameSync(builtPath, binaryPath);
   console.log(`[sidecar] Binary created: ${binaryPath}`);
 } else {
-  console.error(`[sidecar] Build failed: ${builtPath} not found`);
+  console.error(`[sidecar] Build failed: binary not found in src-tauri/binaries/`);
   process.exit(1);
 }
