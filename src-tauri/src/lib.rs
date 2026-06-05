@@ -8,6 +8,8 @@ use commands::harness::AppState;
 use commands::sidecar::SidecarManager;
 use std::path::PathBuf;
 use tauri::Manager;
+use tauri_plugin_dialog::DialogExt;
+use tauri_plugin_updater::UpdaterExt;
 
 /// Run the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -21,6 +23,10 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             log::info!("DeskSpawn backend initializing...");
+
+            // Register updater plugin
+            #[cfg(desktop)]
+            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
 
             // Determine workspace path
             let workspace_path = determine_workspace_path(app)
@@ -77,6 +83,31 @@ pub fn run() {
             }
             app.manage(sidecar_manager);
 
+            // Spawn update check in background (non-blocking, no dialog on startup)
+            // The frontend can call check_for_updates command for user-facing checks
+            #[cfg(desktop)]
+            {
+                let handle = app.handle().clone();
+                tokio::spawn(async move {
+                    match handle.updater() {
+                        Ok(updater) => {
+                            match updater.check().await {
+                                Ok(Some(update)) => {
+                                    log::info!(
+                                        "Update available: {} → {}",
+                                        update.current_version,
+                                        update.version
+                                    );
+                                }
+                                Ok(None) => log::info!("No updates available."),
+                                Err(e) => log::warn!("Update check failed: {}", e),
+                            }
+                        }
+                        Err(e) => log::warn!("Failed to initialize updater: {}", e),
+                    }
+                });
+            }
+
             log::info!("DeskSpawn backend ready.");
             Ok(())
         })
@@ -114,9 +145,65 @@ pub fn run() {
             commands::sidecar::kill_sidecar,
             commands::sidecar::sidecar_status,
             commands::sidecar::sidecar_port,
+            // Updater
+            check_for_updates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+/// Check for updates via the Tauri updater plugin.
+///
+/// When an update is available, shows a native OS dialog asking the user
+/// whether to install it. Only proceeds on explicit user confirmation.
+#[tauri::command]
+async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
+    #[cfg(desktop)]
+    {
+        let updater = app
+            .updater()
+            .map_err(|e| format!("Failed to initialize updater: {e}"))?;
+
+        match updater
+            .check()
+            .await
+            .map_err(|e| format!("Update check failed: {e}"))?
+        {
+            Some(update) => {
+                let notes = update.body.clone().unwrap_or_default();
+
+                let confirmed = app
+                    .dialog()
+                    .message(format!(
+                        "Version {} is available (you have {}).\n\n{}\n\nInstall now?",
+                        update.version, update.current_version, notes
+                    ))
+                    .title("Update Available")
+                    .blocking_show();
+
+                if !confirmed {
+                    return Ok("Update skipped by user.".into());
+                }
+
+                update
+                    .download_and_install(
+                        |_chunk_length, _content_length| {},
+                        || log::info!("Update download finished, installing..."),
+                    )
+                    .await
+                    .map_err(|e| format!("Download/install failed: {e}"))?;
+
+                // restart() terminates the current process to apply the update
+                app.restart();
+            }
+            None => {
+                return Ok("Already up to date.".into());
+            }
+        }
+    }
+
+    #[cfg(not(desktop))]
+    Err("Updates are not supported on this platform.".into())
 }
 
 /// Determine the workspace path.
