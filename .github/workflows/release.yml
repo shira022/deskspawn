@@ -62,6 +62,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
       - name: Upload release assets
+        shell: bash
         run: |
           # Upload all bundle outputs: installers + updater artifacts + signatures
           # deb: Linux .deb packages
