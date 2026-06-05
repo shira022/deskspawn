@@ -28,6 +28,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -39,6 +40,17 @@
     },
     "windows": {
       "wix": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDI3MjQ1Mjc4NjQ5OTUwNApSV1FFbFVtR0owVnlBc1JUa1ZNVmdMU0lWa250WkZUNTAxdlJkdHUyOFRNYnBpMGVQME1RZTFzRgo=",
+      "endpoints": [
+        "https://shira022.github.io/deskspawn/updates.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
     }
   }
 }
