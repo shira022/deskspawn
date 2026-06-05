@@ -32,11 +32,17 @@ jobs:
           # package.json
           npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
 
-          # Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
-
-          # tauri.conf.json
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+          # Cargo.toml & tauri.conf.json (via Node for cross-platform safety)
+          node -e "
+            const fs = require('fs');
+            const v = '$VERSION';
+            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            cargo = cargo.replace(/^version = \".*\"/m, 'version = \"' + v + '\"');
+            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+            let tauri = fs.readFileSync('src-tauri/tauri.conf.json', 'utf8');
+            tauri = tauri.replace(/\"version\": \".*\"/, '\"version\": \"' + v + '\"');
+            fs.writeFileSync('src-tauri/tauri.conf.json', tauri);
+          "
 
           git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
           if ! git diff --staged --quiet; then
@@ -96,11 +102,23 @@ jobs:
 
       # Ensure version files match the release tag (tag code may lag behind main)
       - name: Sync version to release tag
+        shell: bash
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Syncing version to v$VERSION for build"
           npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+          node -e "
+            const fs = require('fs');
+            const v = '$VERSION';
+            // Cargo.toml
+            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            cargo = cargo.replace(/^version = \".*\"/m, 'version = \"' + v + '\"');
+            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+            // tauri.conf.json
+            let tauri = fs.readFileSync('src-tauri/tauri.conf.json', 'utf8');
+            tauri = tauri.replace(/\"version\": \".*\"/, '\"version\": \"' + v + '\"');
+            fs.writeFileSync('src-tauri/tauri.conf.json', tauri);
+          "
 
       - name: Build Tauri (${{ matrix.target }})
         run: npx tauri build
