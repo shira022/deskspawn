@@ -26,6 +26,9 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Setting version to v$VERSION"
 
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           # package.json
           npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
 
@@ -36,8 +39,10 @@ jobs:
           sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
 
           git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
-          git diff --staged --quiet || git commit -m "chore: bump version to v$VERSION"
-          git push
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: bump version to v$VERSION"
+            git push || echo "warning: push failed (branch protection), build jobs will sync version"
+          fi
 
   build:
     needs: update-version
