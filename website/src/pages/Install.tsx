@@ -7,6 +7,7 @@ const FALLBACK_URL = "https://github.com/shira022/deskspawn/releases/latest";
 async function fetchOsDownloadUrl(tab: string): Promise<string | null> {
   if (tab === "macos") return null; // macOS distribution is paused
 
+
   const res = await fetch(
     "https://api.github.com/repos/shira022/deskspawn/releases/latest"
   );
@@ -20,6 +21,7 @@ async function fetchOsDownloadUrl(tab: string): Promise<string | null> {
       const msi = assets.find((a) => a.name.endsWith(".msi"));
       return msi?.browser_download_url ?? FALLBACK_URL;
     }
+
     case "linux": {
       const deb =
         assets.find((a) => a.name.endsWith(".deb")) ??
@@ -40,6 +42,7 @@ const tabs = [
 type OSTab = (typeof tabs)[number]["id"];
 
 type OSContent = {
+
   id: OSTab;
   title: string;
   available: boolean;
@@ -120,6 +123,7 @@ export default function Install() {
   const [activeTab, setActiveTab] = useState<OSTab>("windows");
   const [downloadUrl, setDownloadUrl] = useState<string | undefined>(undefined);
 
+
   const content = osContent[activeTab];
 
   useEffect(() => {
@@ -131,6 +135,7 @@ export default function Install() {
       })
       .catch(() => setDownloadUrl(FALLBACK_URL));
   }, [activeTab, content.available]);
+
 
   return (
     <div className="mx-auto max-w-4xl px-4 py-16 sm:px-6">
@@ -166,6 +171,7 @@ export default function Install() {
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 transition-opacity"
+
             >
               <ArrowDown className="h-4 w-4" />
               {content.downloadLabel}

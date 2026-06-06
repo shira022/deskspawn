@@ -51,6 +51,7 @@ npx tauri build
 
 The built `.dmg` will be at `src-tauri/target/release/bundle/dmg/`.
 
+
 ### Linux
 
 **AppImage:**

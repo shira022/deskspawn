@@ -26,18 +26,30 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Setting version to v$VERSION"
 
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
           # package.json
           npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
 
-          # Cargo.toml
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
-
-          # tauri.conf.json
-          sed -i "s/\"version\": \".*\"/\"version\": \"$VERSION\"/" src-tauri/tauri.conf.json
+          # Cargo.toml & tauri.conf.json (via Node for cross-platform safety)
+          node -e "
+            const fs = require('fs');
+            const v = '$VERSION';
+            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            cargo = cargo.replace(/^version = \".*\"/m, 'version = \"' + v + '\"');
+            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+            let tauri = fs.readFileSync('src-tauri/tauri.conf.json', 'utf8');
+            tauri = tauri.replace(/\"version\": \".*\"/, '\"version\": \"' + v + '\"');
+            fs.writeFileSync('src-tauri/tauri.conf.json', tauri);
+          "
 
           git add package.json src-tauri/Cargo.toml src-tauri/tauri.conf.json
-          git diff --staged --quiet || git commit -m "chore: bump version to v$VERSION"
-          git push
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: bump version to v$VERSION"
+            git push || echo "warning: push failed (branch protection), build jobs will sync version"
+          fi
+
 
   build:
     needs: update-version
@@ -65,6 +77,12 @@ jobs:
           node-version: 20
           cache: npm
 
+      - uses: oven-sh/setup-bun@v2
+
+      - name: Install sidecar dependencies
+        run: npm ci
+        working-directory: sidecar
+
       - name: Install Linux deps
         if: runner.os == 'Linux'
         run: |
@@ -86,11 +104,25 @@ jobs:
 
       # Ensure version files match the release tag (tag code may lag behind main)
       - name: Sync version to release tag
+        shell: bash
+
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Syncing version to v$VERSION for build"
           npm version "$VERSION" --no-git-tag-version --allow-same-version 2>/dev/null || true
-          sed -i "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+          node -e "
+            const fs = require('fs');
+            const v = '$VERSION';
+            // Cargo.toml
+            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            cargo = cargo.replace(/^version = \".*\"/m, 'version = \"' + v + '\"');
+            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+            // tauri.conf.json
+            let tauri = fs.readFileSync('src-tauri/tauri.conf.json', 'utf8');
+            tauri = tauri.replace(/\"version\": \".*\"/, '\"version\": \"' + v + '\"');
+            fs.writeFileSync('src-tauri/tauri.conf.json', tauri);
+          "
+
 
       - name: Build Tauri (${{ matrix.target }})
         run: npx tauri build
@@ -98,10 +130,10 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
-      # TODO: Re-enable when macOS code signing certificate is obtained
       # macOS updater artifacts (DeskSpawn.app.tar.gz + .sig) have no arch in name,
       # causing collisions between darwin-x86_64 and darwin-aarch64 builds.
       # Rename them to include the target before uploading.
+      # TODO: Re-enable when macOS code signing certificate is obtained
       # - name: Rename macOS updater artifacts
       #   if: runner.os == 'macOS'
       #   shell: bash
