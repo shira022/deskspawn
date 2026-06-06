@@ -20,8 +20,12 @@ Grab the latest installer for your operating system from the
 | Platform | Download | Install Instructions |
 |----------|----------|----------------------|
 | Windows  | `.msi`   | Run the installer   |
-| macOS    | `.dmg`   | Drag to Applications |
+| macOS    | N/A      | Build from source ([instructions](./installation.md#macos)) |
 | Linux    | `.deb` or `.AppImage` | See [installation guide](./installation.md) |
+
+> **macOS note:** Pre-built `.dmg` installers are paused due to the cost of
+> Apple's code signing certificate. See the [installation guide](./installation.md#macos)
+> for building from source.
 
 For detailed platform-specific install steps, visit the
 [Installation guide](./installation.md).

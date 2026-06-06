@@ -4,7 +4,6 @@ import { Link } from "react-router-dom";
 
 interface DownloadUrls {
   windows: string;
-  macos: string;
   linux: string;
 }
 
@@ -19,13 +18,6 @@ function detectOS(): string {
   return "unknown";
 }
 
-function getMacArch(): "aarch64" | "x64" {
-  if (typeof window === "undefined") return "aarch64";
-  const ua = navigator.userAgent;
-  if (ua.includes("Mac") && !ua.includes("Intel")) return "aarch64";
-  return "x64";
-}
-
 // Fetch actual release assets from GitHub API and find the right installer
 // for each OS. This is robust against changes in naming conventions.
 async function fetchDownloadUrls(): Promise<DownloadUrls> {
@@ -37,21 +29,15 @@ async function fetchDownloadUrls(): Promise<DownloadUrls> {
   const assets: { name: string; browser_download_url: string }[] =
     release.assets;
 
-  const macArch = getMacArch();
-
   // Windows: prefer .msi installer
   const msi = assets.find((a) => a.name.endsWith(".msi"));
-  // macOS: prefer .dmg matching user's arch, fallback to any .dmg
-  const dmg =
-    assets.find((a) => a.name.endsWith(".dmg") && a.name.includes(macArch)) ??
-    assets.find((a) => a.name.endsWith(".dmg"));
   // Linux: prefer .deb, fallback to .AppImage
-  const deb = assets.find((a) => a.name.endsWith(".deb")) ??
+  const deb =
+    assets.find((a) => a.name.endsWith(".deb")) ??
     assets.find((a) => a.name.endsWith(".AppImage"));
 
   return {
     windows: msi?.browser_download_url ?? FALLBACK_URL,
-    macos: dmg?.browser_download_url ?? FALLBACK_URL,
     linux: deb?.browser_download_url ?? FALLBACK_URL,
   };
 }
@@ -121,15 +107,13 @@ export default function Home() {
             <ArrowDown className="h-4 w-4" />
             Download for Windows
           </a>
-          <a
-            href={downloads?.macos ?? FALLBACK_URL}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg border border-border bg-card px-6 py-3 text-sm font-medium text-foreground shadow-sm hover:bg-accent hover:text-accent-foreground transition-colors"
+          <span
+            className="inline-flex items-center gap-2 rounded-lg border border-dashed border-border/50 px-6 py-3 text-sm font-medium text-muted-foreground/60 cursor-not-allowed"
+            title="macOS distribution is temporarily paused"
           >
-            <ArrowDown className="h-4 w-4" />
-            Download for macOS
-          </a>
+            <ArrowDown className="h-4 w-4 opacity-40" />
+            macOS — Currently Unavailable
+          </span>
           <a
             href={downloads?.linux ?? FALLBACK_URL}
             target="_blank"
@@ -144,8 +128,13 @@ export default function Home() {
         {/* OS and arch detection */}
         {detectedOS && (
           <p className="mt-4 text-sm text-muted-foreground">
-            Detected: <span className="font-medium text-foreground">{detectedOS} ({getMacArch()})</span>
-            {!downloads && (
+            Detected: <span className="font-medium text-foreground">{detectedOS}</span>
+            {detectedOS === "macOS" && (
+              <span className="ml-2 text-xs text-muted-foreground/60">
+                (macOS distribution is temporarily paused — see Install page for details)
+              </span>
+            )}
+            {!downloads && detectedOS !== "macOS" && (
               <span className="ml-2 text-xs text-muted-foreground/60">
                 (browsing latest release)
               </span>
