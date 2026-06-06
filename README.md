@@ -35,11 +35,22 @@
 
 ### macOS
 
-1. Download the latest `.dmg` from the [Releases page](https://github.com/shira022/deskspawn/releases/latest).
-2. Open the `.dmg` and drag DeskSpawn to your **Applications** folder.
-3. Right-click DeskSpawn in Applications and select **Open** (required on first launch).
+> **Note:** The macOS build distribution is currently paused due to the cost of Apple's code signing certificate. You can still build from source — see [Development](#development) below.
 
-> **Note:** DeskSpawn is not yet notarized by Apple. The right-click → Open step is only needed on first launch.
+**To build from source on macOS:**
+```bash
+# Install prerequisites (Xcode Command Line Tools)
+xcode-select --install
+
+# Clone and build
+git clone https://github.com/shira022/deskspawn.git
+cd deskspawn
+npm ci
+npx tauri build
+```
+
+The built `.dmg` will be at `src-tauri/target/release/bundle/dmg/`.
+
 
 ### Linux
 

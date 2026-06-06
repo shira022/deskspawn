@@ -31,20 +31,32 @@ Download the latest release from
 
 ## macOS
 
+> **macOS distribution is currently paused.** Due to the cost of Apple's code
+> signing certificate, pre-built `.dmg` installers are not being distributed at
+> this time. In the meantime, you can build the app from source.
+
+### Building from Source (macOS)
+
+1. Install Xcode Command Line Tools:
+   ```bash
+   xcode-select --install
+   ```
+2. Clone the repository and build:
+   ```bash
+   git clone https://github.com/shira022/deskspawn.git
+   cd deskspawn
+   npm ci
+   npx tauri build
+   ```
+3. The built `.dmg` will be at `src-tauri/target/release/bundle/dmg/`.
+
 ### Requirements
 - macOS 10.15 (Catalina) or later
 - Apple Silicon (M1/M2/M3) or Intel processor
+- Xcode Command Line Tools
 
-### Steps
-1. Download the `.dmg` file from the
-   [latest release](https://github.com/shira022/deskspawn/releases/latest).
-2. Open the `.dmg` file.
-3. Drag the **DeskSpawn** icon into the **Applications** folder.
-4. **First launch:** because the app is not notarised, Gatekeeper will block it.
-   - Right-click (or Ctrl-click) **DeskSpawn** in the Applications folder.
-   - Select **Open** from the context menu.
-   - Click **Open** in the confirmation dialog.
-   - You only need to do this once — subsequent launches work normally.
+We hope to resume macOS distribution once code signing is set up. Watch the
+[GitHub repository](https://github.com/shira022/deskspawn) for updates.
 
 ---
 
