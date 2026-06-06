@@ -47,10 +47,11 @@ jobs:
         include:
           - runner: ubuntu-latest
             target: linux-x86_64
-          - runner: macos-14
-            target: darwin-x86_64
-          - runner: macos-14
-            target: darwin-aarch64
+          # TODO: Re-enable when macOS code signing certificate is obtained
+          # - runner: macos-14
+          #   target: darwin-x86_64
+          # - runner: macos-14
+          #   target: darwin-aarch64
           - runner: windows-latest
             target: windows-x86_64
 
@@ -97,21 +98,22 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
 
+      # TODO: Re-enable when macOS code signing certificate is obtained
       # macOS updater artifacts (DeskSpawn.app.tar.gz + .sig) have no arch in name,
       # causing collisions between darwin-x86_64 and darwin-aarch64 builds.
       # Rename them to include the target before uploading.
-      - name: Rename macOS updater artifacts
-        if: runner.os == 'macOS'
-        shell: bash
-        run: |
-          cd src-tauri/target/release/bundle/macos
-          for src in DeskSpawn.app.tar.gz DeskSpawn.app.tar.gz.sig; do
-            if [ -f "$src" ]; then
-              dst="DeskSpawn_${{ matrix.target }}.app.tar.gz${src#DeskSpawn.app.tar.gz}"
-              mv "$src" "$dst"
-              echo "Renamed $src -> $dst"
-            fi
-          done
+      # - name: Rename macOS updater artifacts
+      #   if: runner.os == 'macOS'
+      #   shell: bash
+      #   run: |
+      #     cd src-tauri/target/release/bundle/macos
+      #     for src in DeskSpawn.app.tar.gz DeskSpawn.app.tar.gz.sig; do
+      #       if [ -f "$src" ]; then
+      #         dst="DeskSpawn_${{ matrix.target }}.app.tar.gz${src#DeskSpawn.app.tar.gz}"
+      #         mv "$src" "$dst"
+      #         echo "Renamed $src -> $dst"
+      #       fi
+      #     done
 
       - name: Upload release assets
         shell: bash
@@ -123,9 +125,10 @@ jobs:
           # AppImage: Linux portable
           ls src-tauri/target/release/bundle/appimage/*.AppImage* 2>/dev/null && \
             gh release upload "${{ github.ref_name }}" src-tauri/target/release/bundle/appimage/*.AppImage* --clobber || true
+          # TODO: Re-enable when macOS code signing certificate is obtained
           # dmg: macOS disk image
-          ls src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null && \
-            gh release upload "${{ github.ref_name }}" src-tauri/target/release/bundle/dmg/*.dmg --clobber || true
+          # ls src-tauri/target/release/bundle/dmg/*.dmg 2>/dev/null && \
+          #   gh release upload "${{ github.ref_name }}" src-tauri/target/release/bundle/dmg/*.dmg --clobber || true
           # msi: Windows installer
           ls src-tauri/target/release/bundle/msi/*.msi 2>/dev/null && \
             gh release upload "${{ github.ref_name }}" src-tauri/target/release/bundle/msi/*.msi --clobber || true
