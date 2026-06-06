@@ -34,9 +34,10 @@ jobs:
 
       - name: Download release assets
         if: steps.release.outputs.has_release == 'true'
+        continue-on-error: true
         run: |
-          gh release download "${{ steps.release.outputs.tag }}" --dir release-assets
-          ls -la release-assets/
+          gh release download "${{ steps.release.outputs.tag }}" --dir release-assets 2>/dev/null || echo "No release assets to download yet"
+          ls -la release-assets/ 2>/dev/null || echo "No release-assets directory"
         env:
           GH_TOKEN: ${{ github.token }}
 
