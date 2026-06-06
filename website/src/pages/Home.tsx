@@ -110,6 +110,7 @@ export default function Home() {
           <span
             className="inline-flex items-center gap-2 rounded-lg border border-dashed border-border/50 px-6 py-3 text-sm font-medium text-muted-foreground/60 cursor-not-allowed"
             title="macOS distribution is temporarily paused"
+            aria-disabled="true"
           >
             <ArrowDown className="h-4 w-4 opacity-40" />
             macOS — Currently Unavailable
