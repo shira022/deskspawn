@@ -22,8 +22,8 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 **Known Issues:**
 
-- The macOS build is not notarised — Gatekeeper will show a warning on first
-  launch (see [Installation](./installation.md#macos) for workaround).
+- macOS distribution is paused due to Apple code signing certificate costs
+  (see [Installation](./installation.md#macos) for building from source).
 - Windows SmartScreen may flag the unsigned `.msi` installer.
 - Linux AppImage requires FUSE to be installed.
 

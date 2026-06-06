@@ -52,7 +52,8 @@ jobs:
           const assetsDir = "release-assets";
           const platforms = {};
           const targetOrder = [
-            "darwin-aarch64", "darwin-x86_64",
+            // TODO: Re-enable when macOS code signing certificate is obtained
+            // "darwin-aarch64", "darwin-x86_64",
             "linux-x86_64",
             "windows-x86_64"
           ];
