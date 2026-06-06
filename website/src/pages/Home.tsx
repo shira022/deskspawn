@@ -4,6 +4,7 @@ import { Link } from "react-router-dom";
 
 interface DownloadUrls {
   windows: string;
+
   linux: string;
 }
 
@@ -17,6 +18,7 @@ function detectOS(): string {
   if (ua.includes("Linux")) return "Linux";
   return "unknown";
 }
+
 
 // Fetch actual release assets from GitHub API and find the right installer
 // for each OS. This is robust against changes in naming conventions.
@@ -34,10 +36,12 @@ async function fetchDownloadUrls(): Promise<DownloadUrls> {
   // Linux: prefer .deb, fallback to .AppImage
   const deb =
     assets.find((a) => a.name.endsWith(".deb")) ??
+
     assets.find((a) => a.name.endsWith(".AppImage"));
 
   return {
     windows: msi?.browser_download_url ?? FALLBACK_URL,
+
     linux: deb?.browser_download_url ?? FALLBACK_URL,
   };
 }
@@ -111,6 +115,7 @@ export default function Home() {
             className="inline-flex items-center gap-2 rounded-lg border border-dashed border-border/50 px-6 py-3 text-sm font-medium text-muted-foreground/60 cursor-not-allowed"
             title="macOS distribution is temporarily paused"
             aria-disabled="true"
+
           >
             <ArrowDown className="h-4 w-4 opacity-40" />
             macOS — Currently Unavailable
@@ -136,6 +141,7 @@ export default function Home() {
               </span>
             )}
             {!downloads && detectedOS !== "macOS" && (
+
               <span className="ml-2 text-xs text-muted-foreground/60">
                 (browsing latest release)
               </span>
