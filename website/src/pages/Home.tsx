@@ -4,7 +4,6 @@ import { Link } from "react-router-dom";
 
 interface DownloadUrls {
   windows: string;
-
   linux: string;
 }
 
@@ -19,6 +18,9 @@ function detectOS(): string {
   return "unknown";
 }
 
+function isFallback(url: string): boolean {
+  return url === FALLBACK_URL;
+}
 
 // Fetch actual release assets from GitHub API and find the right installer
 // for each OS. This is robust against changes in naming conventions.
@@ -36,12 +38,10 @@ async function fetchDownloadUrls(): Promise<DownloadUrls> {
   // Linux: prefer .deb, fallback to .AppImage
   const deb =
     assets.find((a) => a.name.endsWith(".deb")) ??
-
     assets.find((a) => a.name.endsWith(".AppImage"));
 
   return {
     windows: msi?.browser_download_url ?? FALLBACK_URL,
-
     linux: deb?.browser_download_url ?? FALLBACK_URL,
   };
 }
@@ -76,14 +76,26 @@ const features = [
 export default function Home() {
   const [detectedOS, setDetectedOS] = useState("");
   const [downloads, setDownloads] = useState<DownloadUrls | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
     setDetectedOS(detectOS());
 
     fetchDownloadUrls()
-      .then(setDownloads)
-      .catch(() => setDownloads(null));
+      .then((urls) => {
+        setDownloads(urls);
+        setIsLoading(false);
+      })
+      .catch(() => {
+        setDownloads(null);
+        setIsLoading(false);
+      });
   }, []);
+
+  function hasInstaller(os: "windows" | "linux"): boolean {
+    const url = downloads?.[os];
+    return !!url && !isFallback(url);
+  }
 
   return (
     <div className="mx-auto max-w-6xl px-4 sm:px-6">
@@ -106,7 +118,16 @@ export default function Home() {
             href={downloads?.windows ?? FALLBACK_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg bg-primary px-6 py-3 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 transition-opacity"
+            className={`inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-medium shadow-sm transition-opacity ${
+              hasInstaller("windows")
+                ? "bg-primary text-primary-foreground hover:opacity-90"
+                : "bg-muted text-muted-foreground hover:opacity-80"
+            }`}
+            title={
+              hasInstaller("windows")
+                ? "Download DeskSpawn for Windows"
+                : "No installer found for this release — browsing releases"
+            }
           >
             <ArrowDown className="h-4 w-4" />
             Download for Windows
@@ -115,7 +136,6 @@ export default function Home() {
             className="inline-flex items-center gap-2 rounded-lg border border-dashed border-border/50 px-6 py-3 text-sm font-medium text-muted-foreground/60 cursor-not-allowed"
             title="macOS distribution is temporarily paused"
             aria-disabled="true"
-
           >
             <ArrowDown className="h-4 w-4 opacity-40" />
             macOS — Currently Unavailable
@@ -124,7 +144,16 @@ export default function Home() {
             href={downloads?.linux ?? FALLBACK_URL}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-2 rounded-lg border border-border px-6 py-3 text-sm font-medium text-muted-foreground hover:bg-accent hover:text-accent-foreground transition-colors"
+            className={`inline-flex items-center gap-2 rounded-lg px-6 py-3 text-sm font-medium transition-colors ${
+              hasInstaller("linux")
+                ? "border border-border text-muted-foreground hover:bg-accent hover:text-accent-foreground"
+                : "border border-dashed border-border/50 text-muted-foreground/60"
+            }`}
+            title={
+              hasInstaller("linux")
+                ? "Download DeskSpawn for Linux"
+                : "No installer found for this release — browsing releases"
+            }
           >
             <ArrowDown className="h-4 w-4" />
             Download for Linux
@@ -140,10 +169,9 @@ export default function Home() {
                 (macOS distribution is temporarily paused — see Install page for details)
               </span>
             )}
-            {!downloads && detectedOS !== "macOS" && (
-
+            {!isLoading && detectedOS !== "macOS" && !hasInstaller("windows") && !hasInstaller("linux") && (
               <span className="ml-2 text-xs text-muted-foreground/60">
-                (browsing latest release)
+                (no installer found for this release — browsing releases)
               </span>
             )}
           </p>
