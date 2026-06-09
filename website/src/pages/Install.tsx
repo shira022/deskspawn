@@ -3,10 +3,13 @@ import { ArrowDown, Terminal, AlertTriangle, Info } from "lucide-react";
 
 const FALLBACK_URL = "https://github.com/shira022/deskspawn/releases/latest";
 
+function isFallback(url: string | null | undefined): boolean {
+  return !url || url === FALLBACK_URL;
+}
+
 // Fetch actual release assets from GitHub API.
 async function fetchOsDownloadUrl(tab: string): Promise<string | null> {
   if (tab === "macos") return null; // macOS distribution is paused
-
 
   const res = await fetch(
     "https://api.github.com/repos/shira022/deskspawn/releases/latest"
@@ -21,7 +24,6 @@ async function fetchOsDownloadUrl(tab: string): Promise<string | null> {
       const msi = assets.find((a) => a.name.endsWith(".msi"));
       return msi?.browser_download_url ?? FALLBACK_URL;
     }
-
     case "linux": {
       const deb =
         assets.find((a) => a.name.endsWith(".deb")) ??
@@ -170,12 +172,25 @@ export default function Install() {
               href={downloadUrl ?? FALLBACK_URL}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-2 rounded-lg bg-primary px-5 py-2.5 text-sm font-medium text-primary-foreground shadow-sm hover:opacity-90 transition-opacity"
-
+              className={`inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-medium shadow-sm transition-opacity ${
+                isFallback(downloadUrl)
+                  ? "bg-muted text-muted-foreground"
+                  : "bg-primary text-primary-foreground hover:opacity-90"
+              }`}
+              title={
+                isFallback(downloadUrl)
+                  ? "No installer found for this release — browsing releases page"
+                  : "Download installer"
+              }
             >
               <ArrowDown className="h-4 w-4" />
               {content.downloadLabel}
             </a>
+            {isFallback(downloadUrl) && (
+              <p className="mt-2 text-xs text-muted-foreground/60">
+                No installer available for this release yet. You'll be taken to the releases page instead.
+              </p>
+            )}
 
             {/* Steps */}
             <h2 className="mt-10 mb-4 text-xl font-semibold">Installation Steps</h2>
