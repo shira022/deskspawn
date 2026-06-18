@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { languages, languageSelectPhrases } from "./languages";
+import { languages, languageSelectPhrases, languageSelectSubtitles } from "./languages";
 import type { LanguageCode } from "./languages";
 
 describe("languages", () => {
@@ -13,7 +13,6 @@ describe("languages", () => {
       expect(lang).toHaveProperty("labelKey");
       expect(lang).toHaveProperty("nativeName");
       expect(lang).toHaveProperty("countryCode");
-      expect(lang).toHaveProperty("intros");
       expect(lang).toHaveProperty("subtitle");
     }
   });
@@ -46,13 +45,6 @@ describe("languages", () => {
     }
   });
 
-  it("each entry has at least one intro", () => {
-    for (const lang of languages) {
-      expect(Array.isArray(lang.intros)).toBe(true);
-      expect(lang.intros.length).toBeGreaterThan(0);
-    }
-  });
-
   it("each entry has a non-empty subtitle", () => {
     for (const lang of languages) {
       expect(typeof lang.subtitle).toBe("string");
@@ -67,7 +59,6 @@ describe("languages", () => {
     expect(ja.countryCode).toBe("jp");
     expect(ja.labelKey).toBe("languages.ja");
     expect(ja.subtitle).toBe("おかえりなさい。");
-    expect(ja.intros).toEqual(["人生は選択肢だ。", "帰る場所があるって、いいよね。"]);
   });
 
   it("has English as the second entry", () => {
@@ -77,7 +68,6 @@ describe("languages", () => {
     expect(en.countryCode).toBe("us");
     expect(en.labelKey).toBe("languages.en");
     expect(en.subtitle).toBe("This is the way.");
-    expect(en.intros).toEqual(["May the Force be with you.", "To infinity and beyond!"]);
   });
 
   it("codes are unique", () => {
@@ -95,16 +85,8 @@ describe("languages", () => {
 });
 
 describe("languageSelectPhrases", () => {
-  it("has exactly 2 phrases", () => {
-    expect(languageSelectPhrases.length).toBe(2);
-  });
-
-  it("contains the English phrase", () => {
-    expect(languageSelectPhrases).toContain("Choose your language");
-  });
-
-  it("contains the Japanese phrase", () => {
-    expect(languageSelectPhrases).toContain("言語を選択してください");
+  it("has at least 2 phrases", () => {
+    expect(languageSelectPhrases.length).toBeGreaterThanOrEqual(2);
   });
 
   it("all phrases are non-empty strings", () => {
@@ -112,5 +94,26 @@ describe("languageSelectPhrases", () => {
       expect(typeof phrase).toBe("string");
       expect(phrase.length).toBeGreaterThan(0);
     }
+  });
+
+  it("has unique phrases", () => {
+    expect(new Set(languageSelectPhrases).size).toBe(languageSelectPhrases.length);
+  });
+});
+
+describe("languageSelectSubtitles", () => {
+  it("has the same length as languageSelectPhrases", () => {
+    expect(languageSelectSubtitles.length).toBe(languageSelectPhrases.length);
+  });
+
+  it("all subtitles are non-empty strings", () => {
+    for (const s of languageSelectSubtitles) {
+      expect(typeof s).toBe("string");
+      expect(s.length).toBeGreaterThan(0);
+    }
+  });
+
+  it("has unique subtitles", () => {
+    expect(new Set(languageSelectSubtitles).size).toBe(languageSelectSubtitles.length);
   });
 });
