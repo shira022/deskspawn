@@ -29,6 +29,22 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v1.0.3 — Landing & API Key UX Update — 2026-06-19
+
+**Changes:**
+
+- 💬 **Landing page value proposition updated** — clarified free-to-use model:
+  you only pay for your own AI API calls. Highlighted Ollama support for
+  completely free local LLMs.
+- ℹ️ **Added LLM requirement note** — recommends GPT-5.4-nano level or above.
+  Lower-capability models may struggle with complex code generation.
+- 🔒 **API key modal security reassurance** — removed outdated "OS keychain /
+  file" references (Tauri-era text). Added notice that API keys stay in your
+  browser and are sent directly to the AI provider.
+- 🌐 **i18n updated** — English and Japanese locale strings revised.
+
+---
+
 ## v1.0.2 — Hotfix Release — 2026-06-19
 
 **Changes:**
