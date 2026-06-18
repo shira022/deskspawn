@@ -242,6 +242,9 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
           <DialogDescription>
             {t('ai.welcomeDescription')}
           </DialogDescription>
+          <p className="mt-1 text-xs text-muted-foreground/70 leading-relaxed">
+            {t('ai.securityNote')}
+          </p>
         </DialogHeader>
 
         <ScrollArea className="flex-1 px-6 pb-4">
