@@ -29,6 +29,36 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v1.0.0 — Web-Only Release — 2026-06-19
+
+**Highlights:**
+
+- 🏗️ **Complete migration from Tauri desktop to pure web application** —
+  DeskSpawn now runs entirely in the browser. No more native installers.
+- 🧠 **Web-native engine** — browser-based orchestrator, providers (8 supported),
+  tool execution, MCP client, retry logic, and step limits.
+- 💾 **Dual-path storage** — IndexedDB + OPFS for offline-first data persistence.
+- 🔬 **WebContainer preview** — run and preview generated apps directly in the
+  browser via WebContainers.
+- 🖥️ **New landing page** with routing system and LanguageSelect/AiConfig screens.
+- 🧪 **Comprehensive test suite** — 31 test files, 519 tests covering engine,
+  components, hooks, stores, and utilities.
+- 🌐 **All AI providers fully supported** — OpenAI, Anthropic, Ollama, and more
+  directly from the browser.
+- 🗑️ **Removed dependencies** — Tauri (Rust), sidecar (Node.js), old marketing
+  website.
+
+**Breaking Changes:**
+
+- DeskSpawn is now a web-only application. Desktop installers are no longer
+  provided.
+- Local SQLite database replaced with IndexedDB. Migrate projects manually if
+  needed.
+- Sidecar-based AI runtime replaced with a browser-native engine — no
+  additional process required.
+
+---
+
 ## Future Releases
 
 Check the [GitHub Releases page](https://github.com/shira022/deskspawn/releases)
