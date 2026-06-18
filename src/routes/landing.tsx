@@ -18,7 +18,7 @@ import {
   Globe,
   Cpu,
   Shield,
-
+  Info,
   Terminal,
   Play,
   Monitor,
@@ -545,6 +545,21 @@ export function LandingPage() {
             titleKey="landing.features.item6Title"
             descKey="landing.features.item6Desc"
           />
+        </div>
+      </section>
+
+      {/* ── Requirements ─────────────────────────────────────────────────────── */}
+      <section className="max-w-2xl mx-auto px-6 py-10 text-center">
+        <div className="rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-900/30 dark:bg-amber-950/20 px-5 py-4">
+          <div className="flex items-center gap-2 mb-1.5">
+            <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
+            <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
+              {t("landing.requirements.title")}
+            </h3>
+          </div>
+          <p className="text-xs text-amber-700/80 dark:text-amber-400/80 leading-relaxed">
+            {t("landing.requirements.desc")}
+          </p>
         </div>
       </section>
 
