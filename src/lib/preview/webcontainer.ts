@@ -657,7 +657,7 @@ export class PreviewManager {
 
         // 相対パス、絶対パス、プロジェクトエイリアスはスキップ
         if (importPath.startsWith(".") || importPath.startsWith("/")) continue;
-        if (importPath.startsWith("@/") || importPath.startsWith("@/")) continue;
+        if (importPath.startsWith("@/")) continue;
 
         // node: プレフィックスはスキップ
         if (importPath.startsWith("node:")) continue;

@@ -59,7 +59,7 @@ describe("verifierPrompt", () => {
     const result = verifierPrompt();
     expect(result).toContain("read_file");
     expect(result).toContain("apply_artifact");
-    expect(result).toContain("searchGitHub");
+    expect(result).toContain("searchGitHub"); // tool described as NOT YET AVAILABLE
   });
 
   it("combines simple mode and language", () => {

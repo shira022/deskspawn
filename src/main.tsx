@@ -14,6 +14,7 @@ import { App } from "./App";
 import { LandingPage } from "./routes/landing";
 import { LanguageSelectScreen } from "./components/onboarding/LanguageSelectScreen";
 import { checkCompatibility, getCompatErrorMessage, type CompatResult } from "./lib/compatibility";
+import { SETTINGS_KEY } from "./lib/constants";
 import i18n from "./lib/i18n";
 import "./index.css";
 import { Loader2, AlertTriangle, RefreshCw, Globe } from "lucide-react";
@@ -34,10 +35,10 @@ function saveLanguageToStorage(code: string) {
   localStorage.setItem("deskspawn_language", code);
   // Also merge into app settings so the Zustand store picks it up
   try {
-    const raw = localStorage.getItem("deskspawn_settings");
+    const raw = localStorage.getItem(SETTINGS_KEY);
     const settings = raw ? JSON.parse(raw) : {};
     settings.language = code;
-    localStorage.setItem("deskspawn_settings", JSON.stringify(settings));
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   } catch {
     // non-critical
   }

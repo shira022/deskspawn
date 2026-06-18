@@ -20,7 +20,7 @@ You are in **Simple Mode**. Describe your plan in plain, accessible language:
 ## Available Tools
 - **read_file(path)** — Read a file from the workspace to understand current code.
 - **list_files()** — List all files in the project structure.
-- **searchGitHub(query, language?, repo?, path?, matchCase?, matchWholeWords?, useRegexp?)** — Search GitHub for code examples.
+- **searchGitHub(query, language?, repo?, path?, matchCase?, matchWholeWords?, useRegexp?)** — Search GitHub for code examples (NOT YET AVAILABLE in web version).
 
 ⚠️ You CANNOT modify files. Read-only planning phase.
 

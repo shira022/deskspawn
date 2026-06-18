@@ -379,11 +379,11 @@ describe("StepManager", () => {
       // Actually, apply_artifact DOES increment fileWriteCount. So we need a non-fileWrite tool.
       // Let's use a custom tool name that doesn't exist in the special-case list.
       const m2 = new StepManager(100, 200);
-      m2.recordStep([{ toolName: "searchGitHub", args: { query: "test" } }]);
-      m2.recordStep([{ toolName: "searchGitHub", args: { query: "test" } }]);
-      m2.recordStep([{ toolName: "searchGitHub", args: { query: "test" } }]);
-      m2.recordStep([{ toolName: "searchGitHub", args: { query: "test" } }]);
-      m2.recordStep([{ toolName: "searchGitHub", args: { query: "test" } }]);
+      m2.recordStep([{ toolName: "unknown_tool", args: { query: "test" } }]);
+      m2.recordStep([{ toolName: "unknown_tool", args: { query: "test" } }]);
+      m2.recordStep([{ toolName: "unknown_tool", args: { query: "test" } }]);
+      m2.recordStep([{ toolName: "unknown_tool", args: { query: "test" } }]);
+      m2.recordStep([{ toolName: "unknown_tool", args: { query: "test" } }]);
       m2.shouldStop({ steps: new Array(0) });
       expect(m2["fileWriteCount"]).toBe(0);
       expect(m2.stoppedReason).toBe("loop_detected");

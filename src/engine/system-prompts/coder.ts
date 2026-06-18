@@ -76,7 +76,7 @@ src/
 ## Available Tools
 1. **read_file(path)** — Read a file from the workspace.
 2. **list_files()** — List all files.
-3. **searchGitHub(query, ...)** — Search GitHub for code examples.
+3. **searchGitHub(query, ...)** — Search GitHub for code examples (NOT YET AVAILABLE in web version).
 4. **apply_artifact(id, title, actions)** — Create or modify files.
    - Use mode: "file" for complete file content (preferred).
    - Use mode: "diff" for targeted changes.

@@ -33,8 +33,8 @@ const PHASE_CONFIGS: Record<Phase, { stepLimit: number; maxContinuations: number
 };
 
 const PHASE_TOOLS: Record<Phase, string[]> = {
-  planner:   ["read_file", "list_files", "searchGitHub"],
-  coder:     ["read_file", "list_files", "apply_artifact", "get_errors", "searchGitHub"],
+  planner:   ["read_file", "list_files"],
+  coder:     ["read_file", "list_files", "apply_artifact", "get_errors"],
   verifier:  ["read_file", "get_errors", "apply_artifact"],
   visual_qa: ["take_screenshot", "read_file"],
 };
