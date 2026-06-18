@@ -29,6 +29,19 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v1.0.2 — Hotfix Release — 2026-06-19
+
+**Changes:**
+
+- 🐛 **Fixed CSP headers for Cloudflare Pages** — multi-line Content-Security-Policy
+  in `_headers` was being truncated to only `default-src 'self';`, which blocked
+  `data:` URIs (flag icons) and `connect-src` (model list fetching).
+  Flattened CSP to a single line to work around Cloudflare Pages limitation.
+- 🔧 **Fixed `Referrer-Policy`** — same multi-line issue prevented it from
+  being applied correctly.
+
+---
+
 ## v1.0.1 — Patch Release — 2026-06-19
 
 **Changes:**
