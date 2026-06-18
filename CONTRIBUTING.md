@@ -7,28 +7,7 @@ Thank you for your interest in contributing to DeskSpawn!
 ### Prerequisites
 
 - **Node.js** 20+
-- **Rust** (stable toolchain)
-- **npm** (for frontend dependencies)
-- **Cargo** (for Rust dependencies)
-
-### System Dependencies
-
-**Linux (Ubuntu/Debian):**
-```bash
-sudo apt-get update && sudo apt-get install -y \
-  libgtk-3-dev libwebkit2gtk-4.1-dev libappindicator3-dev \
-  librsvg2-dev patchelf libsoup-3.0-dev libjavascriptcoregtk-4.1-dev \
-  libsqlite3-dev
-```
-
-**Windows:**
-- [SQLite](https://www.sqlite.org/download.html) (for `sqlx`)
-- [Microsoft Visual Studio C++ Build Tools](https://visualstudio.microsoft.com/visual-cpp-build-tools/)
-
-**macOS:**
-```bash
-xcode-select --install
-```
+- **npm**
 
 ### Setup
 
@@ -37,27 +16,30 @@ xcode-select --install
 git clone https://github.com/shira022/deskspawn.git
 cd deskspawn
 
-# Install frontend dependencies
-npm ci
+# Install dependencies
+npm install
 
-# Build and run in development mode
-npm run tauri dev
+# Start the dev server
+npm run dev
 ```
 
 ### Development Workflow
 
 ```bash
-# Frontend dev server (Vite)
+# Frontend dev server (Vite) — http://localhost:5173
 npm run dev
 
-# Backend type checking
-cargo check --manifest-path src-tauri/Cargo.toml
+# TypeScript type check
+npx tsc --noEmit
 
-# Run all checks
-npm run build          # Frontend build
-cargo build            # Backend build
-npx tsc --noEmit       # TypeScript type check
-cargo clippy -- -D warnings  # Rust linter
+# Run tests
+npx vitest run
+
+# Lint
+npm run lint
+
+# Build for production
+npm run build
 ```
 
 ## Branch Strategy
@@ -76,7 +58,7 @@ develop     Open. Merge feature/fix/docs/refactor/chore PRs here.
 
 | Prefix | Use Case | Example |
 |--------|----------|---------|
-| `feature/` | New features | `feature/harness-engine` |
+| `feature/` | New features | `feature/export-zip` |
 | `fix/` | Bug fixes | `fix/hmr-reload-race` |
 | `docs/` | Documentation | `docs/api-reference` |
 | `refactor/` | Code restructuring | `refactor/extract-db-layer` |
@@ -100,7 +82,7 @@ Where type ∈ {feat, fix, docs, refactor, test, chore}
 Examples:
 - `feat: add AI-generated app preview pane`
 - `fix: resolve HMR race condition on config change`
-- `docs: update API reference for Tauri commands`
+- `docs: update README with deployment guide`
 
 ## Pull Request Process
 
@@ -108,9 +90,9 @@ Examples:
 2. Implement your changes following existing code patterns
 3. Ensure all checks pass locally:
    ```bash
-   npx tsc --noEmit && cargo check
-   npx vitest run && cargo test
-   npm run build && cargo build
+   npx tsc --noEmit
+   npx vitest run
+   npm run build
    ```
 4. Push your branch and open a PR targeting `develop`
 5. CI will automatically run lint, typecheck, test, and build
@@ -119,26 +101,24 @@ Examples:
 ## Code Style
 
 ### TypeScript / React
+
 - Follow existing patterns in `src/`
 - Use TypeScript strict mode (no `any` unless necessary)
 - Components use functional style with hooks
 - UI components follow shadcn/ui conventions (Tailwind CSS)
-
-### Rust
-- Follow standard Rust conventions (`cargo clippy`)
-- No `unsafe` code
-- No direct filesystem writes outside designated paths
-- Use `anyhow` / `thiserror` for error handling
+- Use the `@/` path alias for imports from `src/`
 
 ## Security Policy
 
 Please review [SECURITY.md](SECURITY.md) for our security policy and vulnerability reporting process.
 
 ### Code Security Rules
-- No `eval()`, `new Function()`, or `innerHTML` with variable input in TypeScript
-- No `unsafe{}`, `std::process::Command`, raw `std::fs` writes, or `std::net` in Rust
-- API keys are stored via OS keychain, never in plaintext config
-- New dependencies outside the allowed list require approval
+
+- No `eval()`, `new Function()`, or `innerHTML` with variable input
+- API keys must never be logged or sent to unintended endpoints
+- Use the existing IndexedDB/OPFS storage layer for all persistent data
+- Library dependencies should be approved in PR review
+- All `connect-src` endpoints must be documented for CSP maintenance
 
 ## License
 

@@ -1,5 +1,11 @@
 # DeskSpawn 仕様書（2026-06-04）
 
+> **⚠️ ARCHIVE NOTICE**
+> この仕様書は **Tauri 版 DeskSpawn** の設計書です。
+> 現在の DeskSpawn は **ブラウザベース（Web版）** として再設計されています。
+> Tauri/サイドカー/Rust に関する記述は現在のコードベースには該当しません。
+> ブラウザ版の最新情報は [README](https://github.com/shira022/deskspawn#readme) を参照してください。
+
 > **プロダクト一言定義**
 > 対話型のAIチャットを通じて Web アプリをその場で開発・プレビューできる、オープンソース（OSS）開発プラットフォーム。ユーザー自身の API キーで動作し、Ollama 使用時は完全ローカル完結。
 

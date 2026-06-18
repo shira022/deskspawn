@@ -74,8 +74,7 @@ Each project has a settings panel accessible from the project view:
 - **Use descriptive names** — this makes it easier to find projects later.
 - **Iterate in one project** — rather than creating many small projects, use
   the chat to incrementally build features within a single project.
-- **Export backups** — regularly export important projects to your file system
-  as an additional backup alongside DeskSpawn's automatic sidecar backups.
+- **Export backups** — regularly export important projects as ZIP archives.
 - **Clean up old projects** — delete projects you no longer need to keep the
   dashboard tidy.
 
@@ -84,4 +83,4 @@ Each project has a settings panel accessible from the project view:
 ## See Also
 
 - [AI Features](./ai-features.md) — using the AI assistant to build your app
-- [Sidecar Architecture](./sidecar.md) — how projects are backed up and managed
+- [Getting Started](../getting-started.md) — how to get started with DeskSpawn
