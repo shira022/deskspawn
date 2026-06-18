@@ -1,11 +1,12 @@
+import { useState } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { Select } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
-import { Sun, Moon, Monitor, Thermometer, Globe, List } from "lucide-react";
+import { Sun, Moon, Monitor, Globe, List, ChevronRight } from "lucide-react";
 import { useTranslation } from "react-i18next";
 import { languages, type LanguageCode } from "@/lib/languages";
 import type { ThemeMode } from "@/types";
+import { LanguageSelectScreen } from "@/components/onboarding/LanguageSelectScreen";
 
 interface SettingsDialogProps {
   open: boolean;
@@ -16,6 +17,7 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
   const settings = useAppStore((s) => s.settings);
   const updateSettings = useAppStore((s) => s.updateSettings);
   const { t } = useTranslation();
+  const [showLanguageSelect, setShowLanguageSelect] = useState(false);
 
   const themeOptions: { value: ThemeMode; label: string; icon: React.ReactNode }[] = [
     { value: "light", label: t('settings.themeLight'), icon: <Sun className="h-3.5 w-3.5" /> },
@@ -23,22 +25,21 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
     { value: "system", label: t('settings.themeSystem'), icon: <Monitor className="h-3.5 w-3.5" /> },
   ];
 
-  const languageOptions = languages.map((lang) => ({
-    value: lang.code,
-    label: t(lang.labelKey),
-  }));
+  const currentLang = languages.find((l) => l.code === settings.language);
+  const currentLangLabel = currentLang ? t(currentLang.labelKey) : settings.language;
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-md">
-        <DialogHeader>
-          <DialogTitle>{t('settings.title')}</DialogTitle>
-          <DialogDescription>
-            {t('settings.description')}
-          </DialogDescription>
-        </DialogHeader>
+    <>
+      <Dialog open={open} onOpenChange={onOpenChange}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>{t('settings.title')}</DialogTitle>
+            <DialogDescription>
+              {t('settings.description')}
+            </DialogDescription>
+          </DialogHeader>
 
-        <div className="space-y-5 py-4">
+          <div className="space-y-5 py-4">
           {/* ── テーマ ── */}
           <div>
             <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
@@ -102,51 +103,37 @@ export function SettingsDialog({ open, onOpenChange }: SettingsDialogProps) {
 
           <Separator />
 
-          {/* ── デフォルト温度 ── */}
-          <div>
-            <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
-              <Thermometer className="h-3.5 w-3.5" />
-              {t('settings.defaultTemperature')}
-            </label>
-            <div className="flex items-center gap-3">
-              <input
-                type="range"
-                min={0}
-                max={2}
-                step={0.1}
-                value={settings.defaultTemperature}
-                onChange={(e) => updateSettings({ defaultTemperature: Number(e.target.value) })}
-                className="flex-1 h-1.5 accent-primary"
-              />
-              <span className="text-xs tabular-nums w-10 text-right text-muted-foreground">
-                {settings.defaultTemperature.toFixed(1)}
-              </span>
-            </div>
-            <p className="text-[10px] text-muted-foreground/50 mt-1">
-              {t('settings.temperatureHint')}
-            </p>
-          </div>
-
-          <Separator />
-
           {/* ── 言語 ── */}
           <div>
             <label className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground mb-2">
               <Globe className="h-3.5 w-3.5" />
               {t('settings.language')}
             </label>
-            <Select
-              value={settings.language}
-              onChange={(e) => updateSettings({ language: e.target.value as LanguageCode })}
-              className="h-8 text-xs"
+            <button
+              onClick={() => setShowLanguageSelect(true)}
+              className="w-full flex items-center justify-between rounded-lg border border-border/50 px-3 py-2 text-xs hover:bg-muted transition-colors"
             >
-              {languageOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>{opt.label}</option>
-              ))}
-            </Select>
+              <span>
+                <span className={`fi fi-${currentLang?.countryCode || ""} text-base align-middle`}></span>
+                <span className="ml-1.5">{currentLangLabel}</span>
+              </span>
+              <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+            </button>
           </div>
         </div>
       </DialogContent>
     </Dialog>
+
+    {/* Language selection overlay */}
+    {showLanguageSelect && (
+      <LanguageSelectScreen
+        onSelect={(code) => {
+          updateSettings({ language: code as LanguageCode });
+          setShowLanguageSelect(false);
+        }}
+        onClose={() => setShowLanguageSelect(false)}
+      />
+    )}
+  </>
   );
 }

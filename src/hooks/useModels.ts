@@ -1,6 +1,6 @@
 import { useState, useCallback } from "react";
 import type { ModelInfo, ProviderKind } from "@/types";
-import { sidecarBase } from "@/lib/constants";
+import { getModelsForProvider } from "@/lib/models-fetcher";
 import { setModelCostCache, clearModelCostCache } from "@/lib/cost";
 import i18n from "@/lib/i18n";
 
@@ -19,6 +19,7 @@ interface UseModelsReturn {
 
 /**
  * AIプロバイダーからモデル一覧を取得する共有フック。
+ * ブラウザ内で直接モデル一覧を取得する（サイドカー非依存）。
  * AiConfigScreen と MainLayout のツールバーで使用する。
  */
 export function useModels({ provider, customEndpoint, apiKey }: UseModelsOptions): UseModelsReturn {
@@ -32,27 +33,17 @@ export function useModels({ provider, customEndpoint, apiKey }: UseModelsOptions
     setModels([]);
 
     try {
-      const params = new URLSearchParams({ provider });
-      if (customEndpoint && (provider === "custom" || provider === "ollama")) {
-        params.set("customEndpoint", customEndpoint);
-      }
-      if (apiKey && provider === "custom") {
-        params.set("apiKey", apiKey);
-      }
-
-      const res = await fetch(`${sidecarBase()}/api/models?${params}`);
-      if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error((errData as any).error || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      const fetchedModels: ModelInfo[] = data.models ?? [];
+      const fetchedModels = await getModelsForProvider(
+        provider,
+        customEndpoint || undefined,
+        apiKey || undefined,
+      );
       setModels(fetchedModels);
       // Update the shared cost cache for calculateCost() to use
       clearModelCostCache();
       setModelCostCache(fetchedModels);
     } catch (e: any) {
-      setError(e.message || i18n.t('ai.error.modelsFetchFailed'));
+      setError((e?.message || '') || i18n.t('ai.error.modelsFetchFailed'));
     } finally {
       setLoading(false);
     }

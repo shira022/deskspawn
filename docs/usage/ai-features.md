@@ -105,4 +105,4 @@ a title, due date, and a checkbox. Use Tailwind CSS for styling."
 ## See Also
 
 - [Managing Projects](./projects.md) — creating and organising projects
-- [Sidecar Architecture](./sidecar.md) — how the AI runtime works
+- [Getting Started](../getting-started.md) — how to get started with DeskSpawn

@@ -3,8 +3,8 @@ import { X, CheckCircle2, AlertCircle, AlertTriangle, Info } from "lucide-react"
 import { cn } from "@/lib/utils";
 
 const variantStyles = {
-  success: "border-success/30 bg-success/10 text-success-foreground",
-  error: "border-destructive/30 bg-destructive/10 text-destructive-foreground",
+  success: "border-success/30 bg-success/10 text-foreground",
+  error: "border-destructive/30 bg-destructive/10 text-foreground",
   warning: "border-warning/30 bg-warning/10 text-warning-foreground",
   info: "border-primary/20 bg-muted/80 text-foreground",
 };
