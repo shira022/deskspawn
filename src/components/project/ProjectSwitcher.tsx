@@ -23,8 +23,10 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import type { ProjectMeta } from "@/types";
-import { sidecarBase } from "@/lib/constants";
-import { parseSidecarError } from "@/lib/utils";
+import { listProjects, deleteProject as deleteStoredProject, saveProject } from "@/lib/storage";
+import { deleteProjectDir as deleteOpfsDir } from "@/lib/storage-opfs";
+import { setProjectId, deleteProjectCheckpoints } from "@/engine/tool-executors";
+import { exportProjectAsZip, importProjectFromZip } from "@/lib/project-export";
 
 interface ProjectSwitcherProps {
   open: boolean;
@@ -38,8 +40,8 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [deleteTarget, setDeleteTarget] = useState<ProjectMeta | null>(null);
   const [deleteError, setDeleteError] = useState("");
-  const [importing, setImporting] = useState(false);
   const [exportingId, setExportingId] = useState<string | null>(null);
+  const [importing, setImporting] = useState(false);
   const { t } = useTranslation();
 
   const {
@@ -54,30 +56,23 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     setAgentStepCount,
     setFileTree,
     setSelectedFile,
-    setErrors,
     setCheckpoints,
     setCurrentCheckpointIndex,
     setVisibleMessageCount,
     projectSwitching,
     setProjectSwitching,
-    addToast,
   } = useAppStore();
 
-  // Fetch projects on open
+  // Fetch projects from IndexedDB on open
   useEffect(() => {
     if (open) {
-      fetch(`${sidecarBase()}/projects/list`)
-        .then((res) => res.json())
-        .then((data) => setProjects(data.projects || []))
-        .catch(console.error);
+      listProjects().then(setProjects).catch(console.error);
     }
   }, [open, setProjects]);
 
   // Reset delete target when popover closes
   useEffect(() => {
-    if (!open) {
-      setDeleteTarget(null);
-    }
+    if (!open) setDeleteTarget(null);
   }, [open]);
 
   // Close on outside click
@@ -85,8 +80,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     if (!open) return;
     const handler = (e: MouseEvent) => {
       const target = e.target as Node;
-      if (ref.current && !ref.current.contains(target) &&
-          !dialogRef.current?.contains(target)) {
+      if (ref.current && !ref.current.contains(target) && !dialogRef.current?.contains(target)) {
         onOpenChange(false);
       }
     };
@@ -104,36 +98,30 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     onOpenChange(false);
 
     try {
-      const res = await fetch(`${sidecarBase()}/projects/switch`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId: project.id }),
-      });
+      // Update timestamp
+      const now = new Date().toISOString();
+      const { saveProject } = await import("@/lib/storage");
+      await saveProject({ ...project, updatedAt: now });
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
-
-      // Update store
-      setProjects(data.projects);
+      // Set current project in engine
+      setProjectId(project.id);
       setCurrentProjectId(project.id);
 
-      // Reset session state for fresh start in the switched project
+      // Reset session state
       clearMessages();
       setWorkspaceReady(false);
       setAgentStatus("idle");
       setAgentStepCount(0);
       setFileTree([]);
       setSelectedFile(null);
-      setErrors([]);
       setCheckpoints([]);
       setCurrentCheckpointIndex(-1);
       setVisibleMessageCount(-1);
 
-      // Keep projectSwitching true — PreviewPanel will clear it when workspaceReady
+      // Refresh project list
+      const updatedProjects = await listProjects();
+      setProjects(updatedProjects);
+      setProjectSwitching(false);
     } catch (e: any) {
       console.error("Project switch failed:", e);
       setProjectSwitching(false);
@@ -141,75 +129,75 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
   };
 
   const handleDelete = async (project: ProjectMeta) => {
+    if (project.id === currentProjectId) {
+      setDeleteError(t('project.deleteDisabledActive'));
+      return;
+    }
     setDeleteError("");
     try {
-      const res = await fetch(`${sidecarBase()}/projects/${project.id}`, {
-        method: "DELETE",
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
+      await deleteStoredProject(project.id);
+      // Delete OPFS project files
+      deleteOpfsDir(project.id).catch(() => {});
+      // Delete checkpoints for this project
+      await deleteProjectCheckpoints(project.id);
 
-      // If the deleted project was the current one, clear currentProjectId
       if (project.id === currentProjectId) {
         setCurrentProjectId(null);
       }
-
       removeProject(project.id);
-      setProjects(data.projects);
       setDeleteTarget(null);
     } catch (e: any) {
       setDeleteError(e.message || t('project.deleteError'));
     }
   };
 
-  const formatDate = (iso: string) => {
-    try {
-      const d = new Date(iso);
-      return d.toLocaleDateString("ja-JP", {
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      });
-    } catch {
-      return "";
-    }
-  };
+  // ── Export ──────────────────────────────────────────────────────────────────
 
   const handleExport = async (project: ProjectMeta) => {
     setExportingId(project.id);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 60_000);
     try {
-      const res = await fetch(`${sidecarBase()}/projects/${project.id}/export`, {
-        signal: controller.signal,
-      });
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
-      }
-
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${project.name}.deskspawn`;
-      a.click();
-      URL.revokeObjectURL(url);
-
-      addToast({ variant: "success", message: t('project.exportSuccess', { name: project.name }) });
+      await exportProjectAsZip(project.id, project.name);
+      const { addToast } = useAppStore.getState();
+      addToast({ message: t('project.exportSuccess', { name: project.name }), variant: "success" });
     } catch (e: any) {
-      if (e.name === "AbortError") {
-        addToast({ variant: "error", message: t('project.exportTimeout') });
-      } else {
-        addToast({ variant: "error", message: `${t('project.exportError')}: ${e.message || e}` });
-      }
+      const { addToast } = useAppStore.getState();
+      addToast({ message: e.message || t('project.exportError'), variant: "error" });
     } finally {
-      clearTimeout(timeout);
       setExportingId(null);
+    }
+  };
+
+  // ── Import ──────────────────────────────────────────────────────────────────
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setImporting(true);
+    try {
+      const projectId = crypto.randomUUID();
+      const result = await importProjectFromZip(file, projectId);
+
+      const now = new Date().toISOString();
+      await saveProject({
+        id: projectId,
+        name: result.projectName,
+        createdAt: now,
+        updatedAt: now,
+      });
+
+      // Refresh project list
+      const updatedProjects = await listProjects();
+      const { setProjects, addToast } = useAppStore.getState();
+      setProjects(updatedProjects);
+      addToast({ message: t('project.importSuccess', { name: result.projectName }), variant: "success" });
+    } catch (e: any) {
+      const { addToast } = useAppStore.getState();
+      addToast({ message: e.message || t('project.importError'), variant: "error" });
+    } finally {
+      setImporting(false);
+      // Reset file input so the same file can be selected again
+      if (fileInputRef.current) fileInputRef.current.value = "";
     }
   };
 
@@ -217,227 +205,130 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     fileInputRef.current?.click();
   };
 
-  const handleFileSelected = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-
-    setImporting(true);
-
+  const formatDate = (iso: string) => {
     try {
-      // Read file as base64
-      const buffer = await file.arrayBuffer();
-      const bytes = new Uint8Array(buffer);
-      let binary = "";
-      for (let i = 0; i < bytes.length; i++) {
-        binary += String.fromCharCode(bytes[i]);
-      }
-      const fileBase64 = btoa(binary);
-
-      const res = await fetch(`${sidecarBase()}/projects/import`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ fileBase64 }),
+      const d = new Date(iso);
+      return d.toLocaleDateString("ja-JP", {
+        month: "short", day: "numeric", hour: "2-digit", minute: "2-digit",
       });
-
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
-      }
-
-      const data = await res.json();
-      setProjects(data.projects || []);
-      const projectName = data.project?.name || file.name.replace(/\.deskspawn$/i, '');
-      addToast({ variant: "success", message: t('project.importSuccess', { name: projectName }) });
-      onOpenChange(false);
-    } catch (e: any) {
-      addToast({ variant: "error", message: `${t('project.importError')}: ${e.message || ''}` });
-    } finally {
-      setImporting(false);
-      // Reset input so the same file can be imported again
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
+    } catch { return ""; }
   };
 
   if (!open) return null;
 
   return (
     <>
+      {/* Hidden file input for import */}
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept=".zip,.deskspawn.zip"
+        className="hidden"
+        onChange={handleFileSelect}
+      />
+
       <div className="fixed inset-0 z-40" onClick={() => onOpenChange(false)} />
-      <div
-        ref={ref}
-        className="absolute left-0 top-full z-50 mt-1 w-72 rounded-lg border bg-card shadow-xl"
-      >
+      <div ref={ref} className="absolute left-0 top-full z-50 mt-1 w-80 rounded-lg border bg-card shadow-xl">
         <div className="p-2">
-          <div className="flex items-center justify-between px-2 py-1.5">
-            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-1 px-2 py-1.5">
+            <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mr-auto shrink-0">
               <Clock className="h-3 w-3" />
               {t('project.history')}
             </span>
-            <div className="flex items-center gap-1">
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={handleImportClick}
-                disabled={importing}
-                title={t('project.import')}
-              >
-                {importing ? (
-                  <Loader2 className="h-3 w-3 mr-1 animate-spin" />
-                ) : (
-                  <Upload className="h-3 w-3 mr-1" />
-                )}
-                {importing ? t('project.importing') : t('project.import')}
-              </Button>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 px-2 text-xs"
-                onClick={() => {
-                  onOpenChange(false);
-                  onNewApp();
-                }}
-              >
-                <Plus className="h-3 w-3 mr-1" />
-                {t('project.createNew')}
-              </Button>
-            </div>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5 text-xs shrink-0"
+              onClick={handleImportClick}
+              disabled={importing}
+              title={t('project.import')}
+            >
+              {importing ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Upload className="h-3 w-3" />
+              )}
+              <span className="hidden sm:inline ml-1">{t('project.import')}</span>
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-6 px-1.5 text-xs shrink-0"
+              onClick={() => { onOpenChange(false); onNewApp(); }}
+            >
+              <Plus className="h-3 w-3" />
+              <span className="hidden sm:inline ml-1">{t('project.createNew')}</span>
+            </Button>
           </div>
-
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".deskspawn"
-            className="hidden"
-            onChange={handleFileSelected}
-          />
 
           <Separator className="my-1.5" />
 
           {projects.length === 0 ? (
             <div className="flex flex-col items-center py-6 text-center text-muted-foreground">
               <FolderKanban className="h-8 w-8 mb-2 opacity-30" />
-               <p className="text-xs">{t('project.noHistory')}</p>
-              <Button
-                variant="outline"
-                size="sm"
-                className="mt-3 h-7 text-xs"
-                onClick={() => {
-                  onOpenChange(false);
-                  onNewApp();
-                }}
-              >
+              <p className="text-xs">{t('project.noHistory')}</p>
+              <Button variant="outline" size="sm" className="mt-3 h-7 text-xs"
+                onClick={() => { onOpenChange(false); onNewApp(); }}>
                 <Plus className="h-3 w-3 mr-1" />
                 {t('project.createFirst')}
               </Button>
             </div>
           ) : (
             <ScrollArea className="max-h-64" viewportClassName="max-h-64 space-y-0.5">
-              {projects
-                .slice()
-                .reverse()
-                .map((project) => {
-                  const isActive = project.id === currentProjectId;
-                  return (
-                    <div
-                      key={project.id}
-                      className={`w-full flex items-center gap-2 px-2 py-2 rounded-md text-left text-sm transition-colors hover:bg-muted cursor-pointer ${
-                        isActive ? "bg-muted" : ""
-                      } ${projectSwitching ? "pointer-events-none opacity-50" : ""}`}
-                      onClick={() => !projectSwitching && handleSelect(project)}
-                      onKeyDown={(e) => {
-                        if (!projectSwitching && (e.key === "Enter" || e.key === " ")) {
-                          e.preventDefault();
-                          handleSelect(project);
-                        }
-                      }}
-                      role="button"
-                      tabIndex={projectSwitching ? -1 : 0}
-                    >
-                        <div className="flex-1 min-w-0">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-medium truncate text-sm">
-                              {project.name}
-                            </span>
-                            {isActive && (
-                              <Check className="h-3 w-3 text-primary shrink-0" />
-                            )}
-                          </div>
-                          <span className="text-[10px] text-muted-foreground">
-                            {formatDate(project.updatedAt)}
-                          </span>
-                        </div>
-                        <button
-                          className="shrink-0 p-1 rounded hover:bg-primary/10 text-muted-foreground hover:text-primary transition-colors disabled:opacity-40 disabled:pointer-events-none"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            handleExport(project);
-                          }}
-                          disabled={exportingId === project.id}
-                          title={exportingId === project.id ? '' : t('project.export')}
-                        >
-                          {exportingId === project.id ? (
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                          ) : (
-                            <Download className="h-3.5 w-3.5" />
-                          )}
-                        </button>
-                        <button
-                          className="shrink-0 p-1 rounded hover:bg-destructive/10 text-muted-foreground hover:text-destructive transition-colors"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                            setDeleteTarget(project);
-                          }}
-                          title={t('project.delete')}
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                        </button>
+              {projects.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map((project) => {
+                const isActive = project.id === currentProjectId;
+                return (
+                  <div key={project.id}
+                    className={`w-full flex items-center gap-2 px-2 py-2 rounded-md text-left text-sm transition-colors hover:bg-muted cursor-pointer ${isActive ? "bg-muted" : ""} ${projectSwitching ? "pointer-events-none opacity-50" : ""}`}
+                    onClick={() => !projectSwitching && handleSelect(project)}
+                    role="button" tabIndex={projectSwitching ? -1 : 0}>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <span className="font-medium truncate text-sm">{project.name}</span>
+                        {isActive && <Check className="h-3 w-3 text-primary shrink-0" />}
                       </div>
-                  );
-                })}
+                      <span className="text-[10px] text-muted-foreground">{formatDate(project.updatedAt)}</span>
+                    </div>
+                    <button
+                      className="shrink-0 p-1 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
+                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleExport(project); }}
+                      disabled={exportingId === project.id}
+                      title={t('project.export')}
+                    >
+                      {exportingId === project.id ? (
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                      ) : (
+                        <Download className="h-3.5 w-3.5" />
+                      )}
+                    </button>
+                    <button className={`shrink-0 p-1 rounded transition-colors ${isActive ? 'text-muted-foreground/30 cursor-not-allowed' : 'hover:bg-destructive/10 text-muted-foreground hover:text-destructive'}`}
+                      onClick={(e) => { if (isActive) return; e.stopPropagation(); e.preventDefault(); setDeleteTarget(project); }}
+                      title={isActive ? t('project.deleteDisabledActive') : t('project.delete')}
+                      disabled={isActive}>
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                );
+              })}
             </ScrollArea>
           )}
         </div>
       </div>
+
       {deleteTarget && (
         <div ref={dialogRef}>
           <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteError(""); } }}>
             <DialogContent>
               <DialogHeader>
                 <DialogTitle>{t('project.deleteTitle')}</DialogTitle>
-                <DialogDescription>
-                  {t('project.deleteConfirm', { name: deleteTarget?.name || '' })}
-                </DialogDescription>
+                <DialogDescription>{t('project.deleteConfirm', { name: deleteTarget?.name || '' })}</DialogDescription>
               </DialogHeader>
-              {deleteError && (
-                <div className="px-6">
-                  <p className="text-sm text-destructive">{deleteError}</p>
-                </div>
-              )}
+              {deleteError && <div className="px-6"><p className="text-sm text-destructive">{deleteError}</p></div>}
               <DialogFooter>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setDeleteTarget(null);
-                    setDeleteError("");
-                  }}
-                >
+                <Button variant="outline" size="sm" onClick={() => { setDeleteTarget(null); setDeleteError(""); }}>
                   {t('common.cancel')}
                 </Button>
-                <Button
-                  variant="destructive"
-                  size="sm"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    if (deleteTarget) {
-                      handleDelete(deleteTarget);
-                    }
-                  }}
-                >
+                <Button variant="destructive" size="sm" onClick={() => { if (deleteTarget) handleDelete(deleteTarget); }}>
                   {t('project.deleteConfirmButton')}
                 </Button>
               </DialogFooter>
