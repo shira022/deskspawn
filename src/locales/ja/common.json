@@ -13,7 +13,10 @@
     "switchToDark": "ダークモードに切替",
     "errorOccurred": "エラーが発生しました",
     "unknownError": "不明なエラー",
-    "reload": "再読み込み"
+    "reload": "再読み込み",
+    "refresh": "更新",
+    "minimize": "最小化",
+    "maximize": "最大化"
   },
   "settings": {
     "title": "設定",
@@ -22,8 +25,6 @@
     "themeLight": "ライト",
     "themeDark": "ダーク",
     "themeSystem": "システム連動",
-    "defaultTemperature": "デフォルト温度",
-    "temperatureHint": "低いほど正確・高いほど創造的（AI生成時の初期値）",
     "simpleMode": "シンプルモード",
     "simpleModeDescription": "AIの応答を簡潔にし、追加した機能や修正した内容だけを平易な言葉で伝えます",
     "language": "言語",
@@ -32,6 +33,10 @@
   "languages": {
     "ja": "日本語",
     "en": "English"
+  },
+  "languageSelect": {
+    "footer": "後で変えられます。人生の選択より気楽です。",
+    "footerClose": "✕をクリックして戻る"
   },
   "ai": {
     "welcome": "DeskSpawn へようこそ",
@@ -61,9 +66,11 @@
     "context": "コンテキスト:",
     "maxOutput": "出力上限:",
     "customEndpoint": "カスタムエンドポイント",
-    "advancedSettings": "詳細設定（任意）",
-    "temperatureNotSupported": "※ このモデルは Temperature パラメータに対応していません",
+    "corsProxyUrl": "カスタムエンドポイント（任意）",
+    "anthropicCorsInfo": "Anthropic はブラウザからの直接アクセスに対応しています。プロキシは組織がCORSを制限している場合のみ必要です。",
     "notConfigured": "AI設定が行われていません",
+    "apiKeyNotSet": "APIキー未設定",
+    "apiKeyNotConfiguredDetailed": "API キーが設定されていません。AI設定画面で設定してください。",
     "notConfiguredShort": "AI未設定",
     "goToConfig": "AI設定画面へ",
     "nextEnvCheck": "次へ：環境チェック",
@@ -71,13 +78,31 @@
       "apiKeyRequired": "API キーを入力してください",
       "modelRequired": "モデルを選択または入力してください",
       "customEndpointRequired": "カスタムエンドポイントを入力してください",
-      "modelsFetchFailed": "モデル一覧の取得に失敗しました"
+      "corsProxyRequired": "カスタムエンドポイントを入力してください",
+      "modelsFetchFailed": "モデル一覧の取得に失敗しました",
+      "regionRequired": "AWS Bedrock にはリージョンの指定が必要です（例: us-east-1）"
     },
     "apiKeyInstructions": {
-      "openai": "OpenAI の API キー（https://platform.openai.com/api-keys）",
-      "anthropic": "Anthropic の API キー（Console → API Keys）",
-      "google": "Google AI Studio の API キー"
+      "openai": "OpenAI API キー — sk-proj- または sk- で始まります（https://platform.openai.com/api-keys）",
+      "anthropic": "Anthropic API キー — sk-ant-api03- で始まります（https://console.anthropic.com）",
+      "google": "Google AI / Gemini API キー — AIza で始まります（https://aistudio.google.com）",
+      "amazonBedrock": "AWS Bedrock API キー — bedrock-api-key- で始まります（AWS Bedrock コンソール）",
+      "azureOpenAI": "Azure OpenAI API キー — 32桁の16進数キー（Azure Portal）",
+      "googleVertex": "GCP Vertex AI API キー — AIza で始まります（Express モード, GCP コンソール）"
     },
+    "providerAmazonBedrock": "AWS Bedrock",
+    "providerAzureOpenAI": "Azure OpenAI",
+    "providerGcpVertexAI": "GCP Vertex AI",
+    "providerAmazonBedrockDesc": "Claude, Llama, Nova",
+    "providerAzureOpenAIDesc": "GPT, o-series",
+    "providerGcpVertexAIDesc": "Gemini, Claude, Imagen",
+    "region": "AWS リージョン",
+    "regionPlaceholder": "例: us-east-1",
+    "regionDescription": "Bedrock モデルが利用可能な AWS リージョン（例: us-east-1, us-west-2, eu-west-1）",
+    "azureEndpointUrl": "Azure エンドポイント URL",
+    "azureEndpointPlaceholder": "https://your-resource.openai.azure.com",
+    "azureEndpointDescription": "Azure OpenAI のエンドポイント URL（例: https://my-resource.openai.azure.com）",
+    "savedConfig": "設定を保存しました",
     "costInput": "入力",
     "costOutput": "出力",
     "costCached": "キャッシュ",
@@ -140,8 +165,8 @@
     "zeroResults": "0 件",
     "scrollToLatest": "最新へ",
     "rateLimit": "レートリミット中...",
-    "generating": "コードを生成中...",
-    "aiGenerating": "AI がコードを生成しています...",
+    "generating": "アプリを生成中...",
+    "aiGenerating": "AI がアプリを生成しています...",
     "viewingHistory": "過去の状態を表示中（{{index}}/{{total}}）",
     "backToLatest": "最新の状態に戻る",
     "continuation": "継続 {{round}}/{{max}}",
@@ -158,8 +183,8 @@
     "emptyStatePrompt": "「タスク管理アプリにして」「ダークモードを追加して」など、作りたいアプリを自由に指示してください。",
     "emptyStateNoProject": "ツールバーの「新規アプリ」からプロジェクトを作成すると、チャットでアプリの構築を開始できます。",
     "suggestion": {
-      "styleCounter": "カウンターアプリにスタイルをつけて",
-      "todoApp": "ToDoリストアプリにして",
+      "calendarApp": "カレンダーアプリを作成して",
+      "todoApp": "ToDoアプリを作成して",
       "darkMode": "ダークモード対応にして",
       "timerFeature": "タイマー機能を追加して"
     },
@@ -170,17 +195,23 @@
     "sendTitle": "送信 (Ctrl+Enter)",
     "checkpointRestoreFailed": "⚠️ チェックポイントの復元に失敗しました。\n\n{{error}}\n\nプレビューを最新の状態に戻します。",
     "streamEndedWithoutResult": "⚠️ ストリームが完了しましたが、ツールの結果が取得できませんでした",
-    "generationComplete": "コード生成が完了しました{{sparkle}}{{cost}}",
+    "generationComplete": "アプリ生成が完了しました{{sparkle}}{{cost}}",
     "usageTokens": "トークン",
+    "totalTokensAndCost": "合計トークン数と推定費用",
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI設定が行われていません。ツールバーの「{{notConfiguredLabel}}」ボタンから設定してください。",
       "noProjectSelected": "⚠️ プロジェクトが選択されていません。ツールバーの「{{newAppLabel}}」からプロジェクトを作成するか、アプリ履歴から選択してください。",
       "apiKeyRequiredDetailed": "⚠️ {{provider}} には API キーが必要です。\nツールバーの「{{modelLabel}}」→「APIキー設定」から設定してください。",
       "emptyResponse": "⚠️ AIが空のレスポンスを返しました。モデルの設定を確認するか、もう一度試してみてください。\n\nプロバイダー: {{provider}}\nモデル: {{model}}\n\nツールバーのモデル名をクリックして設定を確認してください。",
       "invalidApiKey": "APIキーが無効か未設定です。ツールバーの「APIキー設定」から確認してください。",
-      "sidecarConnectionFailed": "サイドカーサーバーに接続できません。\nnpm run sidecar を実行してください。",
-      "sidecarConnectionHint": "サイドカーサーバーが起動しているか確認してください。\n`npm run sidecar` を実行してください。",
-      "generic": "⚠️ エラーが発生しました: {{errMsg}}\n\n{{hint}}"
+      "generic": "⚠️ エラーが発生しました: {{errMsg}}\n\n{{hint}}",
+      "providerConfigError": "⚠️ {{provider}} の設定が不完全です。\n\n{{detail}}\n\nツールバーのモデル名をクリックして設定を確認してください。",
+      "customEndpointRequired": "「{{provider}}」にはエンドポイントURLが必要です。プロバイダー設定でカスタムエンドポイントを設定してください。",
+      "regionRequired": "「{{provider}}」にはAWSリージョンの設定が必要です（例: us-east-1）。プロバイダー設定でリージョンを設定してください。",
+      "ollamaModelRequired": "「{{provider}}」にはモデル名の指定が必要です（例: {{example}}）。プロバイダー設定でモデル名を入力してください。",
+      "checkProviderSettings": "「{{provider}}」の設定を確認してください。",
+      "checkModelSettings": "モデル「{{model}}」が存在し、APIキーが有効か確認してください。",
+      "checkOllamaConnection": "Ollamaが起動しているか（{{endpoint}}）、モデル「{{model}}」が利用可能か確認してください。"
     }
   },
   "step": {
@@ -232,6 +263,7 @@
     "createFirst": "最初のアプリを作成",
     "export": "エクスポート",
     "delete": "削除",
+    "deleteDisabledActive": "現在開いているプロジェクトは削除できません。先に別のプロジェクトに切り替えてください。",
     "deleteError": "削除に失敗しました",
     "exportError": "エクスポートに失敗しました",
     "deleteTitle": "アプリを削除",
@@ -247,8 +279,7 @@
     "templateAutoBackup": "変更は自動でバックアップされます",
     "templateShare": "他のユーザーとアプリを共有するにはエクスポート/インポート",
     "creating": "作成中...",
-    "create": "作成",
-    "sidecarError": "サイドカーサーバーに接続できません。`npm run sidecar` を実行してから再試行してください。"
+    "create": "作成"
   },
   "fileTree": {
     "askAiToGenerate": "AIにアプリ生成を指示してください",
@@ -265,22 +296,61 @@
     "parseFailed": "判断できなかったためシングルモードで実行します",
     "analysisError": "分析エラーのためシングルモードで実行します"
   },
-  "sidecarError": {
-    "RATE_LIMIT": "レート制限に達しました。{{error}}",
-    "GENERATION_FAILED": "応答の生成に失敗しました。{{error}}",
-    "PROJECT_DELETE_ACTIVE": "現在アクティブなプロジェクトは削除できません。先に別のプロジェクトに切り替えてください。",
-    "PROJECT_NAME_REQUIRED": "プロジェクト名を入力してください。",
-    "PROJECT_NOT_FOUND": "プロジェクトが見つかりませんでした。",
-    "PROJECT_DIR_NOT_FOUND": "プロジェクトディレクトリが見つかりませんでした。",
-    "NO_BACKUP_FOUND": "バックアップが見つかりませんでした。",
-    "MODELS_FETCH_FAILED": "モデル一覧の取得に失敗しました。",
-    "SERVER_ERROR": "サーバーエラーが発生しました。",
-    "EXPORT_DOWNLOAD_FAILED": "エクスポートのダウンロードに失敗しました。",
-    "EXPORT_FAILED": "エクスポートに失敗しました。",
-    "FILE_BASE64_REQUIRED": "ファイルデータが必要です。",
-    "IMPORT_FAILED": "インポートに失敗しました。",
-    "INVALID_IMPORT_FILE": "無効な .deskspawn ファイルです。deskspawn.json が見つかりません。",
-    "INTERNAL_ERROR": "内部エラーが発生しました。",
-    "fallback": "エラーが発生しました: {{errMsg}}"
+  "landing": {
+    "badge": "ベータ版",
+    "hero": {
+      "title1": "AI で Web アプリを",
+      "title2": "作る",
+      "subtitle": "チャットで伝えるだけ。あなたの言葉が、AI によって動く Web アプリに変わります。ブラウザだけで完結。データはあなたの PC に留まります。",
+      "tryButton": "使ってみる",
+      "githubButton": "GitHub"
+    },
+    "demo": {
+      "userMessage": "タスク管理アプリを作って",
+      "assistantMessage": "わかりました！以下のファイルを作成します...",
+      "creatingFiles": "プロジェクトファイルを作成中..."
+    },
+    "features": {
+      "title": "特徴",
+      "subtitle": "あなたのアイデアをかたちにするために",
+      "item1Title": "AI が自動生成",
+      "item1Desc": "作りたいアプリのイメージを伝えるだけで、AI が自動的にアプリを作成します。プログラミングの知識は必要ありません。",
+      "item2Title": "プライバシー重視",
+      "item2Desc": "あなたのデータはブラウザの中だけに保存されます。あなたが選んだAIサービス以外に送信されることはありません。",
+      "item3Title": "インストール不要",
+      "item3Desc": "ダウンロードや設定は一切不要。ブラウザを開くだけで、すぐに使い始められます。",
+      "item4Title": "リアルタイムプレビュー",
+      "item4Desc": "アプリができあがる様子をその場で確認。変更を加えると、リアルタイムに画面が更新されます。",
+      "item5Title": "品質も自動チェック",
+      "item5Desc": "AI が動作するコードを生成し、自動でエラーチェックも行います。はじめからバグの少ないアプリに。",
+      "item6Title": "お好みの AI を選択",
+      "item6Desc": "OpenAI、Anthropic、Google など、お好みの AI サービスをお使いいただけます。"
+    },
+    "cta": {
+      "title": "さっそく始めてみませんか？",
+      "subtitle": "APIキーを設定するだけ。数分で使い始められます。",
+      "button": "今すぐ始める"
+    },
+    "footer": "DeskSpawn — AI が Web アプリを作る。コードは不要です。"
+  },
+  "auth": {},
+  "preview": {
+    "title": "プレビュー",
+    "selectProject": "プロジェクトを選択または作成するとプレビューが表示されます",
+    "loading": "プレビュー準備中...",
+    "rendering": "プレビュー描画中...",
+    "loadingApp": "アプリを読み込み中...",
+    "statusBooting": "コンテナを起動中...",
+    "statusInstalling": "依存関係をインストール中...",
+    "statusStartingDev": "開発サーバーを起動中...",
+    "statusSyncing": "ファイル同期中...",
+    "updating": "プレビュー更新中...",
+    "buildLog": "ビルドログ",
+    "initializing": "初期化中...",
+    "firstTimeSetup": "初回セットアップには少し時間がかかります",
+    "previewError": "プレビューエラー",
+    "zoomIn": "ズームイン",
+    "zoomOut": "ズームアウト",
+    "zoomReset": "ズームリセット"
   }
 }
