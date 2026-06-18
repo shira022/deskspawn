@@ -41,7 +41,6 @@
   "ai": {
     "welcome": "Welcome to DeskSpawn",
     "welcomeDescription": "Set up the AI model you want to use. Your API key is stored in your browser's local storage and sent directly to your chosen AI provider.",
-    "securityNote": "Your API key never leaves your browser. It is stored in your browser's local storage and only sent directly to the AI provider when making requests.",
     "savedInBrowser": "stored in your browser",
     "provider": "AI Provider",
     "providerOllamaDesc": "Local LLM",
@@ -321,7 +320,7 @@
       "item5Title": "Built-in Quality",
       "item5Desc": "AI generates clean, working code with automatic error checking. Fewer bugs from the start.",
       "item6Title": "Choose Your AI — Or Go Free",
-      "item6Desc": "Bring your own API key for OpenAI, Anthropic, Google, and more. Or use Ollama for completely free local LLMs — zero API costs."
+      "item6Desc": "Bring your own API key for OpenAI, Anthropic, Google, and more. Or use Ollama — run everything locally for free, with zero API costs."
     },
     "requirements": {
       "title": "Requirements",

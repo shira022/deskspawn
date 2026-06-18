@@ -41,7 +41,6 @@
   "ai": {
     "welcome": "DeskSpawn へようこそ",
     "welcomeDescription": "使用する AI モデルを設定してください。API キーはブラウザ内のローカルストレージに保存され、選択した AI プロバイダーに直接送信されます。",
-    "securityNote": "API キーがブラウザから外部に送信されることはありません。ブラウザのローカルストレージに保存され、リクエスト時に直接 AI プロバイダーに送信されます。",
     "savedInBrowser": "ブラウザに保存されています",
     "provider": "AI プロバイダー",
     "providerOllamaDesc": "ローカルLLM",
@@ -321,7 +320,7 @@
       "item5Title": "品質も自動チェック",
       "item5Desc": "AI が動作するコードを生成し、自動でエラーチェックも行います。はじめからバグの少ないアプリに。",
       "item6Title": "AI はお好みで — 無料でも使える",
-      "item6Desc": "OpenAI、Anthropic、Google など、お持ちの API キーをそのままお使いいただけます。Ollama を使えば完全に無料でローカル LLM を利用できます。"
+      "item6Desc": "OpenAI、Anthropic、Google など、お持ちの API キーをそのままお使いいただけます。Ollama のローカル LLM を使えば、API 費用ゼロでこのサービスを完全無料でご利用いただけます。"
     },
     "requirements": {
       "title": "推奨環境",
