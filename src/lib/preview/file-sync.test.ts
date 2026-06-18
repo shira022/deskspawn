@@ -380,10 +380,10 @@ describe("file-sync", () => {
         createFileInfo("src/index.ts"),
       ]);
 
-      let callIndex = 0;
+      let _callIndex = 0;
       vi.mocked(storageOpfs.readProjectFile).mockImplementation(
         async (_pid: string, path: string) => {
-          callIndex++;
+          _callIndex++;
           if (path === "package.json")
             return '{"dependencies":{"react":"^18.0.0"}}';
           if (path === "src/index.ts") return "new content";
@@ -525,10 +525,10 @@ describe("file-sync", () => {
         createFileInfo("src/index.ts"),
       ]);
 
-      let callCount = 0;
+      let _callCount = 0;
       vi.mocked(storageOpfs.readProjectFile).mockImplementation(
         async (_pid: string, path: string) => {
-          callCount++;
+          _callCount++;
           if (path === "package.json") return "{}";
           if (path === "src/index.ts") throw new Error("OPFS read error");
           return null;

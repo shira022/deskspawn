@@ -823,7 +823,7 @@ export async function takeScreenshot(options?: ScreenshotOptions): Promise<Scree
 
     // DOM要素のメタデータ収集（iframe内のDOMにアクセス試行）
     let elements: Array<{ tag: string; text?: string; visible: boolean }> = [];
-    let consoleErrors: string[] = detectedIssues
+    const consoleErrors: string[] = detectedIssues
       .filter(i => i.type === "console-error")
       .map(i => i.message);
     try {
