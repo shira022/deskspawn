@@ -29,6 +29,22 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v1.0.1 — Patch Release — 2026-06-19
+
+**Changes:**
+
+- 🎨 **Refined language selection UI** — replaced homage-style intro rotation
+  with paired title/subtitle that cycle together (e.g., "Choose your language"
+  / "You can change it later. It's easier than life choices.").
+- 🗑️ **Removed unused `intros` field** from language entries — simplifies the
+  data model and reduces bundle size.
+- 🔧 **Added `models.dev` to CSP allowlist** — enables connectivity to new AI
+  provider endpoints.
+- ✅ **Tests updated** — 520 tests passing (all existing + new coverage for
+  `languageSelectSubtitles`).
+
+---
+
 ## v1.0.0 — Web-Only Release — 2026-06-19
 
 **Highlights:**
