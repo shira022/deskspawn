@@ -12,7 +12,7 @@
  * controlling localStorage.
  */
 
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, afterEach } from "vitest";
 import { SETTINGS_KEY } from "./constants";
 
 describe("i18n language detection", () => {

@@ -28,7 +28,7 @@ import {
   Terminal,
   Smartphone,
   Tablet,
-  Monitor,
+
   ZoomIn,
   ZoomOut,
 } from "lucide-react";

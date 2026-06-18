@@ -81,14 +81,6 @@ function createJsonResponse(data: unknown) {
   };
 }
 
-function createErrorResponse(status: number) {
-  return {
-    ok: false,
-    status,
-    json: () => Promise.reject(new Error("Not JSON")),
-  };
-}
-
 describe("getModelsForProvider", () => {
   let mockFetch: ReturnType<typeof vi.fn>;
 

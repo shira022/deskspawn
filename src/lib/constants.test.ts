@@ -41,7 +41,7 @@ describe("providerLabels", () => {
   });
 
   it("all values are non-empty strings", () => {
-    for (const [key, label] of Object.entries(providerLabels)) {
+    for (const [, label] of Object.entries(providerLabels)) {
       expect(typeof label).toBe("string");
       expect(label.length).toBeGreaterThan(0);
     }
@@ -82,7 +82,7 @@ describe("providerIcons", () => {
   });
 
   it("all values are non-empty strings", () => {
-    for (const [key, icon] of Object.entries(providerIcons)) {
+    for (const [, icon] of Object.entries(providerIcons)) {
       expect(typeof icon).toBe("string");
       expect(icon.length).toBeGreaterThan(0);
     }

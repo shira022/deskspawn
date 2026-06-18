@@ -216,7 +216,7 @@ describe("file-sync", () => {
     });
 
     it("should handle empty project (no files)", async () => {
-      const { container, mountCalls } = createMockContainer();
+      const { container } = createMockContainer();
 
       vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([]);
 

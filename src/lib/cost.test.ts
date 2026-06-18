@@ -29,17 +29,6 @@ const sampleCost: ModelCost = {
   reasoning: 60.0, // $60 per 1M reasoning tokens
 };
 
-const sampleModelInfo: ModelInfo = {
-  id: "gpt-4o",
-  name: "GPT-4o",
-  supportsReasoning: false,
-  supportsToolCall: true,
-  supportsImageInput: true,
-  contextLimit: 128000,
-  maxOutput: 16384,
-  cost: sampleCost,
-};
-
 describe("calculateCost", () => {
   it("returns 0 when no model is provided", () => {
     const result = calculateCost({

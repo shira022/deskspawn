@@ -18,7 +18,7 @@ import {
   Globe,
   Cpu,
   Shield,
-  Zap,
+
   Terminal,
   Play,
   Monitor,
@@ -142,7 +142,7 @@ type AppDemoStage =
   | "complete";
 
 function AppDemo() {
-  const { t, i18n } = useTranslation();
+  const { i18n } = useTranslation();
 
   const isJa = i18n.language?.startsWith("ja");
 
