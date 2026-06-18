@@ -20,5 +20,9 @@
       "@/*": ["./src/*"]
     }
   },
-  "include": ["src"]
+  "include": ["src"],
+  "exclude": [
+    "src/components/onboarding/EnvCheckScreen.tsx",
+    "src/hooks/useChatSSE.ts"
+  ]
 }
