@@ -20,6 +20,9 @@ import {
   Cloud,
   Globe,
   Server,
+  HardDrive,
+  Container,
+  Zap,
   Settings2,
   Loader2,
   AlertCircle,
@@ -35,8 +38,10 @@ import { Select } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
+import { AiConfigDialog } from "@/components/settings/AiConfigDialog";
 import type { ProviderKind, ThemeMode } from "@/types";
 import { providerLabels } from "@/lib/constants";
+import { loadProviderConfig } from "@/lib/storage";
 import { useModels } from "@/hooks/useModels";
 
 const layoutIcons: Record<string, React.ReactNode> = {
@@ -50,6 +55,9 @@ const providerIcons: Record<ProviderKind, React.ReactNode> = {
   google: <Globe className="h-3.5 w-3.5" />,
   ollama: <Cpu className="h-3.5 w-3.5" />,
   custom: <Server className="h-3.5 w-3.5" />,
+  "amazon-bedrock": <HardDrive className="h-3.5 w-3.5" />,
+  "azure-openai": <Container className="h-3.5 w-3.5" />,
+  "google-vertex": <Zap className="h-3.5 w-3.5" />,
 };
 
 export function MainLayout() {
@@ -58,11 +66,13 @@ export function MainLayout() {
     setLayoutMode,
     aiConfig,
     setAiConfig,
+    initialized,
     currentProjectId,
     projects,
     projectSwitching,
     appLoading,
     previewMaximized,
+    workspaceReady,
   } = useAppStore();
 
   const { t } = useTranslation();
@@ -73,6 +83,9 @@ export function MainLayout() {
     google: "Gemini",
     ollama: t('ai.providerOllamaDesc'),
     custom: t('ai.providerCustomDesc'),
+    "amazon-bedrock": t('ai.providerAmazonBedrockDesc'),
+    "azure-openai": t('ai.providerAzureOpenAIDesc'),
+    "google-vertex": t('ai.providerGcpVertexAIDesc'),
   };
 
   const layoutLabels: Record<string, string> = {
@@ -87,14 +100,18 @@ export function MainLayout() {
   const [showProjectSwitcher, setShowProjectSwitcher] = useState(false);
   const [showNewApp, setShowNewApp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [showAiConfig, setShowAiConfig] = useState(false);
 
   const settings = useAppStore((s) => s.settings);
   const resolvedTheme = useAppStore((s) => s.resolvedTheme);
   const updateSettings = useAppStore((s) => s.updateSettings);
+  const setAppLoading = useAppStore((s) => s.setAppLoading);
 
   const currentProvider: ProviderKind = (aiConfig?.provider as ProviderKind) ?? "ollama";
   const currentModel = aiConfig?.model ?? null;
   const hasConfig = aiConfig !== null;
+  const needsApiKey = currentProvider !== "ollama";
+  const isConfigReady = hasConfig && (!needsApiKey || aiConfig?.apiKeyConfigured === true);
 
   // Model discovery for toolbar popover
   const { models: toolbarModels, loading: toolbarModelsLoading, error: toolbarModelsError, fetchModels: fetchToolbarModels } = useModels({
@@ -110,19 +127,35 @@ export function MainLayout() {
     }
   }, [showModelSettings, currentProvider, hasConfig, fetchToolbarModels]);
 
+  // Auto-dismiss loading overlay when workspace is ready
+  useEffect(() => {
+    if (workspaceReady && appLoading) {
+      setAppLoading(false);
+    }
+  }, [workspaceReady, appLoading, setAppLoading]);
+
+  // Auto-open AI config dialog when no configuration exists
+  useEffect(() => {
+    if (initialized && !aiConfig) {
+      setShowAiConfig(true);
+    }
+  }, [initialized, aiConfig]);
+
   const toggleLayout = () => {
     setLayoutMode(layoutMode === "2-pane" ? "3-pane" : "2-pane");
   };
 
   const handleProviderChange = useCallback(
-    (e: React.ChangeEvent<HTMLSelectElement>) => {
+    async (e: React.ChangeEvent<HTMLSelectElement>) => {
       const provider = e.target.value as ProviderKind;
+      // google-vertex / azure-openai は未実装のため選択不可
+      if (provider === "google-vertex" || provider === "azure-openai") return;
+      // Load saved config for the target provider to preserve model/endpoint/region
+      const savedCfg = await loadProviderConfig(provider);
       setAiConfig({
         provider,
         apiKey: aiConfig?.apiKey ?? "",
-        model: "",
-        temperature: aiConfig?.temperature ?? 0.2,
-        maxTokens: aiConfig?.maxTokens ?? 4096,
+        model: savedCfg?.model ?? "",
       });
     },
     [aiConfig, setAiConfig],
@@ -156,7 +189,15 @@ export function MainLayout() {
       {/* Toolbar */}
       <div className="flex h-10 items-center justify-between border-b bg-muted/30 px-3">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-semibold tracking-tight">DeskSpawn</span>
+          <button
+            onClick={() => {
+              localStorage.setItem("deskspawn_route", "/");
+              window.location.reload();
+            }}
+            className="text-sm font-semibold tracking-tight hover:text-primary transition-colors cursor-pointer"
+          >
+            DeskSpawn
+          </button>
 
           <Separator orientation="vertical" className="h-4" />
 
@@ -206,18 +247,23 @@ export function MainLayout() {
             <Button
               variant="ghost"
               size="sm"
-              className={`h-7 gap-1.5 px-2 ${!hasConfig ? "text-muted-foreground" : ""}`}
+              className={`h-7 gap-1.5 px-2 ${!hasConfig ? "text-muted-foreground" : !isConfigReady ? "text-amber-500" : ""}`}
               onClick={() => setShowModelSettings(!showModelSettings)}
             >
-              {hasConfig ? (
-                <>
-                  {providerIcons[currentProvider]}
-                  <span className="text-xs max-w-[80px] truncate">{currentModel || t('common.notSelected')}</span>
-                </>
-              ) : (
+              {!hasConfig ? (
                 <>
                   <Settings2 className="h-3.5 w-3.5" />
                   <span className="text-xs">{t('ai.notConfiguredShort')}</span>
+                </>
+              ) : isConfigReady ? (
+                <>
+                  {providerIcons[currentProvider]}
+                  <span className="text-xs max-w-[140px] truncate hidden sm:inline">{currentModel || t('common.notSelected')}</span>
+                </>
+              ) : (
+                <>
+                  <AlertCircle className="h-3.5 w-3.5" />
+                  <span className="text-xs">{t('ai.apiKeyNotSet')}</span>
                 </>
               )}
             </Button>
@@ -238,7 +284,22 @@ export function MainLayout() {
                           className="h-7 text-xs"
                           onClick={() => {
                             setShowModelSettings(false);
-                            useAppStore.getState().setPhase("ai-config");
+                            setShowAiConfig(true);
+                          }}
+                        >
+                          {t('ai.goToConfig')}
+                        </Button>
+                      </div>
+                    ) : !isConfigReady ? (
+                      <div className="text-center py-2">
+                        <AlertCircle className="mx-auto h-6 w-6 text-amber-500 mb-2" />
+                        <p className="text-sm text-muted-foreground mb-2">{t('ai.apiKeyNotConfiguredDetailed')}</p>
+                        <Button
+                          size="sm"
+                          className="h-7 text-xs"
+                          onClick={() => {
+                            setShowModelSettings(false);
+                            setShowAiConfig(true);
                           }}
                         >
                           {t('ai.goToConfig')}
@@ -256,7 +317,7 @@ export function MainLayout() {
                             className="h-8 text-xs"
                           >
                             {Object.entries(providerLabels).map(([id, label]) => (
-                              <option key={id} value={id}>
+                              <option key={id} value={id} disabled={id === "google-vertex" || id === "azure-openai"}>
                                 {label} - {providerRepModel[id as ProviderKind]}
                               </option>
                             ))}
@@ -366,7 +427,7 @@ export function MainLayout() {
                             className="h-7 flex-1 text-xs"
                             onClick={() => {
                               setShowModelSettings(false);
-                              useAppStore.getState().setPhase("ai-config");
+                              setShowAiConfig(true);
                             }}
                           >
                             {t('ai.apiKeySettings')}
@@ -497,6 +558,9 @@ export function MainLayout() {
 
       {/* Settings Dialog */}
       <SettingsDialog open={showSettings} onOpenChange={setShowSettings} />
+
+      {/* AI Config Dialog */}
+      <AiConfigDialog open={showAiConfig} onOpenChange={setShowAiConfig} />
     </div>
   );
 }
