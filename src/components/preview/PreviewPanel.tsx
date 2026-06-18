@@ -1,346 +1,436 @@
-import { useAppStore } from "@/store/useAppStore";
-import { useRef, useEffect, useCallback, useState } from "react";
+/**
+ * PreviewPanel — プレビュー表示パネル
+ *
+ * WebContainer を使ってプロジェクトの Vite Dev Server を起動し、
+ * iframe 内にプレビューを表示する。
+ *
+ * 動作:
+ * 1. プロジェクト選択時に WebContainer を起動 (boot → mount → install → dev)
+ * 2. コード変更時にファイルを同期 (sync → 必要なら npm install)
+ * 3. Vite HMR が差分を自動反映
+ * 4. iframe に Dev Server の URL を表示
+ */
+
+import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
-import { Monitor, Maximize2, Minimize2, RefreshCw, AlertCircle, Loader2, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Smartphone, Tablet, Monitor as MonitorIcon } from "lucide-react";
+import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
-import { getMessageCountForCheckpoint } from "@/lib/checkpoint-utils";
-import { sidecarBase } from "@/lib/constants";
+import { Badge } from "@/components/ui/badge";
+import {
+  Loader2,
+  RefreshCw,
+  AlertTriangle,
+  Maximize2,
+  Minimize2,
+  Wifi,
+  WifiOff,
+  Package,
+  Terminal,
+  Smartphone,
+  Tablet,
+  Monitor,
+  ZoomIn,
+  ZoomOut,
+} from "lucide-react";
+import { previewManager } from "@/lib/preview";
+import type { PreviewStatus } from "@/lib/preview";
+import { checkCompatibility } from "@/lib/compatibility";
 
-export function PreviewPanel() {
-  const {
-    workspacePort,
-    workspaceReady,
-    setWorkspaceReady,
-    currentProjectId,
-    projectSwitching,
-    setProjectSwitching,
-    appLoading,
-    setAppLoading,
-    checkpoints,
-    currentCheckpointIndex,
-    setCurrentCheckpointIndex,
-    fetchCheckpoints,
-    reloadCounter,
-    previewMaximized,
-    togglePreviewMaximized,
-  } = useAppStore();
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const versionRef = useRef(0);
-  const pollingRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [navigating, setNavigating] = useState(false);
-  const [pollingTimedOut, setPollingTimedOut] = useState(false);
-  const [zoom, setZoom] = useState(1);
-  const [devicePreset, setDevicePreset] = useState<string | null>(null);
+// ── Device Presets ─────────────────────────────────────────────────────────────
+
+/** Presets that can be toggled on/off. `null` = auto-fit (fill available width). */
+type DevicePreset = "tablet" | "mobile";
+
+interface DevicePresetDef {
+  label: string;
+  width: number;
+  height: number;
+}
+
+const DEVICE_PRESETS: Record<DevicePreset, DevicePresetDef> = {
+  tablet: { label: "Tablet", width: 768, height: 1024 },
+  mobile: { label: "Mobile", width: 375, height: 812 },
+};
+
+const DEVICE_ICONS: Record<DevicePreset, React.ReactNode> = {
+  tablet: <Tablet className="h-3.5 w-3.5" />,
+  mobile: <Smartphone className="h-3.5 w-3.5" />,
+};
+
+const ZOOM_MIN = 25;
+const ZOOM_MAX = 200;
+const ZOOM_STEP = 25;
+
+// ── ステータス表示マッピング ─────────────────────────────────────────────────
+
+function getStatusLabel(status: PreviewStatus, t: (key: string) => string): string {
+  const labels: Record<PreviewStatus, string> = {
+    idle: "",
+    booting: t("preview.statusBooting"),
+    installing: t("preview.statusInstalling"),
+    "starting-dev": t("preview.statusStartingDev"),
+    ready: "",
+    syncing: t("preview.statusSyncing"),
+    error: "",
+  };
+  return labels[status];
+}
+
+const STATUS_ICONS: Record<PreviewStatus, React.ReactNode> = {
+  idle: null,
+  booting: <Loader2 className="h-2.5 w-2.5 animate-spin" />,
+  installing: <Package className="h-2.5 w-2.5 animate-spin" />,
+  "starting-dev": <Loader2 className="h-2.5 w-2.5 animate-spin" />,
+  ready: <Wifi className="h-2.5 w-2.5 text-green-500" />,
+  syncing: <RefreshCw className="h-2.5 w-2.5 animate-spin" />,
+  error: <WifiOff className="h-2.5 w-2.5 text-destructive" />,
+};
+
+/** 起動中に表示する進捗ログビューア */
+function LogViewer({ logs, status }: { logs: string[]; status: PreviewStatus }) {
   const { t } = useTranslation();
+  const bottomRef = useRef<HTMLDivElement>(null);
 
-  const devicePresets: Record<string, { width: number; height: number; label: string; icon: React.ReactNode }> = {
-    mobile: { width: 375, height: 812, label: "Mobile", icon: <Smartphone className="h-3.5 w-3.5" /> },
-    tablet: { width: 768, height: 1024, label: "Tablet", icon: <Tablet className="h-3.5 w-3.5" /> },
-    desktop: { width: 1280, height: 800, label: "Desktop", icon: <MonitorIcon className="h-3.5 w-3.5" /> },
-  };
-
-  const handleZoomIn = () => setZoom((z) => Math.min(z + 0.1, 2));
-  const handleZoomOut = () => setZoom((z) => Math.max(z - 0.1, 0.25));
-  const handleZoomReset = () => { setZoom(1); setDevicePreset(null); };
-
-  const handleDevicePreset = (key: string | null) => {
-    if (devicePreset === key) {
-      setDevicePreset(null);
-    } else {
-      setDevicePreset(key);
-    }
-  };
-
-  const previewUrl = `http://localhost:${workspacePort}`;
-
-  const handleReload = useCallback(() => {
-    if (iframeRef.current) {
-      versionRef.current += 1;
-      iframeRef.current.src = `${previewUrl}?_v=${versionRef.current}`;
-    }
-  }, [previewUrl]);
-
-  // Clear the iframe to about:blank when project switching/loading starts,
-  // so old content never flashes while the new dev server starts up.
-  const clearIframe = useCallback(() => {
-    if (iframeRef.current) {
-      iframeRef.current.src = "about:blank";
-    }
-  }, []);
-
-  const prevProjectId = useRef<string | null>(null);
+  // 新しいログが追加されたら自動スクロール
   useEffect(() => {
-    if (currentProjectId && currentProjectId !== prevProjectId.current) {
-      // Project just changed — clear iframe immediately
-      clearIframe();
-    }
-    prevProjectId.current = currentProjectId;
-  }, [currentProjectId, clearIframe]);
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [logs.length]);
 
-  // ── Checkpoint navigation ──────────────────────────────────────────
-
-  const canGoBack = currentCheckpointIndex > 0 && checkpoints.length > 0;
-  const canGoForward = currentCheckpointIndex < checkpoints.length - 1;
-
-  // Clear navigating state when dev server comes back after a checkpoint restore
-  const wasNavigating = useRef(false);
-  useEffect(() => {
-    if (navigating) {
-      wasNavigating.current = true;
-    }
-    if (wasNavigating.current && workspaceReady) {
-      wasNavigating.current = false;
-      setNavigating(false);
-    }
-  }, [workspaceReady, navigating]);
-
-  const handleNavigate = useCallback(
-    async (direction: "back" | "forward") => {
-      const nextIndex =
-        direction === "back"
-          ? currentCheckpointIndex - 1
-          : currentCheckpointIndex + 1;
-
-      if (nextIndex < 0 || nextIndex >= checkpoints.length) return;
-
-      const cp = checkpoints[nextIndex];
-      if (!cp) return;
-
-      setNavigating(true);
-      setWorkspaceReady(false);
-      setCurrentCheckpointIndex(nextIndex);
-
-      // Sync the chat panel to show only the messages that existed at this checkpoint
-      const { messages } = useAppStore.getState();
-      const msgCount = getMessageCountForCheckpoint(checkpoints, messages, nextIndex);
-      // If navigating to the latest state, show all messages (-1 = all)
-      if (msgCount >= messages.length) {
-        useAppStore.getState().setVisibleMessageCount(-1);
-      } else {
-        useAppStore.getState().setVisibleMessageCount(msgCount);
-      }
-
-      try {
-        const res = await fetch(`${sidecarBase()}/projects/restore`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ checkpointId: cp.id }),
-        });
-        if (!res.ok) {
-          console.warn("[preview] Failed to restore checkpoint:", await res.text());
-        }
-      } catch (e) {
-        console.warn("[preview] Failed to restore checkpoint:", e);
-      }
-    },
-    [checkpoints, currentCheckpointIndex, setCurrentCheckpointIndex, setWorkspaceReady],
-  );
-
-  // Fetch checkpoints on mount and when project changes
-  useEffect(() => {
-    fetchCheckpoints();
-  }, [currentProjectId, fetchCheckpoints]);
-
-  // Set initial checkpoint index to latest when checkpoints first load
-  useEffect(() => {
-    if (currentCheckpointIndex === -1 && checkpoints.length > 0) {
-      setCurrentCheckpointIndex(checkpoints.length - 1);
-    }
-  }, [checkpoints, currentCheckpointIndex, setCurrentCheckpointIndex]);
-
-  // Reload iframe when triggered by new generation (reloadCounter incremented)
-  const prevReloadCounter = useRef(reloadCounter);
-  useEffect(() => {
-    if (reloadCounter > 0 && reloadCounter !== prevReloadCounter.current) {
-      prevReloadCounter.current = reloadCounter;
-      handleReload();
-    }
-  }, [reloadCounter, handleReload]);
-
-  // Poll for workspace dev server readiness when not ready
-  useEffect(() => {
-    if (workspaceReady) {
-      setLoading(false);
-      setPollingTimedOut(false);
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-      return;
-    }
-
-    if (!currentProjectId) {
-      // No project selected — not loading
-      setLoading(false);
-      setPollingTimedOut(false);
-      return;
-    }
-
-    setLoading(true);
-    let attempts = 0;
-
-    const poll = async () => {
-      try {
-        const res = await fetch(`${sidecarBase()}/projects/ready`);
-        const data = await res.json();
-        if (data.ready) {
-          // Use the actual port reported by the sidecar (may differ from default 5174
-          // if the port was already in use)
-          if (typeof data.port === 'number' && data.port !== useAppStore.getState().workspacePort) {
-            useAppStore.getState().setWorkspacePort(data.port);
-          }
-          setWorkspaceReady(true);
-          setLoading(false);
-          setPollingTimedOut(false);
-          // Clear any pending loading states now that workspace is ready
-          setAppLoading(false);
-          setProjectSwitching(false);
-          if (pollingRef.current) {
-            clearInterval(pollingRef.current);
-            pollingRef.current = null;
-          }
-          // Trigger iframe reload
-          setTimeout(() => handleReload(), 500);
-        }
-      } catch {
-        // Server not ready yet
-      }
-      attempts++;
-      if (attempts > 60) {
-        // Timeout after ~90s — clear loading states and show error
-        setLoading(false);
-        setPollingTimedOut(true);
-        setAppLoading(false);
-        setProjectSwitching(false);
-        if (pollingRef.current) {
-          clearInterval(pollingRef.current);
-          pollingRef.current = null;
-        }
-      }
-    };
-
-    // Poll immediately, then every 1.5s
-    poll();
-    pollingRef.current = setInterval(poll, 1500);
-
-    return () => {
-      if (pollingRef.current) {
-        clearInterval(pollingRef.current);
-        pollingRef.current = null;
-      }
-    };
-  }, [workspaceReady, currentProjectId, setWorkspaceReady, setAppLoading, setProjectSwitching, handleReload]);
-
-  // Auto-reload when workspace changes (code generation completes)
-  useEffect(() => {
-    if (workspaceReady) {
-      handleReload();
-    }
-  }, [workspaceReady, handleReload]);
+  const isStarting = status === "booting" || status === "installing" || status === "starting-dev";
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <div className="flex h-10 items-center gap-2 border-b px-3">
-        <Monitor className="h-4 w-4 text-muted-foreground" />
-        <span className="text-sm font-medium">{t('preview.title')}</span>
-        <span className="text-xs text-muted-foreground/50">:{workspacePort}</span>
+    <div className="flex h-full flex-col items-center justify-center p-4">
+      <div className="flex w-full max-w-md flex-col gap-3">
+        {/* ステータスヘッダー */}
+        <div className="flex items-center justify-center gap-2 text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span className="text-xs font-medium">
+            {isStarting && t("preview.loading")}
+            {status === "syncing" && t("preview.updating")}
+          </span>
+        </div>
 
-        {/* Checkpoint navigation */}
-        {currentProjectId && !projectSwitching && (
-          <div className="flex items-center gap-1 ml-2 border-l border-border/40 pl-2">
-            {checkpoints.length > 0 ? (
-              <>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => handleNavigate("back")}
-                  disabled={!canGoBack || navigating}
-                  title={t('chat.prevState')}
-                >
-                  <ChevronLeft className="h-3.5 w-3.5" />
-                </Button>
-                <span className="text-xs text-muted-foreground tabular-nums min-w-[2.5rem] text-center select-none">
-                  {currentCheckpointIndex + 1}/{checkpoints.length}
-                </span>
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-7 w-7"
-                  onClick={() => handleNavigate("forward")}
-                  disabled={!canGoForward || navigating}
-                  title={t('chat.nextState')}
-                >
-                  <ChevronRight className="h-3.5 w-3.5" />
-                </Button>
-              </>
-            ) : (
-              <span className="text-xs text-muted-foreground tabular-nums min-w-[2.5rem] text-center select-none">
-                0/0
-              </span>
-            )}
+        {/* 詳細ステップ表示 */}
+        {logs.length > 0 && (
+          <div className="max-h-48 overflow-y-auto rounded-lg border bg-black/5 p-2 dark:bg-white/5">
+            <div className="flex items-center gap-1.5 border-b border-border/50 pb-1.5 mb-1.5">
+              <Terminal className="h-3 w-3 text-muted-foreground/60" />
+              <span className="text-[10px] font-medium text-muted-foreground/60">{t("preview.buildLog")}</span>
+            </div>
+            {logs.map((log, i) => (
+              <div
+                key={i}
+                className={`py-0.5 text-[10px] font-mono leading-relaxed ${
+                  log.includes("Error") || log.includes("error")
+                    ? "text-destructive"
+                    : log.includes("ready") || log.includes("complete")
+                      ? "text-green-600 dark:text-green-400"
+                      : "text-muted-foreground/80"
+                }`}
+              >
+                {log}
+              </div>
+            ))}
+            <div ref={bottomRef} />
           </div>
         )}
 
-        <div className="ml-auto flex items-center gap-0.5">
-          {/* Device presets */}
-          {Object.entries(devicePresets).map(([key, preset]) => (
-            <button
-              key={key}
-              onClick={() => handleDevicePreset(key)}
-              className={`h-7 w-7 flex items-center justify-center rounded transition-colors ${
-                devicePreset === key
-                  ? "bg-primary/10 text-primary"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted/60"
-              }`}
-              title={preset.label}
-            >
-              {preset.icon}
-            </button>
-          ))}
+        {/* ヒント */}
+        <p className="text-center text-[10px] text-muted-foreground/50">
+          {logs.length === 0
+            ? t("preview.initializing")
+            : t("preview.firstTimeSetup")}
+        </p>
+      </div>
+    </div>
+  );
+}
 
-          {/* Zoom controls */}
-          <div className="flex items-center gap-0.5 border-l border-border/40 pl-1 ml-1">
+// ── コンポーネント ────────────────────────────────────────────────────────────
+
+export function PreviewPanel() {
+  const { t } = useTranslation();
+  const currentProjectId = useAppStore((s) => s.currentProjectId);
+  const reloadCounter = useAppStore((s) => s.reloadCounter);
+  const previewMaximized = useAppStore((s) => s.previewMaximized);
+  const togglePreviewMaximized = useAppStore((s) => s.togglePreviewMaximized);
+  const workspaceReady = useAppStore((s) => s.workspaceReady);
+
+  const [status, setStatus] = useState<PreviewStatus>("idle");
+  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [logs, setLogs] = useState<string[]>([]);
+  const [compatOk, setCompatOk] = useState(true);
+  const [compatMessage, setCompatMessage] = useState("");
+  const [iframeLoading, setIframeLoading] = useState(true);
+  const prevProjectRef = useRef<string | null>(null);
+  const prevReloadRef = useRef(0);
+  const iframeLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // ── Device Preset & Zoom ────────────────────────────────────────────────────
+  // `null` = auto-fit (fill available width, original behaviour)
+  const [devicePreset, setDevicePreset] = useState<DevicePreset | null>(null);
+  const [zoom, setZoom] = useState(100);
+  const presetDef = devicePreset ? DEVICE_PRESETS[devicePreset] : null;
+
+  const handleZoomIn = useCallback(() => {
+    setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP));
+  }, []);
+
+  const handleZoomOut = useCallback(() => {
+    setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP));
+  }, []);
+
+  const handleZoomReset = useCallback(() => {
+    setZoom(100);
+  }, []);
+
+  // 互換性チェック（初回のみ）
+  useEffect(() => {
+    checkCompatibility().then((r) => {
+      setCompatOk(r.ok);
+      if (!r.crossOriginIsolated) {
+        setCompatMessage(
+          "⚠️ Cross-Origin Isolation is not enabled. " +
+          "The Vite dev server must be started with the correct HTTP headers. " +
+          "Run `npm run dev` with the updated vite.config.ts."
+        );
+      } else if (!r.ok) {
+        setCompatMessage(
+          "Some required browser features are not available. " +
+          "Please use a modern Chromium-based browser (Chrome 105+)."
+        );
+      }
+    });
+  }, []);
+
+  // WebContainer の状態変更を購読
+  useEffect(() => {
+    const unsub = previewManager.onStateChange((state: import("@/lib/preview").PreviewState) => {
+      setStatus(state.status);
+      setPreviewUrl(state.url);
+      setError(state.error);
+      setLogs(state.logs || []);
+    });
+    return unsub;
+  }, []);
+
+  // プロジェクト選択時 → WebContainer 起動
+  useEffect(() => {
+    if (!currentProjectId) return;
+    if (prevProjectRef.current === currentProjectId) return;
+    prevProjectRef.current = currentProjectId;
+
+    previewManager
+      .boot(currentProjectId)
+      .catch((e: any) => {
+        console.error("[preview] Boot failed:", e);
+        setError(e.message || String(e));
+      });
+  }, [currentProjectId]);
+
+  // タブが再フォーカスされたときにエラー状態から自動復帰
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      if (status !== "error") return;
+      if (!currentProjectId) return;
+
+      console.log("[preview] Tab became visible, recovering from error...");
+      setError(null);
+      previewManager
+        .boot(currentProjectId)
+        .catch((e: any) => {
+          console.error("[preview] Auto-recovery failed:", e);
+          setError(e.message || String(e));
+        });
+    };
+
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+    return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
+  }, [status, currentProjectId]);
+
+  // previewUrl 変更時 → iframe のローディング状態をリセット
+  useEffect(() => {
+    if (previewUrl) {
+      setIframeLoading(true);
+
+      // 安全タイムアウト: 30秒経過しても load が来なければ強制解除
+      if (iframeLoadTimeoutRef.current) clearTimeout(iframeLoadTimeoutRef.current);
+      iframeLoadTimeoutRef.current = setTimeout(() => {
+        setIframeLoading(false);
+      }, 30000);
+    }
+    return () => {
+      if (iframeLoadTimeoutRef.current) clearTimeout(iframeLoadTimeoutRef.current);
+    };
+  }, [previewUrl]);
+
+  // アンマウント時にタイムアウトをクリア
+  useEffect(() => {
+    return () => {
+      if (iframeLoadTimeoutRef.current) clearTimeout(iframeLoadTimeoutRef.current);
+    };
+  }, []);
+
+  // reloadCounter 変更時 → ファイル同期
+  useEffect(() => {
+    if (!currentProjectId || reloadCounter <= prevReloadRef.current) return;
+    if (!workspaceReady) return;
+    prevReloadRef.current = reloadCounter;
+
+    previewManager
+      .syncAndReload(currentProjectId)
+      .catch((e: any) => {
+        console.error("[preview] Sync failed:", e);
+        setError(e.message || String(e));
+      });
+  }, [reloadCounter, currentProjectId, workspaceReady]);
+
+  // 手動リロード
+  const handleReload = useCallback(() => {
+    if (!currentProjectId) return;
+    setError(null);
+    // iframe のリロード
+    const iframe = document.getElementById("preview-iframe") as HTMLIFrameElement | null;
+    if (iframe && previewUrl) {
+      iframe.src = previewUrl;
+    }
+    // コンテナ再同期
+    previewManager.syncAndReload(currentProjectId).catch((e: any) => {
+      setError(e.message || String(e));
+    });
+  }, [currentProjectId, previewUrl]);
+
+  // エラー画面（互換性）
+  if (!compatOk) {
+    return (
+      <div className="flex h-full items-center justify-center bg-muted/10 p-4">
+        <div className="max-w-sm text-center space-y-2">
+          <AlertTriangle className="mx-auto h-8 w-8 text-amber-500" />
+          <p className="text-sm text-muted-foreground whitespace-pre-wrap">
+            {compatMessage || "Cross-Origin Isolation is not available. Preview requires WebContainer support."}
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // プロジェクト未選択
+  if (!currentProjectId) {
+    return (
+      <div className="flex h-full items-center justify-center bg-muted/10 p-4">
+        <p className="text-sm text-muted-foreground">
+          {t("preview.selectProject")}
+        </p>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className={`flex h-full flex-col ${
+        previewMaximized ? "fixed inset-0 z-50 bg-background" : ""
+      }`}
+    >
+      {/* Header */}
+      <div className="flex items-center justify-between border-b bg-muted/20 px-3 py-1.5">
+        <div className="flex items-center gap-2">
+          <span className="text-xs font-medium">
+            {t("preview.title")}
+          </span>
+          {status !== "ready" && status !== "idle" && (
+            <Badge variant="secondary" className="gap-1 text-[10px]">
+              {STATUS_ICONS[status]}
+              {getStatusLabel(status, t)}
+            </Badge>
+          )}
+          {status === "ready" && previewUrl && (
+            <Badge variant="outline" className="gap-1 text-[10px] text-green-600 border-green-300">
+              <Wifi className="h-2.5 w-2.5" />
+              HMR
+            </Badge>
+          )}
+
+          {/* Device Presets (toggle on/off) */}
+          <div className="ml-2 flex items-center gap-0.5 rounded-md border bg-muted/30 p-0.5">
+            {(Object.keys(DEVICE_PRESETS) as DevicePreset[]).map((key) => {
+              const isActive = devicePreset === key;
+              return (
+                <button
+                  key={key}
+                  onClick={() => setDevicePreset(isActive ? null : key)}
+                  className={`flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] transition-colors ${
+                    isActive
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                  title={`${DEVICE_PRESETS[key].label} (${DEVICE_PRESETS[key].width}×${DEVICE_PRESETS[key].height})${isActive ? " — click to disable" : ""}`}
+                >
+                  {DEVICE_ICONS[key]}
+                  {key === "mobile" && (
+                    <span className="hidden sm:inline">375</span>
+                  )}
+                  {key === "tablet" && (
+                    <span className="hidden sm:inline">768</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+
+          {/* Zoom Controls */}
+          <div className="flex items-center gap-0.5 rounded-md border bg-muted/30 px-1 py-0.5">
             <button
               onClick={handleZoomOut}
-              className="h-7 w-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-              title={t('preview.zoomOut')}
+              disabled={zoom <= ZOOM_MIN}
+              className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title={t("preview.zoomOut")}
             >
-              <ZoomOut className="h-3.5 w-3.5" />
+              <ZoomOut className="h-3 w-3" />
             </button>
             <button
               onClick={handleZoomReset}
-              className="h-7 min-w-[2.5rem] px-1 flex items-center justify-center rounded text-[10px] tabular-nums text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-              title={t('preview.zoomReset')}
+              className="rounded px-1 py-0.5 text-[10px] font-medium tabular-nums text-muted-foreground hover:text-foreground transition-colors min-w-[2.5rem] text-center"
+              title={t("preview.zoomReset")}
             >
-              {Math.round(zoom * 100)}%
+              {zoom}%
             </button>
             <button
               onClick={handleZoomIn}
-              className="h-7 w-7 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
-              title={t('preview.zoomIn')}
+              disabled={zoom >= ZOOM_MAX}
+              className="rounded p-0.5 text-muted-foreground hover:text-foreground disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              title={t("preview.zoomIn")}
             >
-              <ZoomIn className="h-3.5 w-3.5" />
+              <ZoomIn className="h-3 w-3" />
             </button>
           </div>
-
+        </div>
+        <div className="flex items-center gap-1">
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="h-6 w-6"
             onClick={handleReload}
-            title={t('preview.reload')}
+            disabled={status === "installing" || status === "booting"}
+            title={t("common.refresh")}
           >
-            <RefreshCw className="h-3.5 w-3.5" />
+            <RefreshCw
+              className={`h-3.5 w-3.5 ${
+                status === "syncing" ? "animate-spin" : ""
+              }`}
+            />
           </Button>
           <Button
             variant="ghost"
             size="icon"
-            className="h-7 w-7"
+            className="h-6 w-6"
             onClick={togglePreviewMaximized}
-            title={previewMaximized ? t('preview.restore') : t('preview.maximize')}
+            title={
+              previewMaximized
+                ? t("common.minimize")
+                : t("common.maximize")
+            }
           >
             {previewMaximized ? (
               <Minimize2 className="h-3.5 w-3.5" />
@@ -351,102 +441,86 @@ export function PreviewPanel() {
         </div>
       </div>
 
-      {/* Preview Content */}
-      <div className="flex-1 bg-white relative overflow-hidden">
-        {workspaceReady || currentProjectId ? (
-          <>
+      {/* Preview Area */}
+      <div className="flex-1 overflow-hidden bg-white">
+        {status === "booting" || status === "installing" || status === "starting-dev" || (status === "syncing" && !previewUrl) ? (
+          <LogViewer logs={logs} status={status} />
+        ) : error ? (
+          <div className="flex h-full items-center justify-center p-4">
+            <div className="max-w-md space-y-2 text-center">
+              <AlertTriangle className="mx-auto h-6 w-6 text-destructive" />
+              <p className="text-xs text-destructive font-medium">
+                {t("preview.previewError")}
+              </p>
+              <pre className="max-h-48 overflow-auto rounded border bg-muted p-2 text-left text-[10px] text-muted-foreground">
+                {error}
+              </pre>
+              <Button variant="outline" size="sm" className="mt-2" onClick={handleReload}>
+                <RefreshCw className="mr-1 h-3 w-3" />
+                {t("common.retry")}
+              </Button>
+            </div>
+          </div>
+        ) : previewUrl ? (
+          <div className="relative flex h-full items-start justify-center overflow-auto bg-white/50 dark:bg-black/20">
             <div
-              className="flex items-start justify-center w-full h-full overflow-auto"
+              className="relative shrink-0 transition-[width,height] duration-200"
               style={{
-                padding: devicePreset ? "16px" : "0",
-                background: devicePreset ? "repeating-conic-gradient(rgba(0,0,0,0.03) 0% 25%, transparent 0% 50%) 0 0 / 20px 20px" : undefined,
+                width: presetDef ? `${presetDef.width}px` : "100%",
+                height: presetDef ? `${presetDef.height}px` : "100%",
+                transform: `scale(${zoom / 100})`,
+                transformOrigin: "top center",
               }}
             >
-              <div
-                style={{
-                  transform: devicePreset ? `scale(${zoom})` : `scale(${zoom})`,
-                  transformOrigin: "top center",
-                  width: devicePreset ? `${devicePresets[devicePreset].width}px` : "100%",
-                  height: devicePreset ? `${devicePresets[devicePreset].height}px` : "100%",
-                  minWidth: devicePreset ? `${devicePresets[devicePreset].width}px` : undefined,
-                  transition: "width 0.2s ease, height 0.2s ease",
-                  boxShadow: devicePreset ? "0 4px 24px rgba(0,0,0,0.15)" : "none",
-                  borderRadius: devicePreset === "mobile" ? "24px" : devicePreset === "tablet" ? "8px" : "0",
-                  overflow: "hidden",
-                }}
-              >
-                <iframe
-                  ref={iframeRef}
-                  src={previewUrl}
-                  className={`h-full w-full border-none ${projectSwitching || appLoading || (!workspaceReady && currentProjectId) || navigating || loading ? "invisible" : ""}`}
-                  title="App Preview"
-                  style={{
-                    width: devicePreset ? `${devicePresets[devicePreset].width}px` : "100%",
-                    height: devicePreset ? `${devicePresets[devicePreset].height}px` : "100%",
-                  }}
-                />
-              </div>
-            </div>
-            {(projectSwitching || appLoading || loading || navigating || (!workspaceReady && currentProjectId)) && (
-              <div className="absolute inset-0 flex items-center justify-center bg-background">
-                <div className="rounded-lg bg-card border p-6 shadow-lg flex flex-col items-center gap-3 max-w-xs text-center">
-                  {pollingTimedOut ? (
-                    <AlertCircle className="h-6 w-6 text-destructive" />
-                  ) : (
-                    <Loader2 className="h-6 w-6 animate-spin text-primary" />
-                  )}
-                  <div>
-                    <p className="text-sm font-medium">
-                      {pollingTimedOut
-                        ? t('preview.startFailed')
-                        : navigating
-                          ? t('preview.restoringCheckpoint')
-                          : appLoading
-                            ? t('preview.preparingApp')
-                            : projectSwitching
-                              ? t('preview.switchingProject')
-                              : loading
-                                ? t('preview.startingServer')
-                                : t('preview.preparing')}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      {pollingTimedOut
-                        ? t('preview.serverNoResponse')
-                        : navigating
-                          ? t('preview.restoringFiles')
-                          : appLoading
-                            ? t('preview.installingDeps')
-                            : projectSwitching
-                              ? t('preview.restartingServer')
-                              : loading
-                                ? t('preview.waitingForVite')
-                                : ""}
-                    </p>
+              {/* Iframe コンテンツ読み込み中 — ローディングオーバーレイ */}
+              {iframeLoading && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-[1px] dark:bg-black/80">
+                  <div className="flex flex-col items-center gap-3">
+                    <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+                    <div className="flex flex-col items-center gap-1">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {t("preview.rendering")}
+                      </span>
+                      <span className="text-[10px] text-muted-foreground/60">
+                        {t("preview.loadingApp")}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )}
-            {/* Error banner for timed-out state even when workspaceReady is false */}
-            {pollingTimedOut && !workspaceReady && (
-              <div className="absolute bottom-3 left-3 right-3">
-                <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive text-center">
-                  {t('preview.serverNotResponding')}
+              )}
+
+              {/* If syncing while preview is already ready, show overlay */}
+              {status === "syncing" && (
+                <div className="absolute inset-0 z-20 flex items-center justify-center bg-white/50 backdrop-blur-[1px] dark:bg-black/50">
+                  <div className="max-w-sm">
+                    <LogViewer logs={logs} status={status} />
+                  </div>
                 </div>
-              </div>
-            )}
-          </>
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center text-muted-foreground p-8">
-            <div className="flex h-16 w-16 items-center justify-center rounded-full bg-muted mb-4">
-              <Monitor className="h-8 w-8" />
+              )}
+              <iframe
+                id="preview-iframe"
+                className="h-full w-full border-0"
+                src={previewUrl}
+                title="App Preview"
+                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                onLoad={() => {
+                  setIframeLoading(false);
+                  if (iframeLoadTimeoutRef.current) {
+                    clearTimeout(iframeLoadTimeoutRef.current);
+                    iframeLoadTimeoutRef.current = null;
+                  }
+                }}
+              />
             </div>
-            <h3 className="text-sm font-medium mb-1">{t('preview.notReady')}</h3>
-            <p className="text-xs text-center max-w-xs">
-              {t('preview.notReadyDesc')}
-            </p>
-            <p className="text-xs text-muted-foreground/60 mt-2">
-              workspace port: {workspacePort}
-            </p>
+          </div>
+        ) : (
+          <div className="flex h-full items-center justify-center">
+            <div className="flex flex-col items-center gap-2 text-muted-foreground">
+              <Loader2 className="h-5 w-5 animate-spin" />
+              <p className="text-xs">
+                {t("preview.loading")}
+              </p>
+            </div>
           </div>
         )}
       </div>
