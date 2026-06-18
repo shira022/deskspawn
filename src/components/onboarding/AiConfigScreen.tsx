@@ -214,6 +214,9 @@ export function AiConfigScreen() {
            <p className="text-sm text-muted-foreground">
              {t('ai.welcomeDescription')}
            </p>
+           <p className="text-xs text-muted-foreground/60 leading-relaxed">
+             {t('ai.securityNote')}
+           </p>
         </div>
 
         <Separator />
