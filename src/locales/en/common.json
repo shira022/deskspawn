@@ -40,7 +40,7 @@
   },
   "ai": {
     "welcome": "Welcome to DeskSpawn",
-    "welcomeDescription": "Set up the AI model you want to use. Your API key is stored securely in your browser and sent directly to your chosen AI provider.",
+    "welcomeDescription": "Set up the AI model you want to use. Your API key is stored in your browser's local storage and sent directly to your chosen AI provider.",
     "securityNote": "Your API key never leaves your browser. It is stored in your browser's local storage and only sent directly to the AI provider when making requests.",
     "savedInBrowser": "stored in your browser",
     "provider": "AI Provider",
@@ -298,7 +298,7 @@
     "hero": {
       "title1": "Build Web Apps",
       "title2": "with AI",
-      "subtitle": "Just describe what you want. AI turns your words into a working web app. Everything runs in your browser, and your data stays on your computer. Free to use — you only pay for the AI API calls you make. Or use Ollama for completely free local LLMs.",
+      "subtitle": "Just describe what you want. AI turns your words into a working web app. Everything runs in your browser, and your data stays on your computer.",
       "tryButton": "Try It Now",
       "githubButton": "GitHub"
     },
@@ -329,7 +329,7 @@
     },
     "cta": {
       "title": "Ready to build your first app?",
-      "subtitle": "Just add your API key (or use Ollama for free) and start creating. It only takes a few minutes.",
+      "subtitle": "Just add your API key and start creating. It only takes a few minutes.",
       "button": "Get Started"
     },
     "footer": "DeskSpawn — Build web apps with AI. No coding required."
