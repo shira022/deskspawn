@@ -5,9 +5,9 @@
  * Displays language buttons with a humorous, lighthearted design.
  */
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
-import { languages, languageSelectPhrases } from "@/lib/languages";
+import { languages, languageSelectPhrases, languageSelectSubtitles } from "@/lib/languages";
 import { Globe, X } from "lucide-react";
 
 interface Props {
@@ -20,39 +20,19 @@ export function LanguageSelectScreen({ onSelect, onClose }: Props) {
   const { t } = useTranslation();
   const [mounted, setMounted] = useState(false);
   const [phraseIdx, setPhraseIdx] = useState(0);
-  const [introIdx, setIntroIdx] = useState(0);
   const [hoveredCode, setHoveredCode] = useState<string | null>(null);
-
-  const intros = useMemo(
-    () => languages.flatMap((l) => l.intros).sort(() => Math.random() - 0.5),
-    [],
-  );
 
   useEffect(() => {
     setMounted(true);
   }, []);
 
-  // Upper line: multi-language title cycling at 3000ms
+  // Paired title + subtitle cycling at 3000ms
   useEffect(() => {
     const interval = setInterval(() => {
       setPhraseIdx((i) => (i + 1) % languageSelectPhrases.length);
     }, 3000);
     return () => clearInterval(interval);
   }, []);
-
-  // Lower line: homage rotation at 6700ms, random (avoid repeats)
-  useEffect(() => {
-    const interval = setInterval(() => {
-      setIntroIdx((i) => {
-        let next: number;
-        do {
-          next = Math.floor(Math.random() * intros.length);
-        } while (next === i && intros.length > 1);
-        return next;
-      });
-    }, 6700);
-    return () => clearInterval(interval);
-  }, [intros.length]);
 
   return (
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-background">
@@ -89,26 +69,14 @@ export function LanguageSelectScreen({ onSelect, onClose }: Props) {
           </div>
         </div>
 
-        {/* Two-line text area */}
-        <div className="flex flex-col items-center gap-0.5">
-          {/* Upper line — multi-language title */}
-          <div className="h-7 text-center">
-            <span
-              key={phraseIdx}
-              className="text-base font-semibold transition-all duration-500"
-            >
-              {languageSelectPhrases[phraseIdx]}
-            </span>
-          </div>
-          {/* Lower line — homage rotation */}
-          <div className="h-5 text-center">
-            <span
-              key={introIdx}
-              className="text-xs text-muted-foreground transition-all duration-500"
-            >
-              {intros[introIdx]}
-            </span>
-          </div>
+        {/* Rotating multi-language title */}
+        <div className="h-7 text-center">
+          <span
+            key={phraseIdx}
+            className="text-base font-semibold transition-all duration-500"
+          >
+            {languageSelectPhrases[phraseIdx]}
+          </span>
         </div>
 
         {/* Language buttons */}
@@ -161,9 +129,9 @@ export function LanguageSelectScreen({ onSelect, onClose }: Props) {
           })}
         </div>
 
-        {/* Footer hint */}
+        {/* Footer hint — rotating multi-language subtitle */}
         <p className="text-xs text-muted-foreground/40 transition-opacity duration-500 hover:opacity-100">
-          {onClose ? t("languageSelect.footerClose") : t("languageSelect.footer")}
+          {onClose ? t("languageSelect.footerClose") : languageSelectSubtitles[phraseIdx]}
         </p>
       </div>
     </div>

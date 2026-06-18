@@ -1,6 +1,6 @@
 {
   "name": "deskspawn",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "AI-powered web app generation platform (browser edition)",
   "type": "module",
   "scripts": {
