@@ -1,5 +1,5 @@
 import type { CheckpointInfo, ChatMessage } from "@/types";
-import { sidecarBase } from "@/lib/constants";
+import { getProjectId } from "@/engine/tool-executors";
 
 /**
  * Given the current checkpoint index (as used by the preview slider),
@@ -44,26 +44,16 @@ export function getMessageCountForCheckpoint(
 }
 
 /**
- * Restore project files to a given checkpoint and clean up future checkpoints.
+ * Restore project files to a given checkpoint and clean up future checkpoints
+ * using browser-native checkpoint storage (IndexedDB).
  * Throws if the restore fails.
  */
 export async function restoreCheckpoint(checkpointId: string): Promise<void> {
-  const restoreRes = await fetch(`${sidecarBase()}/projects/restore`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ checkpointId }),
-  });
-  if (!restoreRes.ok) {
-    throw new Error(`Restore failed: ${await restoreRes.text()}`);
-  }
+  const pid = getProjectId();
+  if (!pid) throw new Error("No project selected.");
 
-  // Clean up checkpoints after the restored one (undo-style)
-  const cleanupRes = await fetch(`${sidecarBase()}/projects/checkpoints/cleanup`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ keepCheckpointId: checkpointId }),
-  });
-  if (!cleanupRes.ok) {
-    console.warn("[checkpoint] Cleanup returned non-OK:", await cleanupRes.text());
-  }
+  // Use the browser-native checkpoint restore from tool-executors
+  const { restoreCheckpoint: engineRestore, deleteCheckpointsAfter } = await import("@/engine/tool-executors");
+  await engineRestore(pid, checkpointId);
+  await deleteCheckpointsAfter(pid, checkpointId);
 }

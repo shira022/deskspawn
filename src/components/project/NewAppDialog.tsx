@@ -14,8 +14,10 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Sparkles } from "lucide-react";
-import { sidecarBase } from "@/lib/constants";
-import { parseSidecarError } from "@/lib/utils";
+import { listProjects, saveProject } from "@/lib/storage";
+import { setProjectId } from "@/engine/tool-executors";
+import { writeProjectFiles, writeProjectFile } from "@/lib/storage-opfs";
+import { getTemplateFiles } from "@/lib/template";
 
 interface NewAppDialogProps {
   open: boolean;
@@ -37,9 +39,10 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
     setAgentStepCount,
     setFileTree,
     setSelectedFile,
-    setErrors,
     setProjectSwitching,
     setAppLoading,
+    triggerReload,
+    settings,
   } = useAppStore();
 
   const handleCreate = async () => {
@@ -54,46 +57,59 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
     setProjectSwitching(true);
 
     try {
-      const res = await fetch(`${sidecarBase()}/projects/new`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
-      });
+      const projectId = crypto.randomUUID();
+      const now = new Date().toISOString();
 
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
-      }
+      const project = {
+        id: projectId,
+        name,
+        createdAt: now,
+        updatedAt: now,
+      };
 
-      const data = await res.json();
-      const { project, projects } = data;
+      // Save to IndexedDB
+      await saveProject(project);
 
-      // Update store
-      setProjects(projects);
-      setCurrentProjectId(project.id);
+      // Set current project in engine
+      setProjectId(projectId);
 
-      // Reset all session state for fresh start
+      // Refresh project list
+      const updatedProjects = await listProjects();
+      setProjects(updatedProjects);
+      setCurrentProjectId(projectId);
+
+      // Reset session state
       clearMessages();
       setWorkspaceReady(false);
       setAgentStatus("idle");
       setAgentStepCount(0);
       setFileTree([]);
       setSelectedFile(null);
-      setErrors([]);
 
-      // Keep projectSwitching true + set appLoading to show preparation overlay
-      setAppLoading(true);
+      // Copy template files into the new project
+      await writeProjectFiles(projectId, getTemplateFiles(settings.language));
 
+      // Write the actual project ID so the generated app uses the correct DB name
+      await writeProjectFile(projectId, "src/lib/project-id.ts",
+        `// ============================================================
+// Project ID — injected by DeskSpawn at project creation time.
+// DO NOT MODIFY: Uniquely identifies this project's IndexedDB.
+// ============================================================
+
+export const PROJECT_ID = "${projectId}";
+`,
+      );
+
+      // ワークスペースの準備完了 — ローディングオーバーレイを即時解除
+      // プレビューのビルドはバックグラウンドで非同期に実行される
+      setWorkspaceReady(true);
+      setAppLoading(false);
+      triggerReload();
       onOpenChange(false);
+      setProjectSwitching(false);
       setAppName("");
     } catch (e: any) {
-      const msg = String(e.message || e);
-      // Network errors (sidecar not running) → friendly message
-      if (/Load failed|fetch|NetworkError|Failed to fetch|connect.*refused|ECONNREFUSED/i.test(msg)) {
-        setError(t('project.sidecarError'));
-      } else {
-        setError(msg);
-      }
+      setError(e.message || t('project.createError') || 'Failed to create project');
       setProjectSwitching(false);
       setAppLoading(false);
     } finally {

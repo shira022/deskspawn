@@ -6,11 +6,14 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StepLogPanel } from "@/components/chat/StepLogPanel";
 import { PhaseDetailPanel } from "@/components/chat/PhaseDetailPanel";
-import { MessageSquare, Bot, Loader2, ChevronDown, ChevronLeft, ChevronRight, History, Clock, Search, X } from "lucide-react";
+import { MessageSquare, Bot, Loader2, ChevronDown, ChevronLeft, ChevronRight, History, Clock, Search, X, WifiOff } from "lucide-react";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { getMessageCountForCheckpoint, restoreCheckpoint } from "@/lib/checkpoint-utils";
-import { sidecarBase } from "@/lib/constants";
-import { useChatSSE } from "@/hooks/useChatSSE";
+import { useChatStream } from "@/hooks/useChatStream";
+import { previewManager } from "@/lib/preview";
+import type { PreviewStatus } from "@/lib/preview";
+
+const useChatSSE = useChatStream;
 
 export function ChatPanel() {
   const messages = useAppStore((s) => s.messages);
@@ -27,6 +30,16 @@ export function ChatPanel() {
   const fetchChatHistory = useAppStore((s) => s.fetchChatHistory);
   const initialized = useAppStore((s) => s.initialized);
   const { t } = useTranslation();
+
+  // Preview status (for chat indicator)
+  const [previewStatus, setPreviewStatus] = useState<PreviewStatus>("idle");
+
+  useEffect(() => {
+    const unsub = previewManager.onStateChange((state) => {
+      setPreviewStatus(state.status);
+    });
+    return unsub;
+  }, []);
 
   // SSE streaming state (抽出されたフック)
   const {
@@ -252,11 +265,9 @@ export function ChatPanel() {
 
         if (cpIdx >= 0 && cpIdx < checkpoints.length) {
           try {
-            await fetch(`${sidecarBase()}/projects/checkpoints/cleanup`, {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ keepCheckpointId: checkpoints[cpIdx].id }),
-            });
+            const { deleteCheckpointsAfter } = await import("@/engine/tool-executors");
+            const pid = useAppStore.getState().currentProjectId;
+            if (pid) await deleteCheckpointsAfter(pid, checkpoints[cpIdx].id);
           } catch (e) {
             console.warn("[chat] Failed to cleanup checkpoints after navigate-back:", e);
           }
@@ -283,7 +294,7 @@ export function ChatPanel() {
 
   const handleNavigateToCheckpoint = useCallback(async (checkpointIndex: number) => {
     const state = useAppStore.getState();
-    const { checkpoints: cps, setWorkspaceReady, setCurrentCheckpointIndex, setVisibleMessageCount, messages: msgs } = state;
+    const { checkpoints: cps, setWorkspaceReady, setCurrentCheckpointIndex, setVisibleMessageCount, triggerReload, messages: msgs } = state;
     const cp = cps[checkpointIndex];
     if (!cp) return;
 
@@ -298,11 +309,12 @@ export function ChatPanel() {
     }
 
     try {
-      await fetch(`${sidecarBase()}/projects/restore`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ checkpointId: cp.id }),
-      });
+      const { restoreCheckpoint } = await import("@/engine/tool-executors");
+      const pid = useAppStore.getState().currentProjectId;
+      if (pid) await restoreCheckpoint(pid, cp.id);
+      // プレビューを復元後のファイル状態に同期する
+      setWorkspaceReady(true);
+      triggerReload();
     } catch (e) {
       console.warn("[chat] Failed to navigate to checkpoint:", e);
       setWorkspaceReady(true);
@@ -350,7 +362,7 @@ export function ChatPanel() {
               <>
                 <button
                   onClick={() => handleNavigateToCheckpoint(currentCheckpointIndex - 1)}
-                  disabled={currentCheckpointIndex <= 0}
+                  disabled={currentCheckpointIndex <= 0 || agentStatus === "running"}
                   className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-20 disabled:pointer-events-none"
                   title={t('chat.prevState')}
                 >
@@ -361,7 +373,7 @@ export function ChatPanel() {
                 </span>
                 <button
                   onClick={() => handleNavigateToCheckpoint(currentCheckpointIndex + 1)}
-                  disabled={currentCheckpointIndex >= checkpoints.length - 1}
+                  disabled={currentCheckpointIndex >= checkpoints.length - 1 || agentStatus === "running"}
                   className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors disabled:opacity-20 disabled:pointer-events-none"
                   title={t('chat.nextState')}
                 >
@@ -406,6 +418,21 @@ export function ChatPanel() {
             {agentStepCount > 0
               ? `Step ${agentStepCount}/${agentMaxSteps}${continuationRound > 0 ? ` (${t('chat.continuation', { round: continuationRound, max: maxContinuations })})` : ""}: ${t('chat.generating')}`
               : t('chat.aiGenerating')}
+          </span>
+        )}
+        {agentStatus !== "running" && (previewStatus === "booting" || previewStatus === "installing" || previewStatus === "starting-dev" || previewStatus === "syncing") && (
+          <span className="ml-auto text-xs text-muted-foreground/60 flex items-center gap-1">
+            <Loader2 className="h-2.5 w-2.5 animate-spin" />
+            {previewStatus === "booting" && t("preview.statusBooting")}
+            {previewStatus === "installing" && t("preview.statusInstalling")}
+            {previewStatus === "starting-dev" && t("preview.statusStartingDev")}
+            {previewStatus === "syncing" && t("preview.statusSyncing")}
+          </span>
+        )}
+        {agentStatus !== "running" && previewStatus === "error" && (
+          <span className="ml-auto text-xs text-destructive/60 flex items-center gap-1">
+            <WifiOff className="h-2.5 w-2.5" />
+            {t("preview.previewError")}
           </span>
         )}
       </div>
@@ -537,7 +564,7 @@ export function ChatPanel() {
               </p>
               {currentProjectId && (
                 <div className="mt-4 flex flex-wrap gap-1.5 justify-center">
-                  {[t('chat.suggestion.styleCounter'), t('chat.suggestion.todoApp'), t('chat.suggestion.darkMode'), t('chat.suggestion.timerFeature')].map((s) => (
+                  {[t('chat.suggestion.calendarApp'), t('chat.suggestion.todoApp'), t('chat.suggestion.darkMode'), t('chat.suggestion.timerFeature')].map((s) => (
                     <button
                       key={s}
                       className="rounded-full border border-border/50 px-2.5 py-0.5 text-xs text-muted-foreground hover:bg-muted transition-colors"
