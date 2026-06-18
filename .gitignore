@@ -20,6 +20,7 @@ coverage/
 preview*.png
 todo*.png
 project*.png
+deskspawn-*.png
 
 # Agent artifacts
 .agents/artifacts/
@@ -27,3 +28,4 @@ project*.png
 # Runtime data
 projects/
 workspace/
+*.png
