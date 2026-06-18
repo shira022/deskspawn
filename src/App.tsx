@@ -1,11 +1,10 @@
-import { Component, type ReactNode, useEffect, useCallback, useState } from "react";
+import { Component, type ReactNode, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { ToastContainer } from "@/components/ui/toast";
 import { Button } from "@/components/ui/button";
 import { AlertTriangle, RefreshCw, Loader2 } from "lucide-react";
-import { checkCompatibility, getCompatErrorMessage } from "@/lib/compatibility";
 
 // ── ErrorBoundary ────────────────────────────────────────────────────────────
 
@@ -53,44 +52,6 @@ class ErrorBoundary extends Component<
   }
 }
 
-// ── Compatibility Check Screen ────────────────────────────────────────────────
-
-function CompatCheckScreen() {
-  const { t } = useTranslation();
-  const [result, setResult] = useState<Awaited<ReturnType<typeof checkCompatibility>> | null>(null);
-
-  useEffect(() => {
-    checkCompatibility().then(setResult);
-  }, []);
-
-  if (!result) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background">
-        <div className="flex flex-col items-center gap-3 text-muted-foreground">
-          <Loader2 className="h-6 w-6 animate-spin" />
-          <p className="text-sm">{t('common.loading')}</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (!result.ok) {
-    return (
-      <div className="flex h-screen w-screen items-center justify-center bg-background p-4">
-        <div className="max-w-lg space-y-4 rounded-xl border border-destructive/30 bg-card p-8 text-center shadow-lg">
-          <AlertTriangle className="mx-auto h-12 w-12 text-destructive" />
-          <h2 className="text-lg font-semibold">{t('common.browserNotCompatible') || 'Browser Not Compatible'}</h2>
-          <pre className="whitespace-pre-wrap text-left text-sm text-muted-foreground bg-muted rounded-md p-4">
-            {getCompatErrorMessage(result)}
-          </pre>
-        </div>
-      </div>
-    );
-  }
-
-  return null; // Compatible
-}
-
 // ── Main App ──────────────────────────────────────────────────────────────────
 
 export function App() {
@@ -98,17 +59,11 @@ export function App() {
   const initialize = useAppStore((s) => s.initialize);
   const settings = useAppStore((s) => s.settings);
   const setResolvedTheme = useAppStore((s) => s.setResolvedTheme);
-  const [compatOk, setCompatOk] = useState(false);
-
-  // ── Compatibility check ───────────────────────────────────────────
-  useEffect(() => {
-    checkCompatibility().then((r) => setCompatOk(r.ok));
-  }, []);
 
   // ── Initialize app ────────────────────────────────────────────────
   useEffect(() => {
-    if (compatOk) initialize();
-  }, [compatOk, initialize]);
+    initialize();
+  }, [initialize]);
 
   // ── Theme management ──────────────────────────────────────────────
   const applyTheme = useCallback((theme: string) => {
@@ -138,11 +93,6 @@ export function App() {
   }, [settings.uiFontSize, settings.codeFontSize]);
 
   const { t } = useTranslation();
-
-  // ── Compatibility check screen (blocking) ─────────────────────────
-  if (!compatOk) {
-    return <CompatCheckScreen />;
-  }
 
   // ── Loading screen (init) ────────────────────────────────────────
   if (!initialized) {
