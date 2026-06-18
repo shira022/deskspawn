@@ -40,19 +40,16 @@
   },
   "ai": {
     "welcome": "DeskSpawn へようこそ",
-    "welcomeDescription": "使用する AI モデルを設定してください。API キーの保存方法は OS キーチェーンまたはファイルから選択できます。",
+    "welcomeDescription": "使用する AI モデルを設定してください。API キーはブラウザ内に安全に保存され、選択した AI プロバイダーに直接送信されます。",
+    "securityNote": "API キーがブラウザから外部に送信されることはありません。ブラウザのローカルストレージに保存され、リクエスト時に直接 AI プロバイダーに送信されます。",
+    "savedInBrowser": "ブラウザに保存されています",
     "provider": "AI プロバイダー",
     "providerOllamaDesc": "ローカルLLM",
     "providerCustomDesc": "OpenAI 互換",
     "providerCustom": "カスタム",
     "apiKey": "API キー",
     "apiKeySettings": "APIキー設定",
-    "keychain": "OS キーチェーン",
-    "file": "ファイル",
     "savedIn": "に保存されています",
-    "storageMethod": "保存先",
-    "keychainDescription": "API キーは OS のキーチェーンに保存され、他のアプリから読み取れません。",
-    "fileDescription": "API キーは設定ディレクトリ内の credentials.json に保存されます（パーミッション 600）。",
     "model": "モデル",
     "modelPlaceholder": "モデル名を入力",
     "modelPlaceholderWithExample": "モデル名を入力（例: gpt-4o）",
@@ -301,7 +298,7 @@
     "hero": {
       "title1": "AI で Web アプリを",
       "title2": "作る",
-      "subtitle": "チャットで伝えるだけ。あなたの言葉が、AI によって動く Web アプリに変わります。ブラウザだけで完結。データはあなたの PC に留まります。",
+      "subtitle": "チャットで伝えるだけ。あなたの言葉が、AI によって動く Web アプリに変わります。ブラウザだけで完結。データはあなたの PC に留まります。API の利用料以外にコストはかかりません。Ollama を使えば完全に無料で利用することもできます。",
       "tryButton": "使ってみる",
       "githubButton": "GitHub"
     },
@@ -323,12 +320,16 @@
       "item4Desc": "アプリができあがる様子をその場で確認。変更を加えると、リアルタイムに画面が更新されます。",
       "item5Title": "品質も自動チェック",
       "item5Desc": "AI が動作するコードを生成し、自動でエラーチェックも行います。はじめからバグの少ないアプリに。",
-      "item6Title": "お好みの AI を選択",
-      "item6Desc": "OpenAI、Anthropic、Google など、お好みの AI サービスをお使いいただけます。"
+      "item6Title": "AI はお好みで — 無料でも使える",
+      "item6Desc": "OpenAI、Anthropic、Google など、お持ちの API キーをそのままお使いいただけます。Ollama を使えば完全に無料でローカル LLM を利用できます。"
+    },
+    "requirements": {
+      "title": "推奨環境",
+      "desc": "ある程度の性能を持つ LLM が必要です。GPT-5.4-nano レベル以上のモデルで正常動作を確認しています。性能が低いモデルでは、複雑なコード生成タスクを苦手とする場合があります。"
     },
     "cta": {
       "title": "さっそく始めてみませんか？",
-      "subtitle": "APIキーを設定するだけ。数分で使い始められます。",
+      "subtitle": "APIキーを設定するか、Ollama を使えば無料で始められます。数分で使い始められます。",
       "button": "今すぐ始める"
     },
     "footer": "DeskSpawn — AI が Web アプリを作る。コードは不要です。"

@@ -40,19 +40,16 @@
   },
   "ai": {
     "welcome": "Welcome to DeskSpawn",
-    "welcomeDescription": "Set up the AI model you want to use. You can choose to save your API key in the OS keychain or a file.",
+    "welcomeDescription": "Set up the AI model you want to use. Your API key is stored securely in your browser and sent directly to your chosen AI provider.",
+    "securityNote": "Your API key never leaves your browser. It is stored in your browser's local storage and only sent directly to the AI provider when making requests.",
+    "savedInBrowser": "stored in your browser",
     "provider": "AI Provider",
     "providerOllamaDesc": "Local LLM",
     "providerCustomDesc": "OpenAI Compatible",
     "providerCustom": "Custom",
     "apiKey": "API Key",
     "apiKeySettings": "API Key Settings",
-    "keychain": "OS Keychain",
-    "file": "File",
     "savedIn": "saved in",
-    "storageMethod": "Storage Method",
-    "keychainDescription": "The API key is stored in the OS keychain and cannot be read by other applications.",
-    "fileDescription": "The API key is stored in credentials.json in the config directory (permissions 600).",
     "model": "Model",
     "modelPlaceholder": "Enter model name",
     "modelPlaceholderWithExample": "Enter model name (e.g. gpt-4o)",
@@ -301,7 +298,7 @@
     "hero": {
       "title1": "Build Web Apps",
       "title2": "with AI",
-      "subtitle": "Just describe what you want. AI turns your words into a working web app. Everything runs in your browser, and your data stays on your computer.",
+      "subtitle": "Just describe what you want. AI turns your words into a working web app. Everything runs in your browser, and your data stays on your computer. Free to use — you only pay for the AI API calls you make. Or use Ollama for completely free local LLMs.",
       "tryButton": "Try It Now",
       "githubButton": "GitHub"
     },
@@ -323,12 +320,16 @@
       "item4Desc": "See your app come to life instantly. Make changes and watch it update in real time.",
       "item5Title": "Built-in Quality",
       "item5Desc": "AI generates clean, working code with automatic error checking. Fewer bugs from the start.",
-      "item6Title": "Your Choice of AI",
-      "item6Desc": "Works with OpenAI, Anthropic, Google, and more. Pick the AI service you prefer."
+      "item6Title": "Choose Your AI — Or Go Free",
+      "item6Desc": "Bring your own API key for OpenAI, Anthropic, Google, and more. Or use Ollama for completely free local LLMs — zero API costs."
+    },
+    "requirements": {
+      "title": "Requirements",
+      "desc": "A reasonably capable LLM is recommended. DeskSpawn has been verified to work with models at the GPT-5.4-nano level or above. Lower-capability models may struggle with complex code generation tasks."
     },
     "cta": {
       "title": "Ready to build your first app?",
-      "subtitle": "Just add your API key and start creating. It only takes a few minutes.",
+      "subtitle": "Just add your API key (or use Ollama for free) and start creating. It only takes a few minutes.",
       "button": "Get Started"
     },
     "footer": "DeskSpawn — Build web apps with AI. No coding required."
