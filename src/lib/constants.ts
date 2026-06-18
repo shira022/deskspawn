@@ -1,39 +1,6 @@
 /**
  * Centralized constants for DeskSpawn.
- *
- * サイドカーサーバーのURLやプロバイダー関連の定数を一元管理する。
- * 各コンポーネントはこのファイルからインポートすること。
  */
-
-let _sidecarPort = 3001;
-
-/** 現在のサイドカーポートを設定する（Rust backendから通知された場合） */
-export function setSidecarPort(port: number) {
-  if (port > 0 && port !== _sidecarPort) {
-    console.log(`[sidecar] Port updated: ${_sidecarPort} → ${port}`);
-    _sidecarPort = port;
-  }
-}
-
-/** 現在のサイドカーポートを取得する */
-export function getSidecarPort(): number {
-  return _sidecarPort;
-}
-
-/** サイドカーサーバーのベースURL（動的） */
-export function sidecarBase(): string {
-  return `http://localhost:${_sidecarPort}`;
-}
-
-/** サイドカーチャットエンドポイント（動的） */
-export function sidecarChatUrl(): string {
-  return `${sidecarBase()}/chat`;
-}
-
-/** サイドカーヘルスチェックURL（動的） */
-export function sidecarHealthUrl(): string {
-  return `${sidecarBase()}/health`;
-}
 
 import type { ProviderKind } from "@/types";
 
@@ -45,6 +12,9 @@ export const providerLabels: Record<string, string> = {
   openai: "OpenAI",
   anthropic: "Anthropic",
   google: "Google",
+  "amazon-bedrock": "AWS Bedrock",
+  "azure-openai": "Azure OpenAI",
+  "google-vertex": "GCP Vertex AI",
   ollama: "Ollama",
   custom: "Custom",
 };
@@ -54,6 +24,9 @@ export const providerIcons: Record<ProviderKind, string> = {
   openai: "Sparkles",
   anthropic: "Cloud",
   google: "Globe",
+  "amazon-bedrock": "HardDrive",
+  "azure-openai": "Container",
+  "google-vertex": "Zap",
   ollama: "Cpu",
   custom: "Server",
 };

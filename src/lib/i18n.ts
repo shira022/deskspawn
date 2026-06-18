@@ -1,5 +1,6 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
+import { SETTINGS_KEY } from "./constants";
 
 const localeModules = import.meta.glob(
   "@/locales/*/common.json",
@@ -14,9 +15,24 @@ for (const [path, mod] of Object.entries(localeModules)) {
   }
 }
 
+/** Read persisted language from settings storage, falling back to "ja". */
+function getInitialLanguage(): string {
+  const available = Object.keys(resources);
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    if (raw) {
+      const s = JSON.parse(raw);
+      if (typeof s.language === "string" && available.includes(s.language)) {
+        return s.language;
+      }
+    }
+  } catch {}
+  return available.includes("ja") ? "ja" : available[0] ?? "ja";
+}
+
 i18n.use(initReactI18next).init({
   resources,
-  lng: "ja",
+  lng: getInitialLanguage(),
   fallbackLng: "ja",
   interpolation: {
     escapeValue: false,
