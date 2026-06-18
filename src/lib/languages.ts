@@ -4,7 +4,6 @@ export const languages = [
     labelKey: "languages.ja",
     nativeName: "日本語",
     countryCode: "jp",
-    intros: ["人生は選択肢だ。", "帰る場所があるって、いいよね。"],
     subtitle: "おかえりなさい。",
   },
   {
@@ -12,15 +11,25 @@ export const languages = [
     labelKey: "languages.en",
     nativeName: "English",
     countryCode: "us",
-    intros: ["May the Force be with you.", "To infinity and beyond!"],
     subtitle: "This is the way.",
   },
 ] as const;
 
 export type LanguageCode = (typeof languages)[number]["code"];
 
-/** Multi-language "choose your language" phrases that cycle on the selection screen. */
+/**
+ * Multi-language "choose your language" phrases that cycle on the selection screen.
+ */
 export const languageSelectPhrases = [
   "Choose your language",
   "言語を選択してください",
+] as const;
+
+/**
+ * Multi-language "you can change it later" subtitles that cycle together
+ * with languageSelectPhrases (same index).
+ */
+export const languageSelectSubtitles = [
+  "You can change it later. It's easier than life choices.",
+  "後で変えられます。人生の選択より気楽です。",
 ] as const;
