@@ -38,20 +38,67 @@ For each assigned task:
 
 1. **Read existing code** — understand the files you will touch and the surrounding architecture
 2. **Implement the change** — follow the task `description` and `acceptance_criteria`
-3. **Respect layer boundaries**:
+3. **Write tests alongside** — for every new or modified file, create or update corresponding test files. See "Test Coverage Requirements" section below.
+4. **Respect layer boundaries**:
    - TypeScript/React: `src/` directory
    - Rust/Tauri: `src-tauri/` directory
    - SQL migrations: `migrations/` directory
    - Generated code: `src-tauri/src/generated/`, `src/hooks/` — **read-only, never edit** (protected by `@deskspawn:generated` markers; established by DeskSpawn's template project setup)
    - Custom code: `src-tauri/src/custom/`, `src/custom/` — edit freely, AST-guarded on apply
    - **Bootstrap note**: `generated/`, `custom/`, and `hooks/` directories do not exist until DeskSpawn's template scaffold is in place. If these directories are missing, do not create or reference them — work exclusively in `src/`, `src-tauri/src/`, and `migrations/`.
-4. **Follow existing code patterns** — match naming conventions, module structure, error handling style
-5. **Keep changes focused** — one task, one branch, minimal diff
-6. **Respect the security policy**:
+5. **Follow existing code patterns** — match naming conventions, module structure, error handling style
+6. **Keep changes focused** — one task, one branch, minimal diff
+7. **Respect the security policy**:
    - No `unsafe`, `std::process::Command`, `std::fs` write, `std::net` in Rust
    - No `eval()`, `new Function()`, unrestricted `fetch()` in TypeScript
    - New dependencies must be in the allowed package list
-7. **Respect i18n (internationalization):** All user-facing UI strings must use the i18n system. See "i18n Patterns" below.
+8. **Respect i18n (internationalization):** All user-facing UI strings must use the i18n system. See "i18n Patterns" below.
+
+#### Test Coverage Requirements
+
+Every implementation task MUST include corresponding tests. Follow these patterns:
+
+1. **File naming** — place test files alongside source files:
+   - Node/business logic tests: `src/foo/bar.ts` → `src/foo/bar.test.ts`
+   - UI/component tests (jsdom): `src/foo/Bar.tsx` → `src/foo/Bar.ui.test.tsx`
+   - Test helpers: `src/test/helpers/`
+
+2. **Framework** — uses **Vitest** throughout. Default config is Node environment; UI tests use `vitest.ui.config.ts` (jsdom).
+
+3. **Coverage expectations by layer**:
+
+   | Layer | Target Coverage | Notes |
+   |-------|----------------|-------|
+   | Pure utility functions (`lib/utils`, `lib/constants`, templates) | 90%+ statements | No mocking needed; test all branches |
+   | Business logic (`engine/retry`, `engine/step-limits`, `cost`) | 85%+ statements | Mock external I/O only; test edge cases |
+   | I/O-dependent lib (`lib/storage`, `lib/models-fetcher`, `lib/preview`) | 70%+ statements | Heavy mocking acceptable; focus on key flows |
+   | Engine/orchestrator (`engine/orchestrator`, `engine/tool-executors`) | 60%+ statements | Mock AI SDK calls; test phase flows and error paths |
+   | UI components (`components/ui/*`, simple feature components) | 80%+ branches | jsdom + testing-library; test variants, states, interactions |
+   | Store/hooks (`store/*`, `hooks/*`) | 70%+ statements | Mock all external deps; test state transitions and side effects |
+   | Complex integration targets (`storage-opfs`, `webcontainer`) | Manual/integration | Unit tests for sync surface; async flows via integration |
+
+4. **Mock patterns**:
+   - External modules: `vi.mock("module-name", () => ({ ... }))` at file top
+   - Browser APIs: `vi.stubGlobal("apiName", mockValue)` in `beforeEach`
+   - AI SDK calls: Mock `@ai-sdk/*` and `ai` modules entirely
+   - IndexedDB: Use `fake-indexeddb` for storage tests
+   - DOM/URL: Use `vi.spyOn` (not `vi.stubGlobal`) to keep constructors intact
+   - Zustand stores: Import real store, use `getState()` / `setState()` directly
+   - `vi.mock` factories are hoisted — define mocks inline, never reference external variables
+
+5. **Test structure rules**:
+   - Every test file must be self-contained (no shared mutable state between files)
+   - Reset mocks in `beforeEach` via `vi.clearAllMocks()` or `vi.unstubAllGlobals()`
+   - Avoid `test.each` for complex cases — prefer explicit named `it()` blocks
+   - Prefer `async/await` over Promise chains
+   - Use `expect(result).toMatchInlineSnapshot()` for complex string outputs
+
+6. **Verification** — before marking a task complete, run:
+   ```bash
+   npm test                          # Node tests
+   npx vitest run --config vitest.ui.config.ts  # UI tests
+   ```
+   All tests MUST pass. If you add new files without tests, you MUST document why.
 
 #### i18n Patterns
 
@@ -128,6 +175,11 @@ Before marking a task complete, verify:
 - Does it satisfy all acceptance criteria from the plan?
 - Is the diff clean, minimal, and focused on the task?
 - Are there any leftover debug logs, commented-out code, or TODO markers without explanation?
+- **Are the corresponding test files created?** — every new `.ts`/`.tsx` file should have a test file unless it's a type-only export, barrel export, or entry point
+- **Do all tests pass?** — run `npm test` and `npx vitest run --config vitest.ui.config.ts` and confirm zero failures
+- **Is coverage adequate for the layer?** — see "Test Coverage Requirements" for per-layer expectations
+- **Are the mocks correctly scoped?** — no shared mutable state between test files; mocks reset in `beforeEach`
+- **Are edge cases tested?** — empty states, error states, loading states, boundary values, null/undefined inputs
 
 ### Step 5: Commit
 

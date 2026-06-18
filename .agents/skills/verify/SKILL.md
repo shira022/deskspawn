@@ -51,14 +51,20 @@ cargo check
 ### Stage 3: Unit Tests
 
 ```bash
-# Frontend
+# Frontend — Node-environment tests (pure logic, engine, lib)
 npx vitest run
+
+# Frontend — UI/component tests (jsdom environment)
+npx vitest run --config vitest.ui.config.ts
+
+# Frontend — Coverage (optional but recommended)
+npx vitest run --coverage
 
 # Backend
 cargo test
 ```
 
-**Pass condition**: All tests pass. Zero failures, zero flakes. If tests are skipped with `.skip`, flag as warning.
+**Pass condition**: All tests pass across both environments. Zero failures, zero flakes. If tests are skipped with `.skip`, flag as warning. Coverage regression (new code with lower coverage than adjacent files) should be noted.
 
 ### Stage 4: Build
 
