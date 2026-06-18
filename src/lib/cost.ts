@@ -1,19 +1,21 @@
 /**
- * Cost calculation based on real model pricing from models.dev.
+ * Cost calculation using real model pricing from models.dev.
  *
  * Architecture:
- *   models.dev API  →  sidecar /api/models  →  useModels() hook
- *       ↓                                        ↓
- *   ModelInfo.cost (per-model $/1M tokens)   setModelCostCache()
- *       ↓                                        ↓
- *   calculateCost(usage)  ←──────────────  modelCostCache (Map)
+ *   models.dev API  →  models-fetcher catalog (in-memory cache, 24h TTL)
+ *       ↓                          ↓
+ *   setModelCostCache()    lookupModelCostById()  [fallback]
+ *       ↓                          ↓
+ *   modelCostCache (Map)  ←  calculateCost(usage)
  *
- * The cache is a module-level singleton populated whenever the model
- * list is fetched.  No hardcoded pricing — if models.dev doesn't have
- * cost data for a model, the cost is $0 (unknown).
+ * The primary source is the in-memory `modelCostCache` populated on each
+ * model list fetch.  When a model isn't found there, we fall back to the
+ * models.dev catalog cached inside models-fetcher — the exact same data
+ * shown in the UI's model selector.  No hardcoded pricing.
  */
 
 import type { ModelInfo, ModelCost } from "@/types";
+import { lookupModelCostById } from "./models-fetcher";
 
 // ─── Singleton cache ──────────────────────────────────────────────────────────
 
@@ -89,7 +91,12 @@ export interface CostCalcInput {
  * very new models not yet in models.dev).
  */
 export function calculateCost(usage: CostCalcInput): number {
-  const cost = usage.model ? modelCostCache.get(usage.model) : undefined;
+  let cost = usage.model ? modelCostCache.get(usage.model) : undefined;
+  // Fall back to the models.dev catalog (same source as the UI model selector)
+  if (!cost && usage.model) {
+    cost = lookupModelCostById(usage.model) ?? lookupModelCostById(usage.model.toLowerCase());
+    if (cost) modelCostCache.set(usage.model, cost); // warm the fast cache
+  }
   if (!cost) return 0;
 
   // Standard tokens

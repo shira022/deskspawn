@@ -7,21 +7,15 @@ import {
   File,
   FileCode,
   FileText,
-  FileCog,
-  Database,
   ChevronRight,
-  ChevronDown,
   Loader2,
   RefreshCw,
   AlertCircle,
-  ExternalLink,
 } from "lucide-react";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { FileNode } from "@/types";
-import { sidecarBase } from "@/lib/constants";
-import { callBackend } from "@/lib/backend";
-import { parseSidecarError } from "@/lib/utils";
+import { listProjectFiles, readProjectFile } from "@/lib/storage-opfs";
 
 interface TreeNode {
   name: string;
@@ -30,125 +24,92 @@ interface TreeNode {
   children?: TreeNode[];
 }
 
-// ── Build a file tree from a flat list of file entries ────────────────────────
-
 function buildTreeFromPaths(paths: string[]): TreeNode[] {
   const root: TreeNode[] = [];
-
   for (const filePath of paths) {
     const parts = filePath.split("/");
     let current = root;
-
     for (let i = 0; i < parts.length; i++) {
       const part = parts[i];
       const isLast = i === parts.length - 1;
       const fullPath = parts.slice(0, i + 1).join("/");
-
       let node = current.find((n) => n.name === part);
       if (!node) {
-        node = {
-          name: part,
-          path: fullPath,
-          isDirectory: !isLast,
-          children: !isLast ? [] : undefined,
-        };
+        node = { name: part, path: fullPath, isDirectory: !isLast, children: !isLast ? [] : undefined };
         current.push(node);
+      } else if (!isLast && !node.isDirectory) {
+        // Upgrade: existing entry was created as a file, but it's actually a directory
+        node.isDirectory = true;
+        node.children = [];
       }
-
-      if (!isLast && node.children) {
+      if (!isLast) {
+        if (!node.children) node.children = [];
         current = node.children;
       }
     }
   }
-
   return sortTree(root);
 }
 
 function sortTree(nodes: TreeNode[]): TreeNode[] {
   return nodes
     .sort((a, b) => {
-      // Directories first
       if (a.isDirectory && !b.isDirectory) return -1;
       if (!a.isDirectory && b.isDirectory) return 1;
       return a.name.localeCompare(b.name);
     })
-    .map((node) => {
-      if (node.children) {
-        return { ...node, children: sortTree(node.children) };
-      }
-      return node;
-    });
+    .map((node) => ({ ...node, children: node.children ? sortTree(node.children) : undefined }));
 }
 
-// ── Icons ────────────────────────────────────────────────────────────────────
-
-function getFileIcon(name: string, isDirectory: boolean) {
-  if (isDirectory) return <Folder className="h-4 w-4 text-muted-foreground" />;
-  if (name.endsWith(".tsx") || name.endsWith(".ts")) return <FileCode className="h-4 w-4 text-blue-400" />;
-  if (name.endsWith(".css")) return <FileCode className="h-4 w-4 text-purple-400" />;
-  if (name.endsWith(".rs")) return <FileCog className="h-4 w-4 text-orange-400" />;
-  if (name.endsWith(".sql")) return <Database className="h-4 w-4 text-green-400" />;
-  if (name.endsWith(".json") || name.endsWith(".toml") || name.endsWith(".lock"))
-    return <FileText className="h-4 w-4 text-yellow-400" />;
-  if (name.endsWith(".html")) return <FileCode className="h-4 w-4 text-orange-400" />;
-  return <File className="h-4 w-4 text-muted-foreground" />;
+function getFileIcon(name: string, isDirectory: boolean, isExpanded?: boolean) {
+  if (isDirectory) {
+    return isExpanded
+      ? <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
+      : <Folder className="h-4 w-4 text-muted-foreground shrink-0" />;
+  }
+  if (name.endsWith(".tsx") || name.endsWith(".ts")) return <FileCode className="h-4 w-4 text-blue-400 shrink-0" />;
+  if (name.endsWith(".css")) return <FileCode className="h-4 w-4 text-purple-400 shrink-0" />;
+  if (name.endsWith(".json") || name.endsWith(".toml")) return <FileText className="h-4 w-4 text-yellow-400 shrink-0" />;
+  if (name.endsWith(".html")) return <FileCode className="h-4 w-4 text-orange-400 shrink-0" />;
+  return <File className="h-4 w-4 text-muted-foreground shrink-0" />;
 }
 
-// ── Tree Item (recursive) ────────────────────────────────────────────────────
-
-function TreeItem({
-  node,
-  depth,
-  selectedFile,
-  onSelect,
-}: {
-  node: TreeNode;
-  depth: number;
-  selectedFile: string | null;
-  onSelect: (path: string) => void;
+function TreeItem({ node, depth, selectedFile, onSelect }: {
+  node: TreeNode; depth: number; selectedFile: string | null; onSelect: (path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(depth < 2);
   const hasChildren = node.isDirectory && node.children && node.children.length > 0;
   const isSelected = selectedFile === node.path;
 
+  const handleClick = () => {
+    if (node.isDirectory) {
+      if (hasChildren) setExpanded(!expanded);
+    } else {
+      onSelect(node.path);
+    }
+  };
+
   return (
     <div>
       <div
-        className={`flex items-center gap-1 rounded px-2 py-1 cursor-pointer hover:bg-muted/50 transition-colors text-sm ${
-          isSelected ? "bg-muted" : ""
-        }`}
-        style={{ paddingLeft: `${depth * 16 + 8}px` }}
-        onClick={() => {
-          if (hasChildren) setExpanded(!expanded);
-          if (!node.isDirectory) onSelect(node.path);
-        }}
+        className={`flex items-center h-7 cursor-pointer select-none hover:bg-muted/50 transition-colors ${isSelected ? "bg-muted text-foreground" : "text-foreground/80"}`}
+        style={{ paddingLeft: `${depth * 14 + 6}px`, paddingRight: "8px" }}
+        onClick={handleClick}
       >
-        {hasChildren ? (
-          expanded ? (
-            <ChevronDown className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          ) : (
-            <ChevronRight className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-          )
+        {node.isDirectory ? (
+          <ChevronRight
+            className={`h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform duration-150 ${expanded ? "rotate-90" : ""}`}
+          />
         ) : (
           <span className="w-3.5 shrink-0" />
         )}
-        {expanded && hasChildren ? (
-          <FolderOpen className="h-4 w-4 text-muted-foreground shrink-0" />
-        ) : (
-          getFileIcon(node.name, node.isDirectory)
-        )}
-        <span className="truncate text-xs">{node.name}</span>
+        {getFileIcon(node.name, node.isDirectory, expanded && hasChildren)}
+        <span className="truncate text-[13px] leading-none ml-0.5">{node.name}</span>
       </div>
       {expanded && hasChildren && (
         <div>
           {node.children!.map((child) => (
-            <TreeItem
-              key={child.path}
-              node={child}
-              depth={depth + 1}
-              selectedFile={selectedFile}
-              onSelect={onSelect}
-            />
+            <TreeItem key={child.path} node={child} depth={depth + 1} selectedFile={selectedFile} onSelect={onSelect} />
           ))}
         </div>
       )}
@@ -156,48 +117,38 @@ function TreeItem({
   );
 }
 
-// ── File Preview ─────────────────────────────────────────────────────────────
-
 function FilePreview({ filePath }: { filePath: string }) {
   const { t } = useTranslation();
+  const currentProjectId = useAppStore((s) => s.currentProjectId);
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const fetchContent = useCallback(async () => {
+    if (!currentProjectId) return;
     setLoading(true);
     setError("");
     try {
-      const url = `${sidecarBase()}/projects/file?path=${encodeURIComponent(filePath)}`;
-      const res = await fetch(url);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      setContent(data.content);
+      const data = await readProjectFile(currentProjectId, filePath);
+      if (data === null) throw new Error("File not found");
+      setContent(data);
     } catch (e: any) {
       setError(e.message || t('fileTree.errorLoadFailed'));
     } finally {
       setLoading(false);
     }
-  }, [filePath]);
+  }, [filePath, currentProjectId]);
 
-  useEffect(() => {
-    fetchContent();
-  }, [fetchContent]);
+  useEffect(() => { fetchContent(); }, [fetchContent]);
 
   const lines = content?.split("\n") ?? [];
 
   return (
     <div className="h-40 border-t">
-      {/* File name header */}
       <div className="flex h-6 items-center gap-1 border-b px-3 text-xs text-muted-foreground">
         <FileCode className="h-3 w-3" />
         <span className="truncate">{filePath}</span>
       </div>
-
-      {/* Content area */}
       <div className="h-[calc(100%-24px)] overflow-auto">
         {loading ? (
           <div className="flex items-center justify-center h-full text-xs text-muted-foreground">
@@ -213,9 +164,7 @@ function FilePreview({ filePath }: { filePath: string }) {
           <div className="font-mono text-[10px] leading-5">
             {lines.map((line, i) => (
               <div key={i} className="flex">
-                <span className="w-8 shrink-0 text-right text-muted-foreground/50 select-none pr-2 border-r border-border/50">
-                  {i + 1}
-                </span>
+                <span className="w-8 shrink-0 text-right text-muted-foreground/50 select-none pr-2 border-r border-border/50">{i + 1}</span>
                 <span className="pl-2 whitespace-pre">{line}</span>
               </div>
             ))}
@@ -226,9 +175,8 @@ function FilePreview({ filePath }: { filePath: string }) {
   );
 }
 
-// ── FileTreePanel ────────────────────────────────────────────────────────────
-
 export function FileTreePanel() {
+  const currentProjectId = useAppStore((s) => s.currentProjectId);
   const { selectedFile, setSelectedFile, setFileTree, workspaceReady } = useAppStore();
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -237,23 +185,18 @@ export function FileTreePanel() {
   const { t } = useTranslation();
 
   const fetchTree = useCallback(async () => {
+    if (!currentProjectId) return;
     try {
-      const res = await fetch(`${sidecarBase()}/projects/files`);
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}));
-        throw new Error(parseSidecarError(data) || `HTTP ${res.status}`);
-      }
-      const data = await res.json();
-      const files: { path: string }[] = data.files ?? [];
-      const paths = files.map((f) => f.path);
+      const files = await listProjectFiles(currentProjectId);
+      // Filter out directory entries: buildTreeFromPaths creates directory
+      // nodes from file-path segments, so explicit directory entries cause
+      // duplicate/incorrect tree nodes.
+      const paths = files.filter((f) => !f.isDirectory).map((f) => f.path);
       const fileTree = buildTreeFromPaths(paths);
 
-      // Update store with typed FileNode[] for external access
       const toFileNode = (nodes: TreeNode[]): FileNode[] =>
         nodes.map((n) => ({
-          name: n.name,
-          path: n.path,
-          isDirectory: n.isDirectory,
+          name: n.name, path: n.path, isDirectory: n.isDirectory,
           children: n.children ? toFileNode(n.children) : undefined,
         }));
       setFileTree(toFileNode(fileTree));
@@ -265,78 +208,39 @@ export function FileTreePanel() {
     } finally {
       setLoading(false);
     }
-  }, [setFileTree]);
-  useEffect(() => {
-    fetchTree();
-  }, [fetchTree]);
+  }, [currentProjectId, setFileTree]);
 
-  // Re-fetch when workspace becomes ready
-  useEffect(() => {
-    if (workspaceReady) {
-      fetchTree();
-    }
-  }, [workspaceReady, fetchTree]);
+  useEffect(() => { fetchTree(); }, [fetchTree]);
+  useEffect(() => { if (workspaceReady) fetchTree(); }, [workspaceReady, fetchTree]);
 
-  // Auto-refresh every 3s while workspace is ready
   useEffect(() => {
     if (workspaceReady) {
       pollRef.current = setInterval(fetchTree, 3000);
     }
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
   }, [workspaceReady, fetchTree]);
 
   return (
     <div className="flex h-full flex-col">
-      {/* Header */}
       <div className="flex h-10 items-center justify-between border-b px-3">
         <div className="flex items-center gap-2">
           <Folder className="h-4 w-4 text-muted-foreground" />
           <span className="text-sm font-medium">{t('fileTree.title')}</span>
         </div>
-        <div className="flex items-center gap-0.5">
-          <button
-            onClick={async () => {
-              try {
-                // Get the current project's workspace path from the sidecar
-                const res = await fetch(`${sidecarBase()}/health`);
-                const data = await res.json();
-                const workspacePath = data.workspace || "";
-                await callBackend("open_in_vscode", { workspacePath });
-              } catch (e) {
-                console.warn("Failed to open VS Code:", e);
-              }
-            }}
-            className="p-1 rounded hover:bg-muted transition-colors"
-            title={t('fileTree.openInVSCode')}
-          >
-            <ExternalLink className="h-3.5 w-3.5 text-muted-foreground" />
-          </button>
-          <button
-            onClick={() => {
-              setLoading(true);
-              fetchTree();
-            }}
-            className="p-1 rounded hover:bg-muted transition-colors"
-            title={t('fileTree.refresh')}
-          >
-            <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground ${loading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
+        <button onClick={() => { setLoading(true); fetchTree(); }}
+          className="p-1 rounded hover:bg-muted transition-colors" title={t('fileTree.refresh')}>
+          <RefreshCw className={`h-3.5 w-3.5 text-muted-foreground ${loading ? "animate-spin" : ""}`} />
+        </button>
       </div>
 
-      {/* File Tree */}
       <ScrollArea className="flex-1" viewportClassName="py-2">
         {loading && tree.length === 0 ? (
           <div className="flex items-center justify-center py-8 text-xs text-muted-foreground">
-            <Loader2 className="h-3 w-3 animate-spin mr-1" />
-            {t('common.loading')}
+            <Loader2 className="h-3 w-3 animate-spin mr-1" />{t('common.loading')}
           </div>
         ) : error ? (
           <div className="flex items-center justify-center py-8 text-xs text-red-500">
-            <AlertCircle className="h-3 w-3 mr-1" />
-            {error}
+            <AlertCircle className="h-3 w-3 mr-1" />{error}
           </div>
         ) : tree.length === 0 ? (
           <div className="px-3 py-8 text-xs text-muted-foreground text-center">
@@ -345,23 +249,13 @@ export function FileTreePanel() {
           </div>
         ) : (
           tree.map((node) => (
-            <TreeItem
-              key={node.path}
-              node={node}
-              depth={0}
-              selectedFile={selectedFile}
-              onSelect={setSelectedFile}
-            />
+            <TreeItem key={node.path} node={node} depth={0} selectedFile={selectedFile} onSelect={setSelectedFile} />
           ))
         )}
       </ScrollArea>
 
       <Separator />
-
-      {/* File Preview */}
-      {selectedFile ? (
-        <FilePreview filePath={selectedFile} />
-      ) : (
+      {selectedFile ? <FilePreview filePath={selectedFile} /> : (
         <div className="h-10 border-t flex items-center justify-center text-[10px] text-muted-foreground">
           {t('fileTree.selectFileToPreview')}
         </div>

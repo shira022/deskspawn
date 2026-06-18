@@ -13,7 +13,10 @@
     "switchToDark": "Switch to dark mode",
     "errorOccurred": "An error occurred",
     "unknownError": "Unknown error",
-    "reload": "Reload"
+    "reload": "Reload",
+    "refresh": "Refresh",
+    "minimize": "Minimize",
+    "maximize": "Maximize"
   },
   "settings": {
     "title": "Settings",
@@ -22,8 +25,6 @@
     "themeLight": "Light",
     "themeDark": "Dark",
     "themeSystem": "System",
-    "defaultTemperature": "Default temperature",
-    "temperatureHint": "Lower is more precise, higher is more creative (initial value for AI generation)",
     "simpleMode": "Simple Mode",
     "simpleModeDescription": "Keep AI responses concise — describe only what features were added or what was fixed, in plain language",
     "language": "Language",
@@ -32,6 +33,10 @@
   "languages": {
     "ja": "日本語",
     "en": "English"
+  },
+  "languageSelect": {
+    "footer": "You can change this later. No reboot required.",
+    "footerClose": "Click ✕ to go back"
   },
   "ai": {
     "welcome": "Welcome to DeskSpawn",
@@ -61,9 +66,11 @@
     "context": "Context:",
     "maxOutput": "Max output:",
     "customEndpoint": "Custom Endpoint",
-    "advancedSettings": "Advanced Settings (optional)",
-    "temperatureNotSupported": "* This model does not support the Temperature parameter",
+    "corsProxyUrl": "Custom Endpoint (optional)",
+    "anthropicCorsInfo": "Anthropic supports direct browser access. A proxy is only needed if your organization restricts CORS.",
     "notConfigured": "AI is not configured",
+    "apiKeyNotSet": "No API key",
+    "apiKeyNotConfiguredDetailed": "API key is not configured. Set it up in AI settings to start generating.",
     "notConfiguredShort": "AI not set",
     "goToConfig": "Go to AI Settings",
     "nextEnvCheck": "Next: Environment Check",
@@ -71,13 +78,31 @@
       "apiKeyRequired": "Please enter an API Key",
       "modelRequired": "Please select or enter a model",
       "customEndpointRequired": "Please enter a custom endpoint",
-      "modelsFetchFailed": "Failed to fetch model list"
+      "corsProxyRequired": "Please enter a custom endpoint",
+      "modelsFetchFailed": "Failed to fetch model list",
+      "regionRequired": "AWS region is required for AWS Bedrock (e.g. us-east-1)"
     },
     "apiKeyInstructions": {
-      "openai": "OpenAI API Key (https://platform.openai.com/api-keys)",
-      "anthropic": "Anthropic API Key (Console → API Keys)",
-      "google": "Google AI Studio API Key"
+      "openai": "OpenAI API Key — starts with sk-proj- or sk- (https://platform.openai.com/api-keys)",
+      "anthropic": "Anthropic API Key — starts with sk-ant-api03- (https://console.anthropic.com)",
+      "google": "Google AI / Gemini API Key — starts with AIza (https://aistudio.google.com)",
+      "amazonBedrock": "AWS Bedrock API Key — starts with bedrock-api-key- (AWS Bedrock Console)",
+      "azureOpenAI": "Azure OpenAI API Key — 32-char hex key (Azure Portal)",
+      "googleVertex": "GCP Vertex AI API Key — starts with AIza (Express mode, GCP Console)"
     },
+    "providerAmazonBedrock": "AWS Bedrock",
+    "providerAzureOpenAI": "Azure OpenAI",
+    "providerGcpVertexAI": "GCP Vertex AI",
+    "providerAmazonBedrockDesc": "Claude, Llama, Nova",
+    "providerAzureOpenAIDesc": "GPT, o-series",
+    "providerGcpVertexAIDesc": "Gemini, Claude, Imagen",
+    "region": "AWS Region",
+    "regionPlaceholder": "e.g. us-east-1",
+    "regionDescription": "AWS region where your Bedrock models are available (e.g. us-east-1, us-west-2, eu-west-1)",
+    "azureEndpointUrl": "Azure Endpoint URL",
+    "azureEndpointPlaceholder": "https://your-resource.openai.azure.com",
+    "azureEndpointDescription": "Your Azure OpenAI endpoint URL (e.g. https://my-resource.openai.azure.com)",
+    "savedConfig": "Configuration saved",
     "costInput": "Input",
     "costOutput": "Output",
     "costCached": "Cached",
@@ -140,8 +165,8 @@
     "zeroResults": "0 results",
     "scrollToLatest": "Scroll to latest",
     "rateLimit": "Rate limited... waiting {{waitMs}}ms ({{retryCount}}/{{maxRetries}})",
-    "generating": "Generating code...",
-    "aiGenerating": "AI is generating code...",
+    "generating": "Generating app...",
+    "aiGenerating": "AI is generating app...",
     "viewingHistory": "Viewing past state ({{index}}/{{total}})",
     "backToLatest": "Back to latest",
     "continuation": "Continuation {{round}}/{{max}}",
@@ -158,8 +183,8 @@
     "emptyStatePrompt": "Tell me what you want to build, like \"Make it a task management app\" or \"Add dark mode\".",
     "emptyStateNoProject": "Create a project from \"New App\" in the toolbar, then start building via chat.",
     "suggestion": {
-      "styleCounter": "Style the counter app",
-      "todoApp": "Make it a ToDo list app",
+      "calendarApp": "Create a calendar app",
+      "todoApp": "Create a Todo app",
       "darkMode": "Add dark mode support",
       "timerFeature": "Add a timer feature"
     },
@@ -170,17 +195,23 @@
     "sendTitle": "Send (Ctrl+Enter)",
     "checkpointRestoreFailed": "⚠️ Failed to restore checkpoint.\n\n{{error}}\n\nReverting the preview to the latest state.",
     "streamEndedWithoutResult": "⚠️ The stream ended but the tool result was not obtained",
-    "generationComplete": "Code generation complete{{sparkle}}{{cost}}",
+    "generationComplete": "App generation complete{{sparkle}}{{cost}}",
     "usageTokens": "tokens",
+    "totalTokensAndCost": "Total tokens and estimated cost",
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI is not configured. Please configure it from the \"{{notConfiguredLabel}}\" button in the toolbar.",
       "noProjectSelected": "⚠️ No project is selected. Create a project from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
       "apiKeyRequiredDetailed": "⚠️ {{provider}} requires an API key.\nConfigure it from \"{{modelLabel}}\" → \"API Key Settings\" in the toolbar.",
       "emptyResponse": "⚠️ AI returned an empty response. Please check your model settings and try again.\n\nProvider: {{provider}}\nModel: {{model}}\n\nClick the model name in the toolbar to check settings.",
       "invalidApiKey": "The API key is invalid or not configured. Check it from \"API Key Settings\" in the toolbar.",
-      "sidecarConnectionFailed": "Cannot connect to the sidecar server.\nRun `npm run sidecar` and try again.",
-      "sidecarConnectionHint": "Please check that the sidecar server is running.\nRun `npm run sidecar` and try again.",
-      "generic": "⚠️ An error occurred: {{errMsg}}\n\n{{hint}}"
+      "generic": "⚠️ An error occurred: {{errMsg}}\n\n{{hint}}",
+      "providerConfigError": "⚠️ {{provider}} configuration is incomplete.\n\n{{detail}}\n\nClick the model name in the toolbar to check settings.",
+      "customEndpointRequired": "{{provider}} requires an endpoint URL. Please set a custom endpoint in the provider settings.",
+      "regionRequired": "{{provider}} requires an AWS region (e.g. us-east-1). Please set it in the provider settings.",
+      "ollamaModelRequired": "{{provider}} requires a model name (e.g. {{example}}). Please enter it in the provider settings.",
+      "checkProviderSettings": "Check your {{provider}} settings in the toolbar.",
+      "checkModelSettings": "Check that the model \"{{model}}\" exists and your API key is valid.",
+      "checkOllamaConnection": "Make sure Ollama is running ({{endpoint}}) and the model \"{{model}}\" is available."
     }
   },
   "step": {
@@ -232,6 +263,7 @@
     "createFirst": "Create your first app",
     "export": "Export",
     "delete": "Delete",
+    "deleteDisabledActive": "Cannot delete the currently open project. Switch to another project first.",
     "deleteError": "Delete failed",
     "exportError": "Export failed",
     "deleteTitle": "Delete App",
@@ -247,8 +279,7 @@
     "templateAutoBackup": "Changes are automatically backed up",
     "templateShare": "Export/Import to share apps with others",
     "creating": "Creating...",
-    "create": "Create",
-    "sidecarError": "Cannot connect to the sidecar server.\nRun `npm run sidecar` and try again."
+    "create": "Create"
   },
   "fileTree": {
     "askAiToGenerate": "Ask AI to generate an app",
@@ -265,22 +296,61 @@
     "parseFailed": "Could not determine complexity, running single mode",
     "analysisError": "Analysis error, running single mode"
   },
-  "sidecarError": {
-    "RATE_LIMIT": "Rate limit reached.{{error}}",
-    "GENERATION_FAILED": "Response generation failed.{{error}}",
-    "PROJECT_DELETE_ACTIVE": "Cannot delete the currently active project. Switch to a different project first.",
-    "PROJECT_NAME_REQUIRED": "Project name is required.",
-    "PROJECT_NOT_FOUND": "Project not found.",
-    "PROJECT_DIR_NOT_FOUND": "Project directory not found.",
-    "NO_BACKUP_FOUND": "No backup found.",
-    "MODELS_FETCH_FAILED": "Failed to fetch model list.",
-    "SERVER_ERROR": "A server error occurred.",
-    "EXPORT_DOWNLOAD_FAILED": "Export download failed.",
-    "EXPORT_FAILED": "Export failed.",
-    "FILE_BASE64_REQUIRED": "File data is required.",
-    "IMPORT_FAILED": "Import failed.",
-    "INVALID_IMPORT_FILE": "Invalid .deskspawn file: missing deskspawn.json.",
-    "INTERNAL_ERROR": "An internal error occurred.",
-    "fallback": "An error occurred: {{errMsg}}"
+  "landing": {
+    "badge": "Beta",
+    "hero": {
+      "title1": "Build Web Apps",
+      "title2": "with AI",
+      "subtitle": "Just describe what you want. AI turns your words into a working web app. Everything runs in your browser, and your data stays on your computer.",
+      "tryButton": "Try It Now",
+      "githubButton": "GitHub"
+    },
+    "demo": {
+      "userMessage": "Create a task management app",
+      "assistantMessage": "Got it! I'll create the following files...",
+      "creatingFiles": "Creating project files..."
+    },
+    "features": {
+      "title": "Features",
+      "subtitle": "Everything you need to bring your ideas to life",
+      "item1Title": "AI-Powered",
+      "item1Desc": "Just describe your idea, and AI builds it for you automatically. No coding knowledge needed.",
+      "item2Title": "Privacy First",
+      "item2Desc": "Your data stays in your browser. It's never sent to any server beyond the AI service you choose.",
+      "item3Title": "No Installation",
+      "item3Desc": "No downloads, no setup. Just open your browser and start creating right away.",
+      "item4Title": "Live Preview",
+      "item4Desc": "See your app come to life instantly. Make changes and watch it update in real time.",
+      "item5Title": "Built-in Quality",
+      "item5Desc": "AI generates clean, working code with automatic error checking. Fewer bugs from the start.",
+      "item6Title": "Your Choice of AI",
+      "item6Desc": "Works with OpenAI, Anthropic, Google, and more. Pick the AI service you prefer."
+    },
+    "cta": {
+      "title": "Ready to build your first app?",
+      "subtitle": "Just add your API key and start creating. It only takes a few minutes.",
+      "button": "Get Started"
+    },
+    "footer": "DeskSpawn — Build web apps with AI. No coding required."
+  },
+  "auth": {},
+  "preview": {
+    "title": "Preview",
+    "selectProject": "Select or create a project to preview",
+    "loading": "Preparing preview...",
+    "rendering": "Rendering preview...",
+    "loadingApp": "Loading app...",
+    "statusBooting": "Starting container...",
+    "statusInstalling": "Installing dependencies...",
+    "statusStartingDev": "Starting dev server...",
+    "statusSyncing": "Syncing files...",
+    "updating": "Updating preview...",
+    "buildLog": "Build Log",
+    "initializing": "Initializing...",
+    "firstTimeSetup": "This may take a moment for first-time setup",
+    "previewError": "Preview Error",
+    "zoomIn": "Zoom in",
+    "zoomOut": "Zoom out",
+    "zoomReset": "Reset zoom"
   }
 }

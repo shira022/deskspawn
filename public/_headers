@@ -1,0 +1,33 @@
+/*
+  # ── Cross-Origin Isolation (WebContainer 必須) ──────────────────────────────
+  # WebContainer が SharedArrayBuffer を使用するために必要。
+  # coep: "credentialless" で boot しているため credentialless で十分。
+  Cross-Origin-Opener-Policy: same-origin
+  Cross-Origin-Embedder-Policy: credentialless
+
+  # ── Content Security Policy ─────────────────────────────────────────────────
+  # スクリプト注入（XSS）対策。許可した送信元・リソースのみ読み込む。
+  # WebContainer は WASM + eval が必要なため wasm-unsafe-eval を許可。
+  Content-Security-Policy: default-src 'self';
+    script-src 'self' 'wasm-unsafe-eval';
+    worker-src 'self' blob:;
+    style-src 'self' 'unsafe-inline';
+    img-src 'self' data: blob:;
+    connect-src 'self'
+      https://api.openai.com
+      https://api.anthropic.com
+      https://generativelanguage.googleapis.com
+      https://*.googleapis.com
+      https://api.github.com;
+    frame-ancestors 'none';
+    base-uri 'self';
+    form-action 'self'
+
+  # ── MIME スニッフィング防止 ─────────────────────────────────────────────────
+  X-Content-Type-Options: nosniff
+
+  # ── リファラー情報の制御 ─────────────────────────────────────────────────────
+  Referrer-Policy: no-referrer
+
+  # ── 不要なブラウザ機能をブロック ─────────────────────────────────────────────
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
