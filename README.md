@@ -1,6 +1,18 @@
-**AI-powered desktop app development platform** — Build, manage, and deploy modern desktop applications with the power of AI. Leverages [Tauri v2](https://v2.tauri.app) for lightweight, secure, and cross-platform native apps.
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://img.shields.io/badge/DeskSpawn-ai--powered%20web%20app%20generator-8b5cf6?style=for-the-badge&labelColor=1e1b4b">
+    <img src="https://img.shields.io/badge/DeskSpawn-ai--powered%20web%20app%20generator-8b5cf6?style=for-the-badge&labelColor=ede9fe" alt="DeskSpawn">
+  </picture>
+</p>
 
 <p align="center">
+  <b>AI-powered web app generation platform</b> — Describe your app in natural language, and DeskSpawn builds it in the browser.
+</p>
+
+<p align="center">
+  <a href="https://deskspawn.pages.dev">
+    <img src="https://img.shields.io/badge/Try%20Now-Cloudflare%20Pages-380d9f?style=flat-square&logo=cloudflare&logoColor=white" alt="Try Now">
+  </a>
   <a href="https://github.com/shira022/deskspawn/releases">
     <img src="https://img.shields.io/github/v/release/shira022/deskspawn?style=flat-square&label=Release" alt="Release">
   </a>
@@ -14,86 +26,65 @@
 
 ---
 
-## Features
+## What is DeskSpawn?
 
-- **🤖 AI-Powered Development** — Leverage AI to generate, refactor, and optimize desktop applications.
-- **🖥️ Cross-Platform** — Build once, deploy on Windows, macOS, and Linux with a single codebase.
-- **📁 Project Management** — Organize projects with built-in templates, configuration management, and scaffolding.
-- **⚙️ Sidecar Architecture** — Extend app capabilities with sidecar processes (Node.js, Python, or any binary).
-- **🔄 Auto-Update** — Built-in Tauri updater for seamless application updates.
-- **🔒 Secure by Default** — OS-level keychain integration for API key storage.
+DeskSpawn is an **AI-powered web app development platform that runs entirely in your browser.** No backend server, no installation — just open the app, enter your API key, and describe what you want to build.
 
-## Installation
+It uses a **multi-agent AI pipeline** to plan, write code, verify, and iterate on your app, then runs a live preview via [WebContainer](https://webcontainers.io/) so you can see the result immediately.
 
-### Windows
+### Use Cases
 
-1. Download the latest `.msi` installer from the [Releases page](https://github.com/shira022/deskspawn/releases/latest).
-2. Double-click the installer and follow the wizard.
-3. Launch DeskSpawn from the Start Menu.
+- **Rapid prototyping**: Go from idea to working prototype in minutes
+- **Learning**: See how AI builds React apps step by step
+- **Iteration**: Describe changes in natural language, watch the code update in real time
+- **Export**: Download your project as a complete React + TypeScript + Tailwind CSS codebase
 
-> **Note:** Windows SmartScreen may show a warning. Click **More info → Run anyway** to proceed.
+---
 
-### macOS
+## ✨ Features
 
-> **Note:** The macOS build distribution is currently paused due to the cost of Apple's code signing certificate. You can still build from source — see [Development](#development) below.
+- **🤖 Multi-Agent AI Pipeline** — Triage → Planner → Coder → Verifier → Visual QA agents collaborate to build your app
+- **🔌 Multi-Provider AI** — Supports OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, Azure OpenAI, GCP Vertex AI, Ollama, and any OpenAI-compatible endpoint
+- **🖥️ Live Preview** — Built-in WebContainer runs your generated app in a sandboxed Node.js environment
+- **📁 Project Management** — Save, switch between, and restore past projects with IndexedDB/OPFS storage
+- **🌐 i18n Support** — English and Japanese interfaces (locale system is extensible)
+- **🔒 Privacy First** — Your API keys stay in your browser. DeskSpawn does not have a backend server
+- **📦 Export** — Download your project as a ZIP archive
 
-**To build from source on macOS:**
-```bash
-# Install prerequisites (Xcode Command Line Tools)
-xcode-select --install
+---
 
-# Clone and build
-git clone https://github.com/shira022/deskspawn.git
-cd deskspawn
-npm ci
-npx tauri build
-```
+## 🚀 Quick Start
 
-The built `.dmg` will be at `src-tauri/target/release/bundle/dmg/`.
+### Try it Online
 
+Visit **[deskspawn.pages.dev](https://deskspawn.pages.dev)** (once deployed):
 
-### Linux
+1. Select your language
+2. Enter your AI provider API key (OpenAI, Anthropic, etc.)
+3. Describe the web app you want to build
+4. Watch DeskSpawn plan, code, and preview your app in real time
 
-**AppImage:**
-```bash
-chmod +x DeskSpawn_*.AppImage
-./DeskSpawn_*.AppImage
-```
+> **Note**: Your API key stays in your browser's IndexedDB. DeskSpawn communicates directly with your chosen AI provider — no intermediate server.
 
-**Debian/Ubuntu (.deb):**
-```bash
-sudo dpkg -i DeskSpawn_*.deb
-```
+### Browser Requirements
 
-## Quick Start
+| Feature | Required For |
+|---|---|
+| **Chrome 105+ / Edge 105+** | WebContainer (preview) |
+| **Cross-Origin Isolation** | SharedArrayBuffer (WebContainer) |
+| **IndexedDB** | Data persistence |
+| **Web Crypto API** | Not yet used for encryption, checked for future use |
 
-1. Launch DeskSpawn.
-2. Create a new project with **File → New Project**.
-3. Choose a template or start from scratch.
-4. Use the AI assistant (⌘+K / Ctrl+K) to generate code.
-5. Build and preview with **Run → Build**.
+> Safari and Firefox have limited WebContainer support. Chrome-based browsers are recommended.
 
-## Development
+---
+
+## 🛠️ Development
 
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+
-- [Rust](https://www.rust-lang.org/) (latest stable)
-- Platform-specific dependencies:
-
-  **Linux:**
-  ```bash
-  sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
-    libappindicator3-dev librsvg2-dev patchelf \
-    libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
-  ```
-
-  **macOS:** Xcode Command Line Tools
-  ```bash
-  xcode-select --install
-  ```
-
-  **Windows:** [WebView2](https://developer.microsoft.com/en-us/microsoft-edge/webview2/) (included in Windows 10 1803+)
+- npm
 
 ### Setup
 
@@ -102,66 +93,145 @@ sudo dpkg -i DeskSpawn_*.deb
 git clone https://github.com/shira022/deskspawn.git
 cd deskspawn
 
-# Install frontend dependencies
+# Install dependencies
 npm install
 
-# Install sidecar dependencies
-cd sidecar && npm install && cd ..
-
-# Build and run in development mode
-npm run tauri:dev
+# Start the dev server
+npm run dev
 ```
 
-### Project Structure
-
-```
-deskspawn/
-├── src/                  # Frontend (React + TypeScript)
-│   ├── components/       # Reusable UI components
-│   ├── hooks/            # Custom React hooks
-│   ├── stores/           # Zustand state stores
-│   └── App.tsx           # Root component
-├── src-tauri/            # Backend (Rust + Tauri)
-│   ├── src/              # Rust source
-│   ├── icons/            # App icons
-│   └── tauri.conf.json   # Tauri configuration
-├── sidecar/              # Sidecar server (TypeScript)
-│   └── src/              # Server source
-├── website/              # Marketing website (React + Vite)
-│   └── src/pages/        # Website pages
-└── .github/workflows/    # CI/CD pipelines
-```
+The dev server will start at `http://localhost:5173`. It automatically serves COOP/COEP headers required by WebContainer.
 
 ### Commands
 
 | Command | Description |
 |---|---|
 | `npm run dev` | Start Vite dev server |
-| `npm run tauri:dev` | Start Tauri development mode |
-| `npm run build` | Build frontend |
-| `npx tauri build` | Build production app + bundles |
-| `npm run sidecar` | Start sidecar server |
+| `npm run build` | TypeScript check + production build |
+| `npm run preview` | Preview production build locally |
+| `npm test` | Run unit tests |
+| `npm run test:ui` | Run UI component tests |
 | `npm run lint` | Run ESLint |
 
-## Building for Production
+### Project Structure
 
-```bash
-# Build the full application
-npx tauri build
+```
+deskspawn/
+├── src/                        # Main application
+│   ├── App.tsx                 # Root component
+│   ├── main.tsx                # Entry point + boot sequence
+│   ├── engine/                 # Multi-agent AI pipeline
+│   │   ├── orchestrator.ts     # Agent orchestration
+│   │   ├── triage.ts           # Request triage
+│   │   ├── tools.ts            # AI tool definitions
+│   │   ├── tool-executors.ts   # Tool execution logic
+│   │   ├── providers.ts        # AI provider resolution
+│   │   └── system-prompts/     # Agent prompt templates
+│   ├── lib/                    # Utilities
+│   │   ├── storage.ts          # IndexedDB layer
+│   │   ├── storage-opfs.ts     # OPFS file storage
+│   │   ├── preview/            # WebContainer management
+│   │   ├── compatibility.ts    # Browser feature detection
+│   │   └── i18n.ts             # Internationalization
+│   ├── store/                  # Zustand state management
+│   ├── components/             # UI components
+│   │   ├── ui/                # Base primitives (shadcn-style)
+│   │   ├── chat/              # Chat panel, messages
+│   │   ├── preview/           # Live preview panel
+│   │   ├── file-tree/         # File explorer
+│   │   └── settings/          # Configuration dialogs
+│   ├── routes/                 # Routing (landing + app)
+│   ├── locales/                # i18n translations
+│   └── hooks/                  # Custom React hooks
+├── public/                     # Static assets
+│   └── _headers                # Cloudflare Pages security headers
+└── .github/workflows/          # CI pipeline
 ```
 
-Output bundles are located in `src-tauri/target/release/bundle/`.
+---
 
-### Release Process
+## ☁️ Self-Hosting
 
-1. Update version in `package.json` and `src-tauri/Cargo.toml`.
-2. Create a new release via GitHub Releases with a `v*` tag.
-3. GitHub Actions automatically builds all platforms and deploys the website.
+DeskSpawn is designed to be deployed as a static site. The recommended hosting platform is **Cloudflare Pages** (WebContainer requires COOP/COEP headers, which Cloudflare Pages supports via `_headers`).
 
-## Contributing
+### Deploy to Cloudflare Pages
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+1. Fork this repository on GitHub
+2. Go to [Cloudflare Pages dashboard](https://dash.cloudflare.com/?to=/:account/pages)
+3. Click **Create a project** → **Connect to Git**
+4. Select your fork and configure:
+   - **Project name**: `deskspawn`
+   - **Build command**: `npm run build`
+   - **Build output directory**: `dist`
+5. Deploy
 
-## License
+The security headers in `public/_headers` will automatically apply:
+- `Cross-Origin-Opener-Policy: same-origin`
+- `Cross-Origin-Embedder-Policy: credentialless`
+- Content Security Policy
+- `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`
 
-[MIT](LICENSE) © DeskSpawn Team
+### Other Hosting Options
+
+| Platform | COOP/COEP Support | Notes |
+|---|---|---|
+| **Cloudflare Pages** | ✅ `_headers` file | Recommended |
+| **Vercel** | ✅ `vercel.json` | Pro plan required for commercial use |
+| **Netlify** | ✅ `netlify.toml` | 100 GB bandwidth cap on free tier |
+| **GitHub Pages** | ❌ No custom headers | WebContainer preview will not work |
+
+---
+
+## 🔒 Security
+
+DeskSpawn's security model differs from typical web apps because **it has no backend server**.
+
+### Architecture
+
+```
+Your Browser ────→ AI Provider API (OpenAI, Anthropic, etc.)
+      │
+      ├── IndexedDB/OPFS (project data, API keys)
+      ├── WebContainer (generated app preview, sandboxed)
+      └── Local Storage (settings, preferences)
+```
+
+- **No data leaves your browser** except API requests to your chosen AI provider
+- **API keys are stored client-side** in IndexedDB. They are not sent to any server other than the AI provider you configure
+- **Generated apps run in WebContainer**, a sandboxed Node.js environment that cannot access the host page's data
+- **CSP headers** restrict script execution, connection targets, and resource loading
+- **iframe sandbox** restricts the preview panel's capabilities
+
+### Reporting Vulnerabilities
+
+See [SECURITY.md](SECURITY.md) for our coordinated disclosure process.
+
+---
+
+## 🧩 Tech Stack
+
+| Layer | Technology |
+|---|---|
+| **UI Framework** | React 18 + TypeScript |
+| **Build Tool** | Vite 6 |
+| **Styling** | Tailwind CSS 4 |
+| **State Management** | Zustand |
+| **AI SDK** | Vercel AI SDK (`ai` + provider packages) |
+| **Preview Runtime** | WebContainer API |
+| **Storage** | IndexedDB / OPFS |
+| **Internationalization** | i18next + react-i18next |
+| **Testing** | Vitest + Testing Library |
+
+---
+
+## 🤝 Contributing
+
+Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines, branch strategy, and code style.
+
+This project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
+
+---
+
+## 📄 License
+
+[MIT](LICENSE) © DeskSpawn

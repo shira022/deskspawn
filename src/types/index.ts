@@ -4,17 +4,15 @@
 
 import type { LanguageCode } from "@/lib/languages";
 
-export type ProviderKind = "openai" | "anthropic" | "google" | "ollama" | "custom";
-
-export type StorageMethod = "keychain" | "file";
+export type ProviderKind = "openai" | "anthropic" | "google" | "ollama" | "custom" | "amazon-bedrock" | "azure-openai" | "google-vertex";
 
 export interface AiConfig {
   provider: ProviderKind;
   apiKey: string;
   model: string;
   customEndpoint?: string;
-  temperature: number;
-  maxTokens?: number;
+  /** AWS region (for Amazon Bedrock) */
+  region?: string;
   /** エージェントの最大ステップ数（動的ステップ管理のベース値として使用） */
   maxSteps?: number;
   /**
@@ -23,12 +21,6 @@ export interface AiConfig {
    * 設定済みかどうかを判断する。
    */
   apiKeyConfigured?: boolean;
-  /**
-   * API キーの保存方法:
-   * - "keychain": OS キーチェーン（macOS Keychain / Windows Credential Manager）
-   * - "file": 設定ディレクトリ内の credentials.json（パーミッション 600）
-   */
-  storageMethod?: StorageMethod;
 }
 
 // ── Model Discovery ─────────────────────────────────────────────────────────
@@ -49,7 +41,6 @@ export interface ModelCost {
 export interface ModelInfo {
   id: string;
   name: string;
-  supportsTemperature: boolean;
   supportsReasoning: boolean;
   supportsToolCall: boolean;
   supportsImageInput: boolean;
@@ -57,114 +48,6 @@ export interface ModelInfo {
   maxOutput: number;
   /** Real pricing from models.dev — undefined for ollama/custom models */
   cost?: ModelCost;
-}
-
-// ============================================================
-// Environment Check Types
-// ============================================================
-
-export interface EnvCheckItem {
-  name: string;
-  description: string;
-  checkCommand: string;
-  status: "pending" | "ok" | "fail" | "installing";
-  downloadUrl?: string;
-  wingetPackage?: string;
-  sizeMb?: number;
-}
-
-export interface WingetStatus {
-  available: boolean;
-  version?: string;
-  message: string;
-}
-
-export interface SetupProgress {
-  package: string;
-  stage: "starting" | "downloading" | "installing" | "complete" | "error";
-  progressPercent: number;
-  message: string;
-}
-
-// ============================================================
-// Artifact / Payload Types
-// ============================================================
-
-export interface Artifact {
-  id: string;
-  title: string;
-  actions: Action[];
-}
-
-export type Action = FileAction | DiffAction | TemplateAction | ShellAction;
-
-export interface FileAction {
-  type: "file";
-  mode: "file";
-  filePath: string;
-  content: string;
-}
-
-export interface DiffAction {
-  type: "file";
-  mode: "diff";
-  filePath: string;
-  search: string;
-  replace: string;
-}
-
-export type SqlColumnType = "INTEGER" | "REAL" | "TEXT" | "BOOLEAN" | "DATETIME";
-
-export interface ColumnDef {
-  name: string;
-  sqlType: SqlColumnType;
-  nullable: boolean;
-  defaultValue?: string;
-}
-
-export interface TemplateAction {
-  type: "template";
-  template: "crud";
-  tableName: string;
-  columns: ColumnDef[];
-}
-
-export interface ShellAction {
-  type: "shell";
-  command: string;
-}
-
-// ============================================================
-// Tool Result Types
-// ============================================================
-
-export interface FileInfo {
-  path: string;
-  size: number;
-  lastModified: string;
-}
-
-export interface ApplyResult {
-  success: boolean;
-  filesChanged: string[];
-  shellCommandsRun: string[];
-  errors?: string[];
-}
-
-export interface ShellResult {
-  success: boolean;
-  stdout: string;
-  stderr: string;
-  exitCode: number;
-}
-
-export type ErrorType = "typescript";
-
-export interface ErrorInfo {
-  type: ErrorType;
-  message: string;
-  filePath?: string;
-  line?: number;
 }
 
 // ============================================================
@@ -201,7 +84,6 @@ export interface ChatMessage {
   role: MessageRole;
   content: string;
   timestamp: number;
-  artifacts?: Artifact[];
   toolResults?: Record<string, unknown>;
   checkpointId?: string;
   /** AIエージェントの各ステップ実行ログ（折りたたみ表示用） */
@@ -228,9 +110,6 @@ export interface FileNode {
 // Project Types
 // ============================================================
 
-export type AppType = "web";
-export type StorageType = "indexeddb";
-
 export interface ProjectMeta {
   id: string;
   name: string;
@@ -247,25 +126,11 @@ export interface CheckpointInfo {
 // App State Types
 // ============================================================
 
-export type AppPhase = "ai-config" | "env-check" | "main";
+export type AppPhase = "ai-config" | "main";
 
 export type LayoutMode = "2-pane" | "3-pane";
 
 export type AgentStatus = "idle" | "running" | "error" | "complete";
-
-export interface AppState {
-  phase: AppPhase;
-  layoutMode: LayoutMode;
-  aiConfig: AiConfig | null;
-  envChecks: EnvCheckItem[];
-  messages: ChatMessage[];
-  agentStatus: AgentStatus;
-  agentStepCount: number;
-  agentMaxSteps: number;
-  selectedFile: string | null;
-  errors: ErrorInfo[];
-  vitePort: number;
-}
 
 // ============================================================
 // Theme / Settings Types
@@ -277,7 +142,6 @@ export interface AppSettings {
   theme: ThemeMode;
   uiFontSize: number; // px
   codeFontSize: number; // px
-  defaultTemperature: number;
   language: LanguageCode;
   /** シンプルモード — 非エンジニア向けに平易な説明で結果だけ伝える */
   simpleMode: boolean;
@@ -287,7 +151,6 @@ export const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   uiFontSize: 14,
   codeFontSize: 13,
-  defaultTemperature: 0.2,
   language: "ja",
   simpleMode: true,
 };

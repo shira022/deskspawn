@@ -52,6 +52,7 @@ export function ChatMessage({
   const { t } = useTranslation();
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
   const editingMessageId = useAppStore((s) => s.editingMessageId);
+  const agentStatus = useAppStore((s) => s.agentStatus);
   const isThisEditing = editingMessageId === message.id;
 
   // Fit textarea height to content
@@ -199,14 +200,14 @@ export function ChatMessage({
                 <HighlightedText
                   text={message.content}
                   query={searchQuery}
-                  className="text-sm whitespace-pre-wrap"
+                  className="text-sm whitespace-pre-wrap break-words"
                 />
               ) : (
-                <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
               )}
             </div>
           ) : (
-            <div className="prose prose-sm dark:prose-invert max-w-none text-sm px-4 py-2.5 [&>p]:mb-1 [&>ul]:mt-1 [&>p:last-child]:mb-0">
+            <div className="prose prose-sm dark:prose-invert max-w-none text-sm px-4 py-2.5 [&>p]:mb-1 [&>ul]:mt-1 [&>p:last-child]:mb-0 [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_code]:break-words">
               <MessageContent content={message.content} searchQuery={searchQuery} />
               {/* Execution logs (collapsible) */}
               {message.stepLogs && message.stepLogs.length > 0 && (
@@ -300,22 +301,24 @@ export function ChatMessage({
           <div className="flex items-center gap-0.5 mt-0.5 text-[10px] text-muted-foreground/40 select-none">
             <button
               onClick={() => onNavigateToCheckpoint(checkpointIndex! - 1)}
-              disabled={checkpointIndex === 0}
+              disabled={checkpointIndex === 0 || agentStatus === "running"}
               className="h-4 w-4 flex items-center justify-center rounded hover:text-foreground/70 hover:bg-muted/60 transition-colors disabled:opacity-20 disabled:pointer-events-none"
               title={t('chat.prevState')}
             >
               <ChevronLeft className="h-3 w-3" />
             </button>
             <span
-              className="tabular-nums cursor-pointer hover:text-foreground/60 transition-colors px-0.5 leading-none"
-              onClick={() => onNavigateToCheckpoint(checkpointIndex!)}
+              className={`tabular-nums px-0.5 leading-none transition-colors select-none ${agentStatus === "running" ? "cursor-default" : "cursor-pointer hover:text-foreground/60"}`}
+              onClick={() => {
+                if (agentStatus !== "running") onNavigateToCheckpoint(checkpointIndex!);
+              }}
               title={t('chat.goToCheckpoint')}
             >
               {checkpointLabel}
             </span>
             <button
               onClick={() => onNavigateToCheckpoint(checkpointIndex! + 1)}
-              disabled={checkpointIndex === checkpointCount! - 1}
+              disabled={checkpointIndex === checkpointCount! - 1 || agentStatus === "running"}
               className="h-4 w-4 flex items-center justify-center rounded hover:text-foreground/70 hover:bg-muted/60 transition-colors disabled:opacity-20 disabled:pointer-events-none"
               title={t('chat.nextState')}
             >
@@ -326,20 +329,42 @@ export function ChatMessage({
 
         {/* ── Token usage / model footer (assistant messages only) ── */}
         {isAssistant && message.usage && (
-          <div className="flex items-center gap-2 mt-0.5 text-[10px] text-muted-foreground/30 select-none">
-            <span>
-              {(message.usage.inputTokens + message.usage.outputTokens).toLocaleString()}{" "}
-              {t('chat.usageTokens')}
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5 text-[10px] text-muted-foreground/30 select-none leading-relaxed">
+            {/* Token breakdown */}
+            <span className="tabular-nums">
+              {t('ai.costInput')} {message.usage.inputTokens.toLocaleString()}
             </span>
-            {message.usage.model && (
-              <span className="font-mono">
-                {message.usage.provider ? `${message.usage.provider}/` : ""}
-                {message.usage.model}
+            <span className="tabular-nums">
+              {t('ai.costOutput')} {message.usage.outputTokens.toLocaleString()}
+            </span>
+            {message.usage.reasoningTokens != null && message.usage.reasoningTokens > 0 && (
+              <span className="tabular-nums">
+                {t('ai.costReasoning')} {message.usage.reasoningTokens.toLocaleString()}
               </span>
             )}
-            {message.usage.estimatedCost ? (
-              <span>${message.usage.estimatedCost.toFixed(4)}</span>
-            ) : null}
+            {message.usage.cachedInputTokens != null && message.usage.cachedInputTokens > 0 && (
+              <span className="tabular-nums">
+                {t('ai.costCached')} {message.usage.cachedInputTokens.toLocaleString()}
+              </span>
+            )}
+            {/* Model */}
+            {message.usage.model && (
+              <>
+                <span className="opacity-20">|</span>
+                <span className="font-mono truncate max-w-[200px]">
+                  {message.usage.provider ? `${message.usage.provider}/` : ""}
+                  {message.usage.model}
+                </span>
+              </>
+            )}
+            {/* Cost */}
+            <span className="opacity-20">|</span>
+            <span className="tabular-nums">
+              ${(message.usage.estimatedCost ?? 0).toLocaleString(undefined, {
+                minimumFractionDigits: 4,
+                maximumFractionDigits: 6,
+              })}
+            </span>
           </div>
         )}
       </div>
@@ -359,7 +384,7 @@ function MessageContent({ content, searchQuery }: { content: string; searchQuery
       components={{
         pre({ children }) {
           return (
-            <pre className="bg-background border border-border/30 rounded-lg p-3 overflow-x-auto text-xs font-mono my-1.5 leading-relaxed">
+            <pre className="bg-background border border-border/30 rounded-lg p-3 overflow-x-auto text-xs font-mono my-1.5 leading-relaxed whitespace-pre-wrap break-words">
               {children}
             </pre>
           );
