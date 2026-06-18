@@ -1,14 +1,16 @@
+/**
+ * Global application store — DeskSpawn Web version.
+ *
+ * Replaces the Tauri IPC / sidecar HTTP calls with browser-native storage.
+ */
+
 import { create } from "zustand";
 import type {
   AppPhase,
   LayoutMode,
   AiConfig,
-  EnvCheckItem,
-  WingetStatus,
-  SetupProgress,
   ChatMessage,
   AgentStatus,
-  ErrorInfo,
   FileNode,
   ProjectMeta,
   CheckpointInfo,
@@ -16,38 +18,15 @@ import type {
   Toast,
 } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
-import { callBackend } from "@/lib/backend";
-import { SETTINGS_KEY, sidecarBase } from "@/lib/constants";
+import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, listProjects } from "@/lib/storage";
+import { setProjectId, listCheckpoints as engineListCheckpoints, persistChatHistory, loadChatHistory } from "@/engine/tool-executors";
+import { SETTINGS_KEY } from "@/lib/constants";
 import { setModelCostCache, clearModelCostCache } from "@/lib/cost";
+import { getModelsForProvider } from "@/lib/models-fetcher";
+import { seedProjectFromFilesystem, seedProjectFromWorkspace, hasProjectFiles } from "@/lib/seed-project";
 import i18n from "@/lib/i18n";
 
-/**
- * Persist the current messages array to the sidecar so it survives page reloads.
- * Silently fails if the sidecar is not available (non-critical).
- */
-async function persistMessages(messages: ChatMessage[]): Promise<void> {
-  try {
-    await fetch(`${sidecarBase()}/chat/history`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ messages }),
-    });
-  } catch {
-    // Sidecar not available — messages stay in memory, next save will retry
-  }
-}
-
-const defaultEnvChecks: EnvCheckItem[] = [
-  {
-    name: "Node.js",
-    description: "Runtime >= 20 LTS",
-    checkCommand: "node --version",
-    status: "pending",
-    downloadUrl: "https://nodejs.org/",
-    wingetPackage: "OpenJS.NodeJS.LTS",
-    sizeMb: 30,
-  },
-];
+// ── Store Types ─────────────────────────────────────────────────────────────
 
 interface Store {
   // Phase
@@ -63,22 +42,7 @@ interface Store {
   // AI Config
   aiConfig: AiConfig | null;
   setAiConfig: (config: AiConfig) => void;
-
-  // Environment Check
-  envChecks: EnvCheckItem[];
-  setEnvCheckResults: (results: EnvCheckItem[]) => void;
-  setEnvCheckStatus: (index: number, status: EnvCheckItem["status"]) => void;
-  allEnvChecksPassed: () => boolean;
-  failedEnvChecks: () => EnvCheckItem[];
-  wingetStatus: WingetStatus | null;
-  setWingetStatus: (status: WingetStatus | null) => void;
-  isWingetAvailable: () => boolean;
-
-  // Setup Progress
-  setupProgress: Map<string, SetupProgress>;
-  setSetupProgress: (progress: SetupProgress) => void;
-  setupRunning: boolean;
-  setSetupRunning: (running: boolean) => void;
+  reloadAiConfig: () => Promise<void>;
 
   // Chat
   messages: ChatMessage[];
@@ -106,19 +70,9 @@ interface Store {
   selectedFile: string | null;
   setSelectedFile: (path: string | null) => void;
 
-  // Errors
-  errors: ErrorInfo[];
-  setErrors: (errors: ErrorInfo[]) => void;
-
-  // Vite (DeskSpawn own dev server)
-  vitePort: number;
-  setVitePort: (port: number) => void;
-
   // Workspace preview
   workspacePort: number;
   setWorkspacePort: (port: number) => void;
-
-  // Workspace
   workspaceReady: boolean;
   setWorkspaceReady: (ready: boolean) => void;
 
@@ -131,8 +85,6 @@ interface Store {
   removeProject: (id: string) => void;
   projectSwitching: boolean;
   setProjectSwitching: (switching: boolean) => void;
-
-  // New app preparation (dev server starting, deps installing)
   appLoading: boolean;
   setAppLoading: (loading: boolean) => void;
 
@@ -143,19 +95,16 @@ interface Store {
   setCurrentCheckpointIndex: (index: number) => void;
   fetchCheckpoints: () => Promise<void>;
 
-  // How many chat messages are visible.
-  // -1 means "show all" (the normal state).
-  // Any non-negative value means only the first N messages are shown,
-  // used when the preview slider navigates back in time.
+  // Messages visibility
   visibleMessageCount: number;
   setVisibleMessageCount: (count: number) => void;
 
-  // Preview maximized state
+  // Preview maximized
   previewMaximized: boolean;
   setPreviewMaximized: (maximized: boolean) => void;
   togglePreviewMaximized: () => void;
 
-  // Generation reload trigger (increment to force iframe reload after generation)
+  // Reload trigger
   reloadCounter: number;
   triggerReload: () => void;
 
@@ -172,138 +121,142 @@ interface Store {
   toasts: Toast[];
   addToast: (toast: Omit<Toast, "id">) => void;
   removeToast: (id: string) => void;
-
 }
 
 export const useAppStore = create<Store>((set, get) => ({
+  // ── Phase ──────────────────────────────────────────────────────────
   phase: "ai-config",
   setPhase: (phase) => set({ phase }),
   initialized: false,
   initialize: async () => {
-    // Load AI config from Rust backend (keychain or credentials.json)
-    let loadedConfig: AiConfig | null = null;
     try {
-      loadedConfig = await callBackend<AiConfig | null>("load_ai_config");
-      if (loadedConfig) {
-        if (loadedConfig.provider && loadedConfig.model) {
-          // Tauri: Rust backend manages the API key (keychain/file).
-          // Config existence with provider+model = properly configured.
-          loadedConfig.apiKey = "";
-          set({ aiConfig: loadedConfig, phase: "main" });
-        }
-      }
-    } catch (e) {
-      console.warn("[initialize] Failed to load AI config:", e);
-    }
+      // Load AI config from per-provider storage
+      const lastProvider = await loadLastProvider();
+      if (lastProvider) {
+        const storedCfg = await loadProviderConfig(lastProvider);
+        const key = await loadApiKey(lastProvider);
+        if (storedCfg && storedCfg.model) {
+          set({
+            aiConfig: {
+              provider: lastProvider as any,
+              model: storedCfg.model,
+              customEndpoint: storedCfg.customEndpoint,
+              region: storedCfg.region,
+              maxSteps: storedCfg.maxSteps,
+              apiKey: "",
+              apiKeyConfigured: !!key,
+            } as AiConfig,
+            phase: "main",
+          });
 
-    // Pre-populate model cost cache for accurate cost display from the first chat
-    if (loadedConfig?.provider && loadedConfig.provider !== "ollama" && loadedConfig.provider !== "custom") {
-      try {
-        const res = await fetch(`${sidecarBase()}/api/models?provider=${loadedConfig.provider}`);
-        if (res.ok) {
-          const data = await res.json();
-          const models = data.models ?? [];
-          if (models.length > 0) {
-            clearModelCostCache();
-            setModelCostCache(models);
+          // Pre-populate model cost cache from models.dev
+          if (lastProvider !== "ollama" && lastProvider !== "custom") {
+            try {
+              const models = await getModelsForProvider(lastProvider);
+              if (models.length > 0) {
+                clearModelCostCache();
+                setModelCostCache(models);
+              }
+            } catch {
+              // Non-critical — cache will be populated when user opens AI config
+            }
           }
         }
-      } catch {
-        // Non-critical — cache will be populated when model list is fetched later
       }
-    }
 
-    // Load projects on init
-    try {
-      const res = await fetch(`${sidecarBase()}/projects/current`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.project) {
-          set({ currentProjectId: data.project.id });
+      // Load projects from IndexedDB
+      const storedProjects = await listProjects();
+      if (storedProjects.length > 0) {
+        set({ projects: storedProjects });
+      }
+
+      // Load current project
+      try {
+        const stored = localStorage.getItem("deskspawn_current_project");
+        if (stored) {
+          const pid = JSON.parse(stored);
+          set({ currentProjectId: pid });
+          setProjectId(pid);
+          // Load checkpoints
+          await get().fetchCheckpoints();
         }
-      }
-    } catch {
-      // Sidecar not running yet, that's fine
-    }
+      } catch {}
 
-    // Try loading project list
-    try {
-      const res = await fetch(`${sidecarBase()}/projects/list`);
-      if (res.ok) {
-        const data = await res.json();
-        if (data.projects) {
-          set({ projects: data.projects });
-        }
-      }
-    } catch {
-      // Sidecar not running yet
+      set({ initialized: true });
+    } catch (e) {
+      console.error("[initialize] Failed:", e);
+      set({ initialized: true });
     }
-
-    // Try fetching checkpoints
-    try {
-      const res = await fetch(`${sidecarBase()}/projects/checkpoints`);
-      if (res.ok) {
-        const data = await res.json();
-        const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
-          id: cp.id,
-          createdAt: new Date(cp.createdAt),
-        }));
-        set({
-          checkpoints: cps,
-          currentCheckpointIndex: cps.length > 0 ? cps.length - 1 : -1,
-        });
-      }
-    } catch {
-      // Sidecar not running yet
-    }
-
-    set({ initialized: true });
   },
 
+  // ── Layout ─────────────────────────────────────────────────────────
   layoutMode: "2-pane",
   setLayoutMode: (layoutMode) => set({ layoutMode }),
 
+  // ── AI Config ──────────────────────────────────────────────────────
   aiConfig: null,
-  setAiConfig: (aiConfig) => {
-    // Save the full config (including apiKey) to Rust backend.
-    // Rust stores the key in OS keychain or credentials.json + sidecar memory.
-    callBackend("save_ai_config", { config: aiConfig }).catch((e) =>
-      console.warn("Failed to save AI config:", e),
-    );
+  setAiConfig: async (aiConfig) => {
+    // Save per-provider config (everything except apiKey)
+    await saveProviderConfig(aiConfig.provider, {
+      model: aiConfig.model,
+      customEndpoint: aiConfig.customEndpoint,
+      region: aiConfig.region,
+      maxSteps: aiConfig.maxSteps,
+    });
 
-    // Strip apiKey from frontend state for zero exposure.
-    // The key lives only in: OS keychain/file + sidecar process memory.
-    set({ aiConfig: { ...aiConfig, apiKey: "" } });
+    // Save/delete API key
+    if (aiConfig.apiKey) {
+      await saveApiKey(aiConfig.provider, aiConfig.apiKey);
+    } else if (aiConfig.apiKeyConfigured === false) {
+      await deleteApiKey(aiConfig.provider);
+    }
+
+    // Track which provider was last used
+    await saveLastProvider(aiConfig.provider);
+
+    // Determine configured status: explicit flag, or check if a key exists in storage
+    const configured =
+      aiConfig.apiKeyConfigured ?? (await hasApiKey(aiConfig.provider));
+
+    set({
+      aiConfig: {
+        ...aiConfig,
+        apiKey: "",
+        apiKeyConfigured: configured,
+      },
+    });
   },
 
-  envChecks: defaultEnvChecks,
-  setEnvCheckResults: (results) => set({ envChecks: results }),
-  setEnvCheckStatus: (index, status) =>
-    set((state) => {
-      const checks = [...state.envChecks];
-      checks[index] = { ...checks[index], status };
-      return { envChecks: checks };
-    }),
-  allEnvChecksPassed: () => get().envChecks.every((c) => c.status === "ok"),
-  failedEnvChecks: () => get().envChecks.filter((c) => c.status === "fail"),
-  wingetStatus: null,
-  setWingetStatus: (wingetStatus) => set({ wingetStatus }),
-  isWingetAvailable: () => get().wingetStatus?.available ?? false,
+  /** Reload the AI config from storage (e.g. after session unlock). */
+  reloadAiConfig: async () => {
+    const lastProvider = await loadLastProvider();
+    if (!lastProvider) return;
+    const cfg = await loadProviderConfig(lastProvider);
+    if (cfg && cfg.model) {
+      const key = await loadApiKey(lastProvider);
+      set({
+        aiConfig: {
+          provider: lastProvider as any,
+          model: cfg.model,
+          customEndpoint: cfg.customEndpoint,
+          region: cfg.region,
+          maxSteps: cfg.maxSteps,
+          apiKey: "",
+          apiKeyConfigured: !!key,
+        } as AiConfig,
+      });
+    }
+  },
 
-  setupProgress: new Map(),
-  setSetupProgress: (progress) =>
-    set((state) => {
-      const next = new Map(state.setupProgress);
-      next.set(progress.package, progress);
-      return { setupProgress: next };
-    }),
-  setupRunning: false,
-  setSetupRunning: (setupRunning) => set({ setupRunning }),
-
+  // ── Chat ───────────────────────────────────────────────────────────
   messages: [],
   addMessage: (message) => {
     set((state) => ({ messages: [...state.messages, message] }));
-    persistMessages(get().messages);
+    // Persist to IndexedDB
+    const pid = get().currentProjectId;
+    if (pid) {
+      persistChatHistory(pid, get().messages).catch(() => {});
+    }
   },
   updateMessage: (id, updates) => {
     set((state) => ({
@@ -311,35 +264,38 @@ export const useAppStore = create<Store>((set, get) => ({
         m.id === id ? { ...m, ...updates } : m
       ),
     }));
-    persistMessages(get().messages);
+    const pid = get().currentProjectId;
+    if (pid) {
+      persistChatHistory(pid, get().messages).catch(() => {});
+    }
   },
   truncateMessages: (fromIndex) => {
     set((state) => ({
       messages: state.messages.slice(0, fromIndex),
     }));
-    persistMessages(get().messages);
+    const pid = get().currentProjectId;
+    if (pid) {
+      persistChatHistory(pid, get().messages).catch(() => {});
+    }
   },
   clearMessages: () => set({ messages: [] }),
   fetchChatHistory: async () => {
+    const pid = get().currentProjectId;
+    if (!pid) return;
     try {
-      const res = await fetch(`${sidecarBase()}/chat/history`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.messages) && data.messages.length > 0) {
-          set({ messages: data.messages });
-        } else {
-          // Sidecar returned empty — ensure local state is clean
-          set({ messages: [] });
-        }
+      const messages = await loadChatHistory(pid);
+      if (Array.isArray(messages) && messages.length > 0) {
+        set({ messages });
       }
     } catch {
-      // Sidecar not available — keep current messages
+      // Keep current messages
     }
   },
 
   editingMessageId: null,
   setEditingMessageId: (editingMessageId) => set({ editingMessageId }),
 
+  // ── Agent ──────────────────────────────────────────────────────────
   agentStatus: "idle",
   setAgentStatus: (agentStatus) => set({ agentStatus }),
   agentStepCount: 0,
@@ -347,26 +303,53 @@ export const useAppStore = create<Store>((set, get) => ({
   agentMaxSteps: 20,
   setAgentMaxSteps: (agentMaxSteps) => set({ agentMaxSteps }),
 
+  // ── File Tree ──────────────────────────────────────────────────────
   fileTree: [],
   setFileTree: (fileTree) => set({ fileTree }),
   selectedFile: null,
   setSelectedFile: (selectedFile) => set({ selectedFile }),
 
-  errors: [],
-  setErrors: (errors) => set({ errors }),
-
-  vitePort: 5173,
-  setVitePort: (vitePort) => set({ vitePort }),
-
+  // ── Workspace ──────────────────────────────────────────────────────
   workspacePort: 5174,
   setWorkspacePort: (workspacePort) => set({ workspacePort }),
-
   workspaceReady: false,
   setWorkspaceReady: (workspaceReady) => set({ workspaceReady }),
 
-  // Projects
+  // ── Projects ───────────────────────────────────────────────────────
   currentProjectId: null,
-  setCurrentProjectId: (currentProjectId) => set({ currentProjectId }),
+  setCurrentProjectId: (id) => {
+    set({ currentProjectId: id });
+    if (id) {
+      setProjectId(id);
+      localStorage.setItem("deskspawn_current_project", JSON.stringify(id));
+      // Load checkpoints for this project
+      get().fetchCheckpoints();
+      // Auto-seed: if the project has no source files in OPFS, try to
+      // sync them from the filesystem (for projects created by the
+      // desktop/Tauri version).
+      setTimeout(async () => {
+        try {
+          const hasFiles = await hasProjectFiles(id);
+          if (!hasFiles) {
+            // First try workspace (most recent generated code, simpler stack)
+            let { seeded } = await seedProjectFromWorkspace(id);
+            if (seeded === 0) {
+              // Fall back to project-specific files from projects/{id}/
+              seeded = (await seedProjectFromFilesystem(id)).seeded;
+            }
+            if (seeded > 0) {
+              // Trigger a preview reload so the newly seeded files show up
+              get().triggerReload();
+            }
+          }
+        } catch {
+          // Non-critical — seeding is a convenience, not a requirement
+        }
+      }, 500);
+    } else {
+      localStorage.removeItem("deskspawn_current_project");
+    }
+  },
   projects: [],
   setProjects: (projects) => set({ projects }),
   addProject: (project) =>
@@ -378,41 +361,41 @@ export const useAppStore = create<Store>((set, get) => ({
   appLoading: false,
   setAppLoading: (appLoading) => set({ appLoading }),
 
-  // Checkpoints
+  // ── Checkpoints ────────────────────────────────────────────────────
   checkpoints: [],
   setCheckpoints: (checkpoints) => set({ checkpoints }),
   currentCheckpointIndex: -1,
   setCurrentCheckpointIndex: (currentCheckpointIndex) => set({ currentCheckpointIndex }),
   fetchCheckpoints: async () => {
+    const pid = get().currentProjectId;
+    if (!pid) return;
     try {
-      const res = await fetch(`${sidecarBase()}/projects/checkpoints`);
-      if (!res.ok) return;
-      const data = await res.json();
-      const cps: CheckpointInfo[] = data.checkpoints.map((cp: any) => ({
-        id: cp.id,
-        createdAt: new Date(cp.createdAt),
-      }));
-      set({ checkpoints: cps });
+      const cps = await engineListCheckpoints(pid);
+      set({
+        checkpoints: cps.map((cp) => ({
+          id: cp.id,
+          createdAt: cp.createdAt,
+        })),
+        currentCheckpointIndex: cps.length > 0 ? cps.length - 1 : -1,
+      });
     } catch {
-      // sidecar not available
+      // Engine not ready
     }
   },
 
-  // How many messages to show in chat (-1 = all)
+  // ── Messages visibility ────────────────────────────────────────────
   visibleMessageCount: -1,
   setVisibleMessageCount: (visibleMessageCount) => set({ visibleMessageCount }),
 
-  // Preview maximized
+  // ── Preview ────────────────────────────────────────────────────────
   previewMaximized: false,
   setPreviewMaximized: (previewMaximized) => set({ previewMaximized }),
   togglePreviewMaximized: () =>
     set((state) => ({ previewMaximized: !state.previewMaximized })),
-
-  // Generation reload trigger
   reloadCounter: 0,
   triggerReload: () => set((state) => ({ reloadCounter: state.reloadCounter + 1 })),
 
-  // ── Settings ──────────────────────────────────────────────────────
+  // ── Settings ───────────────────────────────────────────────────────
   settings: (() => {
     const s = loadSettings();
     i18n.changeLanguage(s.language);
@@ -432,11 +415,11 @@ export const useAppStore = create<Store>((set, get) => ({
     });
   },
 
-  // ── Theme ─────────────────────────────────────────────────────────
+  // ── Theme ──────────────────────────────────────────────────────────
   resolvedTheme: "light",
   setResolvedTheme: (resolvedTheme) => set({ resolvedTheme }),
 
-  // ── Toasts ────────────────────────────────────────────────────────
+  // ── Toasts ─────────────────────────────────────────────────────────
   toasts: [],
   addToast: (toast) => {
     const id = `toast-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
@@ -453,10 +436,9 @@ export const useAppStore = create<Store>((set, get) => ({
       toasts: state.toasts.filter((t) => t.id !== id),
     }));
   },
-
 }));
 
-// ── Settings persistence ────────────────────────────────────────────
+// ── Settings persistence ────────────────────────────────────────────────
 
 function loadSettings(): AppSettings {
   try {
