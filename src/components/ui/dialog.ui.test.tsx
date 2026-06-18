@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { Dialog, DialogContent, DialogOverlay, DialogTitle } from "./dialog";
+import { Dialog, DialogContent, DialogTitle } from "./dialog";
 
 describe("Dialog", () => {
   const onOpenChange = vi.fn();

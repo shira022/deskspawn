@@ -793,11 +793,10 @@ export async function takeScreenshot(options?: ScreenshotOptions): Promise<Scree
     console.log(`[takeScreenshot] Iframe ready, capturing...`);
 
     // --- oklch fallback: html2canvasがoklchをパースできない問題を回避 ---
-    let removeFix: (() => void) | null = null;
     try {
       const iframeDoc = previewIframe.contentDocument || previewIframe.contentWindow?.document;
       if (iframeDoc) {
-        removeFix = injectOklchFallback(iframeDoc);
+        injectOklchFallback(iframeDoc);
       }
     } catch {
       // iframeがクロスオリジン等 — fallbackなしでも撮影を試みる

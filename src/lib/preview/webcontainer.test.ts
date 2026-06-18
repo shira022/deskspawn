@@ -31,25 +31,7 @@ function resetMockState() {
   mockState.mountCalls = [];
 }
 
-function makeMockReadableStream(chunks: string[]) {
-  let index = 0;
-  return {
-    getReader() {
-      return {
-        read: vi.fn(async () => {
-          if (index < chunks.length) {
-            return { done: false, value: chunks[index++] };
-          }
-          return { done: true, value: undefined };
-        }),
-        releaseLock: vi.fn(),
-        cancel: vi.fn(),
-      };
-    },
-  };
-}
-
-function makeMockSpawnResult(cmd: string, args: string[], exitCode = 0, outputChunks: string[] = []) {
+function makeMockSpawnResult(_cmd: string, _args: string[], exitCode = 0, outputChunks: string[] = []) {
   const reader = {
     read: vi.fn(),
     releaseLock: vi.fn(),
@@ -68,10 +50,6 @@ function makeMockSpawnResult(cmd: string, args: string[], exitCode = 0, outputCh
     kill: vi.fn(),
   };
 }
-
-const mockWebContainer = {
-  boot: vi.fn(),
-};
 
 vi.mock("@webcontainer/api", () => {
   class MockWCInstance {
@@ -154,18 +132,6 @@ vi.mock("@/lib/storage-opfs", () => ({
 
 import { readProjectFile, listProjectFiles } from "@/lib/storage-opfs";
 import { PreviewManager } from "./webcontainer";
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function createFileInfo(path: string, isDir = false): any {
-  return { path, size: 100, lastModified: "2024-01-01", isDirectory: isDir };
-}
-
-function fireServerReady(port = 5173, url = "http://localhost:5173") {
-  for (const cb of mockState.serverReadyCallbacks) {
-    cb(port, url);
-  }
-}
 
 describe("PreviewManager", () => {
   let manager: PreviewManager;

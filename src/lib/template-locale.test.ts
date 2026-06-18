@@ -25,7 +25,7 @@ describe("templateLocale", () => {
       "typesReexportLabel",
     ];
 
-    for (const [langCode, locale] of Object.entries(templateLocale)) {
+    for (const [, locale] of Object.entries(templateLocale)) {
       for (const field of requiredFields) {
         expect(locale).toHaveProperty(field);
         expect(typeof locale[field]).toBe("string");
@@ -41,7 +41,7 @@ describe("templateLocale", () => {
       "typesGuideComment",
     ];
 
-    for (const [langCode, locale] of Object.entries(templateLocale)) {
+    for (const [, locale] of Object.entries(templateLocale)) {
       for (const field of guideFields) {
         const comment = locale[field];
         expect(comment).toContain("📁");
