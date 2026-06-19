@@ -5,6 +5,24 @@
  */
 
 import { create } from "zustand";
+
+// ── Utility ─────────────────────────────────────────────────────────────────
+
+/**
+ * Promise にタイムアウトを付与する。
+ * ms ミリ秒以内に promise が完了しない場合、reject する。
+ */
+function withTimeout<T>(promise: Promise<T>, ms: number, label?: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timeout${label ? ` (${label})` : ""} after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (val) => { clearTimeout(timer); resolve(val); },
+      (err) => { clearTimeout(timer); reject(err); },
+    );
+  });
+}
 import type {
   AppPhase,
   LayoutMode,
@@ -129,62 +147,73 @@ export const useAppStore = create<Store>((set, get) => ({
   setPhase: (phase) => set({ phase }),
   initialized: false,
   initialize: async () => {
-    try {
-      // Load AI config from per-provider storage
-      const lastProvider = await loadLastProvider();
-      if (lastProvider) {
-        const storedCfg = await loadProviderConfig(lastProvider);
-        const key = await loadApiKey(lastProvider);
-        if (storedCfg && storedCfg.model) {
-          set({
-            aiConfig: {
-              provider: lastProvider as any,
-              model: storedCfg.model,
-              customEndpoint: storedCfg.customEndpoint,
-              region: storedCfg.region,
-              maxSteps: storedCfg.maxSteps,
-              apiKey: "",
-              apiKeyConfigured: !!key,
-            } as AiConfig,
-            phase: "main",
-          });
+    // 全体タイムアウト: どの処理がハングしても 10 秒で強制完了させる。
+    // これにより Cloudflare 本番などで models.dev の fetch や IndexedDB が
+    // 応答しない場合でもアプリが真っ白のまま止まらず、UI を表示できる。
+    const INIT_TIMEOUT_MS = 10_000;
+    const initBody = async () => {
+      try {
+        // Load AI config from per-provider storage
+        const lastProvider = await loadLastProvider();
+        if (lastProvider) {
+          const storedCfg = await loadProviderConfig(lastProvider);
+          const key = await loadApiKey(lastProvider);
+          if (storedCfg && storedCfg.model) {
+            set({
+              aiConfig: {
+                provider: lastProvider as any,
+                model: storedCfg.model,
+                customEndpoint: storedCfg.customEndpoint,
+                region: storedCfg.region,
+                maxSteps: storedCfg.maxSteps,
+                apiKey: "",
+                apiKeyConfigured: !!key,
+              } as AiConfig,
+              phase: "main",
+            });
 
-          // Pre-populate model cost cache from models.dev
-          if (lastProvider !== "ollama" && lastProvider !== "custom") {
-            try {
-              const models = await getModelsForProvider(lastProvider);
-              if (models.length > 0) {
-                clearModelCostCache();
-                setModelCostCache(models);
+            // Pre-populate model cost cache from models.dev
+            if (lastProvider !== "ollama" && lastProvider !== "custom") {
+              try {
+                const models = await getModelsForProvider(lastProvider);
+                if (models.length > 0) {
+                  clearModelCostCache();
+                  setModelCostCache(models);
+                }
+              } catch {
+                // Non-critical — cache will be populated when user opens AI config
               }
-            } catch {
-              // Non-critical — cache will be populated when user opens AI config
             }
           }
         }
-      }
 
-      // Load projects from IndexedDB
-      const storedProjects = await listProjects();
-      if (storedProjects.length > 0) {
-        set({ projects: storedProjects });
-      }
-
-      // Load current project
-      try {
-        const stored = localStorage.getItem("deskspawn_current_project");
-        if (stored) {
-          const pid = JSON.parse(stored);
-          set({ currentProjectId: pid });
-          setProjectId(pid);
-          // Load checkpoints
-          await get().fetchCheckpoints();
+        // Load projects from IndexedDB
+        const storedProjects = await listProjects();
+        if (storedProjects.length > 0) {
+          set({ projects: storedProjects });
         }
-      } catch {}
 
-      set({ initialized: true });
-    } catch (e) {
-      console.error("[initialize] Failed:", e);
+        // Load current project
+        try {
+          const stored = localStorage.getItem("deskspawn_current_project");
+          if (stored) {
+            const pid = JSON.parse(stored);
+            set({ currentProjectId: pid });
+            setProjectId(pid);
+            // Load checkpoints
+            await get().fetchCheckpoints();
+          }
+        } catch {}
+      } catch (e) {
+        console.error("[initialize] Failed:", e);
+      }
+    };
+
+    try {
+      await withTimeout(initBody(), INIT_TIMEOUT_MS, "initialize");
+    } catch {
+      console.warn(`[initialize] Timed out after ${INIT_TIMEOUT_MS}ms — forcing app to load`);
+    } finally {
       set({ initialized: true });
     }
   },

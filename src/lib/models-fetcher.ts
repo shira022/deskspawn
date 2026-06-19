@@ -109,12 +109,19 @@ async function fetchModelsDevCatalog(): Promise<ModelsDevCatalog> {
     return modelsDevCatalog;
   }
 
-  const res = await fetch("https://models.dev/api.json");
-  if (!res.ok) throw new Error(`models.dev fetch failed: ${res.status}`);
-  const data = (await res.json()) as ModelsDevCatalog;
-  modelsDevCatalog = data;
-  modelsDevCachedAt = Date.now();
-  return data;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 5000);
+
+  try {
+    const res = await fetch("https://models.dev/api.json", { signal: controller.signal });
+    if (!res.ok) throw new Error(`models.dev fetch failed: ${res.status}`);
+    const data = (await res.json()) as ModelsDevCatalog;
+    modelsDevCatalog = data;
+    modelsDevCachedAt = Date.now();
+    return data;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 async function fetchModelsFromModelsDev(provider: string): Promise<ModelInfo[]> {
