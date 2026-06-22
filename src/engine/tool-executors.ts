@@ -829,11 +829,24 @@ export async function takeScreenshot(options?: ScreenshotOptions): Promise<Scree
     try {
       const iframeDoc = previewIframe.contentDocument || previewIframe.contentWindow?.document;
       if (iframeDoc) {
+        // #root が空かチェック（真っ白画面の検出）
+        const rootEl = iframeDoc.getElementById("root");
+        const rootEmpty = !rootEl || rootEl.children.length === 0;
+
         elements = Array.from(iframeDoc.querySelectorAll("h1, h2, h3, button, p, span, div[class]")).slice(0, 50).map((el) => ({
           tag: (el as HTMLElement).tagName.toLowerCase(),
-          text: (el as HTMLElement).textContent?.trim().substring(0, 100) || undefined,
+          text: elementLabel(el).substring(0, 100) || undefined,
           visible: (el as HTMLElement).offsetParent !== null,
         }));
+
+        if (rootEmpty) {
+          detectedIssues.push({
+            type: "missing-ui",
+            message: "⚠️ Page appears blank: #root element has no children. React did not render any content. This likely indicates a runtime error (e.g., missing import, ReferenceError, multiple React instances) that was silently caught.",
+            source: "iframe:dom:root-check",
+            severity: "error",
+          });
+        }
       }
     } catch {
       // iframeがsandbox/クロスオリジンでDOMにアクセスできない
@@ -904,6 +917,20 @@ export async function takeScreenshot(options?: ScreenshotOptions): Promise<Scree
   } catch (e: any) {
     return { success: false, error: e.message || String(e) };
   }
+}
+
+/**
+ * 要素の表示名を textContent / aria-label / title の順で取得する。
+ * takeScreenshot で使用される。
+ */
+function elementLabel(el: Element): string {
+  return (
+    el.textContent?.trim()
+    || (el as HTMLElement).getAttribute?.("aria-label")?.trim()
+    || (el as HTMLElement).getAttribute?.("title")?.trim()
+    || (el as HTMLElement).getAttribute?.("alt")?.trim()
+    || el.tagName.toLowerCase()
+  );
 }
 
 // ── Chat History ───────────────────────────────────────────────────────────────

@@ -26,7 +26,7 @@ You are in **Simple Mode**. Describe your plan in plain, accessible language:
 
 ## Your Task
 1. Read the project structure with list_files().
-2. Read key files (src/App.tsx, package.json, project.json).
+2. Read key files (src/App.tsx, package.json).
 3. Analyze the user's request.
 4. Create a detailed implementation plan in the following format:
 
