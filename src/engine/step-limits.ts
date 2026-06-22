@@ -162,7 +162,10 @@ export class StepManager {
     const count = (this.toolHistory.get(key) || 0) + 1;
     this.toolHistory.set(key, count);
 
-    const DIAGNOSTIC_TOOLS = ['get_errors', 'list_files', 'read_file'];
+    const DIAGNOSTIC_TOOLS = [
+      'get_errors', 'list_files', 'read_file',
+      'take_screenshot',
+    ];
     const isDiagnostic = DIAGNOSTIC_TOOLS.includes(toolName);
 
     if (!isDiagnostic) {

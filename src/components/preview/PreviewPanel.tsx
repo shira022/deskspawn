@@ -154,8 +154,6 @@ export function PreviewPanel() {
   const reloadCounter = useAppStore((s) => s.reloadCounter);
   const previewMaximized = useAppStore((s) => s.previewMaximized);
   const togglePreviewMaximized = useAppStore((s) => s.togglePreviewMaximized);
-  const workspaceReady = useAppStore((s) => s.workspaceReady);
-
   const [status, setStatus] = useState<PreviewStatus>("idle");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -273,19 +271,39 @@ export function PreviewPanel() {
     };
   }, []);
 
-  // reloadCounter 変更時 → ファイル同期
+  // reloadCounter 変更時 → ファイル同期 + iframe 強制リロード
+  // workspaceReady によるガードは行わない — リトライ時など workspace が
+  // ready でない状態でも triggerReload() で即座にプレビューを再表示する。
   useEffect(() => {
     if (!currentProjectId || reloadCounter <= prevReloadRef.current) return;
-    if (!workspaceReady) return;
     prevReloadRef.current = reloadCounter;
 
     previewManager
       .syncAndReload(currentProjectId)
+      .then(() => {
+        // syncAndReload はファイル同期 + dev server再起動を行うが、
+        // iframe は古いページ＋モジュールキャッシュを保持したまま。
+        // ブラウザのモジュールキャッシュを強制的にクリアし、
+        // 新しい ViteDevServer から最新ファイルを取得させるため、
+        // iframe を明示的にリロードする。
+        const iframe = document.getElementById("preview-iframe") as HTMLIFrameElement | null;
+        if (iframe && previewUrl) {
+          setIframeLoading(true);
+          iframe.src = previewUrl;
+        }
+      })
       .catch((e: any) => {
         console.error("[preview] Sync failed:", e);
         setError(e.message || String(e));
       });
-  }, [reloadCounter, currentProjectId, workspaceReady]);
+  }, [reloadCounter, currentProjectId, previewUrl]);
+
+  // ★ injectIframeModule は削除済み
+  // 理由: HTML内の <script type="module" src="/__virtual__/5174/src/main.tsx"> で
+  // モジュールは自動的に読み込まれる。重複した動的インポートは不要であり、
+  // Service Workerの制御タイミング問題により "Failed to fetch" エラーの原因になる。
+  // エラーキャプチャは tool-executors.ts のフォールバック機構と HTML内の
+  // エラーオーバーレイスクリプト（_createErrorOverlayScript）が代替する。
 
   // 手動リロード
   const handleReload = useCallback(() => {

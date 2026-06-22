@@ -35,7 +35,7 @@ const PHASE_CONFIGS: Record<Phase, { stepLimit: number; maxContinuations: number
 const PHASE_TOOLS: Record<Phase, string[]> = {
   planner:   ["read_file", "list_files"],
   coder:     ["read_file", "list_files", "apply_artifact", "get_errors"],
-  verifier:  ["read_file", "get_errors", "apply_artifact"],
+  verifier:  ["read_file", "get_errors", "apply_artifact", "take_screenshot"],
   visual_qa: ["take_screenshot", "read_file"],
 };
 
@@ -377,15 +377,22 @@ const MAX_FIX_ROUNDS = 2;
  * "error" 単体は「no errors」「errors resolved」等での false positive を避けるため除外。
  */
 function visualQaReportsIssues(text: string): boolean {
-  // まず ✅ PASS なら即座に通過
+  // ✅ PASS なら即座に通過
   if (/✅\s*PASS/i.test(text)) return false;
 
-  // 否定マーカーで判定
+  // ❌ FAIL および重大エラーのみ fix round を発動する（⚠️ WARN は発動しない）
   const negativeMarkers = [
-    "❌", "⚠️",                // 記号マーカー
-    "❌ FAIL", "⚠️ WARN",      // 明示的な失敗/警告ラベル
+    "❌ FAIL",                  // 明示的な失敗
+    "❌ Critical errors",       // 明示的重大エラー
+    "❌",                       // ❌ 単体も FAIL 扱い
     "critical error",           // 重大エラー
-    "❌ Critical errors",       // 明示的
+    "blank page",               // 白画面
+    "white screen",             // 白画面
+    "nothing displayed",        // 何も表示されていない
+    "empty page",               // 空ページ
+    "真っ白",                   // 日本語: 真っ白
+    "何も表示",                 // 日本語: 何も表示されない
+    "no visible",               // 表示要素がない
   ];
   const lower = text.toLowerCase();
   return negativeMarkers.some(marker => lower.includes(marker.toLowerCase()));
@@ -424,7 +431,7 @@ export async function runPipeline(
       if (visualQaFeedback && (phase === "coder" || phase === "verifier")) {
         messages.push({
           role: "user" as const,
-          content: `[Fix Round ${fixRound}/${MAX_FIX_ROUNDS}]\nThe previous visual review found these issues that need to be fixed:\n\n${visualQaFeedback}\n\nPlease fix the issues described above.`,
+          content: `[Fix Round ${fixRound}/${MAX_FIX_ROUNDS}]\nThe previous verification found these issues that need to be fixed:\n\n${visualQaFeedback}\n\nPlease fix the issues described above.`,
         });
       }
     }
@@ -458,16 +465,20 @@ export async function runPipeline(
     totalUsage.inputTokens += result.usage.inputTokens;
     totalUsage.outputTokens += result.usage.outputTokens;
 
-    // Visual QA 終了後、問題が検出されたら修正ラウンドをキューに追加
+    // ── Visual QA 終了後の処理 ──────────────────────────────────────────────
+    // 問題があれば coder → verifier → visual_qa の fix round
     if (phase === "visual_qa" && result.text) {
-      visualQaFeedback = result.text;
-      if (visualQaReportsIssues(result.text) && fixRound < MAX_FIX_ROUNDS) {
-        fixRound++;
-        console.log(`[pipeline] Visual QA reports issues — starting fix round ${fixRound}/${MAX_FIX_ROUNDS}`);
-        // 次のフェーズとして coder → verifier → visual_qa を先頭に挿入
-        phaseQueue.unshift("visual_qa");
-        phaseQueue.unshift("verifier");
-        phaseQueue.unshift("coder");
+      if (visualQaReportsIssues(result.text)) {
+        visualQaFeedback = result.text;
+        if (fixRound < MAX_FIX_ROUNDS) {
+          fixRound++;
+          console.log(`[pipeline] Visual QA reports issues — starting fix round ${fixRound}/${MAX_FIX_ROUNDS}`);
+          phaseQueue.unshift("visual_qa");
+          phaseQueue.unshift("verifier");
+          phaseQueue.unshift("coder");
+        } else {
+          visualQaFeedback = null;
+        }
       } else {
         visualQaFeedback = null;
       }
