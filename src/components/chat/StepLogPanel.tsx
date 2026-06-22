@@ -16,6 +16,7 @@ import {
   Clock,
   Play,
   ClipboardList,
+  Camera,
 } from "lucide-react";
 import { HighlightedText } from "@/components/chat/SearchHighlight";
 
@@ -40,6 +41,8 @@ function toolIcon(name: string) {
       return <Terminal className="h-3.5 w-3.5" />;
     case "get_errors":
       return <AlertTriangle className="h-3.5 w-3.5" />;
+    case "take_screenshot":
+      return <Camera className="h-3.5 w-3.5" />;
     default:
       return <Wrench className="h-3.5 w-3.5" />;
   }
@@ -58,6 +61,8 @@ function toolLabel(name: string, t: (key: string) => string): string {
       return t('step.runShell');
     case "get_errors":
       return t('step.getErrors');
+    case "take_screenshot":
+      return t('step.takeScreenshot');
     default:
       return name;
   }

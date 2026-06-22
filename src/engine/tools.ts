@@ -72,7 +72,7 @@ export const applyArtifactTool = tool({
 
 export const getErrorsTool = tool({
   description:
-    'Check for errors in the project. Runs tsc --noEmit for TypeScript type errors, scans for missing packages, AND detects Vite dev server errors (CSS parsing, plugin errors, module resolution failures, etc.) from the preview server output.',
+    'Check for errors in the project. Runs tsc --noEmit for TypeScript type errors, scans for missing packages, checks for unresolved local imports (files that are imported via relative/@/ paths but do not exist), detects missing `import React` in files that use React.createElement (a common silent runtime error), checks for empty #root (blank page detection), AND detects Vite dev server errors (CSS parsing, plugin errors, module resolution failures, etc.) from the preview server output.',
   inputSchema: z.object({}),
 });
 
