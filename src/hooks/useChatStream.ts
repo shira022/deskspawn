@@ -401,8 +401,35 @@ export function useChatStream(): UseChatStreamReturn {
           settings.simpleMode,
           settings.language,
           {
-            onPhaseStart: (_phase) => {},
-            onPhaseEnd: (_phase, _result) => {},
+            onPhaseStart: async (_phase) => {
+              // visual_qa フェーズ開始前にプレビューを最新のコードに同期する
+              if (_phase === "visual_qa") {
+                try {
+                  const { previewManager } = await import("@/lib/preview");
+                  const pid = useAppStore.getState().currentProjectId;
+                  if (pid) {
+                    await previewManager.syncForErrors(pid);
+                  }
+                } catch {
+                  // 同期に失敗しても処理は続行する
+                }
+              }
+            },
+            onPhaseEnd: async (_phase, _result) => {
+              // coder フェーズ終了後、書き込まれたファイルをプレビューに反映する
+              // （visual_qa が最新コードで動作できるようにする）
+              if (_phase === "coder") {
+                try {
+                  const { previewManager } = await import("@/lib/preview");
+                  const pid = useAppStore.getState().currentProjectId;
+                  if (pid) {
+                    await previewManager.syncForErrors(pid);
+                  }
+                } catch {
+                  // 同期に失敗しても処理は続行する
+                }
+              }
+            },
             onPhaseDetail: (_phase, text) => {
               localPhaseOutputs[_phase] = { label: _phase, text };
               setPhaseOutputs({ ...localPhaseOutputs });

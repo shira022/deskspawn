@@ -23,6 +23,7 @@ import {
   Loader2,
   AlertCircle,
   CheckCircle2,
+  Copy,
 } from "lucide-react";
 
 const providerNeedsApiKey = (p: ProviderKind) => p !== "ollama";
@@ -71,6 +72,7 @@ export function AiConfigScreen() {
   // Track whether the CURRENT provider has a saved key (per-provider)
   const [providerKeyConfigured, setProviderKeyConfigured] = useState(false);
   const [showApiKeyInput, setShowApiKeyInput] = useState(true);
+  const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
   // Model discovery
   const { models, loading: modelsLoading, error: modelsError, fetchModels } = useModels({
     provider,
@@ -427,6 +429,37 @@ export function AiConfigScreen() {
                 <p className="text-xs text-muted-foreground">
                   {t('ai.regionDescription')}
                 </p>
+              </div>
+            )}
+
+            {/* Ollama Endpoint (optional) */}
+            {provider === "ollama" && (
+              <div className="space-y-2">
+                <Label>{t('ai.customEndpoint')}</Label>
+                <Input
+                  placeholder="http://localhost:11434"
+                  value={customEndpoint}
+                  onChange={(e) => setCustomEndpoint(e.target.value)}
+                />
+                {isHttps && (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 space-y-1.5">
+                    <p className="text-xs text-amber-800 dark:text-amber-300">
+                      {t('ai.ollamaCorsDescription')}
+                    </p>
+                    <div className="relative group flex items-center gap-1">
+                      <pre className="flex-1 text-xs bg-amber-100/80 dark:bg-amber-900/40 px-2.5 py-1.5 rounded font-mono text-amber-800 dark:text-amber-300 overflow-x-auto">
+                        OLLAMA_ORIGINS=* ollama serve
+                      </pre>
+                      <button
+                        onClick={() => navigator.clipboard.writeText('OLLAMA_ORIGINS=* ollama serve')}
+                        className="p-1.5 rounded hover:bg-amber-200/50 dark:hover:bg-amber-800/50 text-amber-500 dark:text-amber-400 shrink-0"
+                        title={t('common.copy')}
+                      >
+                        <Copy className="h-3 w-3" />
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
 
