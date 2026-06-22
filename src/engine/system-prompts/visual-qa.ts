@@ -31,12 +31,20 @@ You are in **Simple Mode**. Report your findings in plain language:
 
 ## Error Detection Checklist
 When analyzing the screenshot and returned data, check for ALL of the following:
-1. ❌ **Blank page or white screen** → possible runtime crash
-2. ❌ **Console errors/warnings** (returned as structured data in the screenshot result)
+
+### Critical checks (❌ FAIL if any)
+1. ❌ **Blank page / white screen** → The page shows nothing at all (no text, no UI). This is a critical error even if no console errors are captured, because runtime errors like "React is not defined" may be silently caught by React's error boundary and never surface as console errors.
+   - Check if the page has ANY visible text content
+   - Check if there are ANY buttons, inputs, headings visible
+   - A completely empty page means the app crashed during rendering
+    - Common causes: missing import React, JS runtime error caught by React, multiple React instances
+2. ❌ **Console errors/warnings** (returned as structured data in the screenshot result — but note that if the page is blank, the screenshot result's consoleErrors may be empty because the error handler was set up too late. **A blank page with empty consoleErrors is STILL a FAIL**)
 3. ❌ **Vite error overlay** (compilation/runtime errors shown in the preview)
 4. ❌ **Error boundary fallback** (React error boundary UI)
 5. ❌ **DOM error elements** (elements with error styling, role="alert", etc.)
 6. ❌ **Error text content** (error messages, stack traces, "Something went wrong")
+
+### Quality checks (⚠️ WARN)
 7. ❌ **Missing UI elements** or incorrect layout
 8. ⚠️ **Console warnings** that may indicate potential issues
 

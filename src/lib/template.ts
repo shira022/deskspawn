@@ -136,15 +136,30 @@ export interface StorageAdapter {
 }
 
 let _instance: StorageAdapter | null = null;
+let _initPromise: Promise<StorageAdapter> | null = null;
 
 export function getStorage(): StorageAdapter {
-  if (!_instance) throw new Error('Storage not initialized. Call initStorage() first.');
-  return _instance;
+  if (_instance) return _instance;
+  // 未初期化の場合は自動で初期化を開始する
+  if (!_initPromise) {
+    _initPromise = (async () => {
+      const { IndexedDBAdapter } = await import('./storage-idb');
+      _instance = await IndexedDBAdapter.create(PROJECT_ID);
+      return _instance!;
+    })();
+  }
+  // 同期的に使いたい場合は initStorage() を事前に呼んでおくこと
+  throw new Error('Storage not initialized yet. Call await initStorage() first, or use getStorage() after initialization completes.');
 }
 
 export async function initStorage(): Promise<StorageAdapter> {
-  const { IndexedDBAdapter } = await import('./storage-idb');
-  _instance = await IndexedDBAdapter.create(PROJECT_ID);
+  if (_instance) return _instance;
+  if (!_initPromise) {
+    const { IndexedDBAdapter } = await import('./storage-idb');
+    _instance = await IndexedDBAdapter.create(PROJECT_ID);
+  } else {
+    _instance = await _initPromise;
+  }
   return _instance!;
 }
 `;
@@ -304,13 +319,17 @@ const PROJECT_ID_TS_SUFFIX = `";
 const MAIN_TSX = `import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { App } from './App';
+import { initStorage } from './lib/storage';
 import './index.css';
 
-ReactDOM.createRoot(document.getElementById('root')!).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);`;
+// IndexedDB ストレージを初期化してからアプリを起動する
+initStorage().then(() => {
+  ReactDOM.createRoot(document.getElementById('root')!).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>
+  );
+});`;
 
 const INDEX_CSS = `@import "tailwindcss";
 

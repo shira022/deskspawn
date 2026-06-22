@@ -191,6 +191,8 @@ export function ChatPanel() {
         try {
           setWorkspaceReady(false);
           await restoreCheckpoint(prevAssistantMsg.checkpointId);
+          // 直ちにプレビューを復元後のファイル状態に同期する
+          useAppStore.getState().triggerReload();
         } catch (e) {
           console.warn("[chat] Failed to restore checkpoint:", e);
           setWorkspaceReady(true);
@@ -228,6 +230,8 @@ export function ChatPanel() {
         try {
           setWorkspaceReady(false);
           await restoreCheckpoint(prevAssistantMsg.checkpointId);
+          // 直ちにプレビューを復元後のファイル状態に同期する
+          useAppStore.getState().triggerReload();
         } catch (e) {
           console.warn("[chat] Failed to restore checkpoint:", e);
           setWorkspaceReady(true);
