@@ -131,9 +131,10 @@ export default defineConfig({
     port: 5173,
     strictPort: true,
     // WebContainer 必須: crossOriginIsolation のためのヘッダー
+    // WebContainer.boot({ coep: "credentialless" }) と一致させること
     headers: {
       "Cross-Origin-Opener-Policy": "same-origin",
-      "Cross-Origin-Embedder-Policy": "require-corp",
+      "Cross-Origin-Embedder-Policy": "credentialless",
     },
   },
   build: {
