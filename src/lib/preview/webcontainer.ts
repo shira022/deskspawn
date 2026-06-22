@@ -55,6 +55,9 @@ export class PreviewManager {
     /✗\s*Build error/,
   ];
 
+  // CSP 違反のリスナー参照（クリーンアップ用）
+  private _cspHandler: ((e: SecurityPolicyViolationEvent) => void) | null = null;
+
   // ── 状態管理 ──────────────────────────────────────────────────────────
 
   private get state(): PreviewState {
@@ -151,13 +154,18 @@ export class PreviewManager {
   }
 
   /**
-   * WebContainer.boot() をリトライ付きで実行する。
+   * WebContainer.boot() をリトライ + タイムアウト付きで実行する。
    * タブがバックグラウンドのときに boot が失敗することがあるため、
    * リトライ間隔を空けて最大3回試行する。
    * プロジェクトが切り替わった場合は速やかに中断する。
+   *
+   * boot が沈黙してハングした場合に備えてタイムアウトを設定し、
+   * タイムアウト時にはブラウザの診断情報を収集してエラーログに出力する。
    */
   private async _bootWebContainer(projectId: string): Promise<WebContainer> {
+    const BOOT_TIMEOUT_MS = 20_000;
     const MAX_RETRIES = 3;
+
     for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
       try {
         if (attempt > 1) {
@@ -165,17 +173,43 @@ export class PreviewManager {
         } else {
           this.addLog("Booting WebContainer...");
         }
-        return await WebContainer.boot({
-          coep: "credentialless",
-          forwardPreviewErrors: "exceptions-only",
+
+        // タイムアウト付きで boot を実行
+        const container = await Promise.race([
+          WebContainer.boot({
+            coep: "credentialless",
+            forwardPreviewErrors: "exceptions-only",
+          }),
+          new Promise<never>((_, reject) =>
+            setTimeout(() => {
+              const diag = this._collectBootDiagnostics();
+              reject(
+                new Error(
+                  `WebContainer.boot timed out after ${BOOT_TIMEOUT_MS}ms.\n` +
+                  `Diagnostics:\n${diag}`
+                )
+              );
+            }, BOOT_TIMEOUT_MS)
+          ),
+        ]);
+
+        // boot 成功時に error イベントを購読（ハング後もエラーが飛んでくる可能性がある）
+        container.on("error", (err) => {
+          console.warn("[preview] WebContainer error (post-boot):", err.message);
+          this.addLog(`WebContainer error: ${err.message}`);
         });
+
+        return container;
       } catch (e: any) {
+        // タイムアウト or 明示的なエラー
+        const errMsg = e.message || String(e);
+        this.addLog(`Boot attempt ${attempt} failed (${errMsg})`);
+
         if (attempt === MAX_RETRIES) throw e;
         // プロジェクト切り替わり時はリトライせず中断
         if (this._isOvertaken(projectId)) {
           throw e;
         }
-        this.addLog(`Boot attempt ${attempt} failed (${e.message || String(e)}), retrying...`);
         await new Promise((r) => setTimeout(r, 500 * attempt));
         // 待機中にプロジェクトが変わった場合も中断
         if (this._isOvertaken(projectId)) {
@@ -184,6 +218,42 @@ export class PreviewManager {
       }
     }
     throw new Error("WebContainer.boot failed after all retries");
+  }
+
+  /**
+   * WebContainer の起動に必要なブラウザ機能の診断情報を収集する。
+   * タイムアウト時に呼ばれ、原因特定のための情報を文字列で返す。
+   */
+  private _collectBootDiagnostics(): string {
+    const lines: string[] = [];
+
+    // Cross-Origin Isolation
+    lines.push(`  crossOriginIsolated: ${crossOriginIsolated}`);
+
+    // SharedArrayBuffer
+    lines.push(`  SharedArrayBuffer: ${typeof SharedArrayBuffer}`);
+
+    // Service Worker
+    const swSupported = 'serviceWorker' in navigator;
+    lines.push(`  ServiceWorker API: ${swSupported}`);
+
+    // COOP/COEP (HTTP headers)
+    // ※ crossOriginIsolated が true なら COOP same-origin + COEP が有効
+    //    ただ credentialless モードでも true になるので、正確な値を知るには
+    //    document.prerendering 等の間接的な手段が必要
+
+    // CSP 違反の検出（SecurityPolicyViolationEvent があれば収集）
+    // これは実際の CSP 違反イベントを listen していないと取れないので
+    // ここでは「要確認」とだけ出す
+    lines.push(`  CSP violations: listen via SecurityPolicyViolationEvent`);
+
+    // ブラウザ情報
+    lines.push(`  UserAgent: ${navigator.userAgent}`);
+
+    // Cookie ブロッカー（サードパーティークッキーがブロックされているか）
+    lines.push(`  cookieEnabled: ${navigator.cookieEnabled}`);
+
+    return lines.join("\n");
   }
 
   private async _boot(projectId: string): Promise<void> {
@@ -196,6 +266,17 @@ export class PreviewManager {
     this.currentProjectId = projectId;
     this.addLog(`Starting preview for project: ${projectId}`);
     this.setState({ status: "booting", error: null });
+
+    // CSP 違反をキャプチャ（boot 中に発生したブロックを検出するため）
+    // document がない環境（Node.jsテスト）ではスキップ
+    if (typeof document !== "undefined") {
+      this._cspHandler = (e: SecurityPolicyViolationEvent) => {
+        const detail = `CSP Violation: blocked=${e.blockedURI} directive=${e.effectiveDirective} policy=${e.originalPolicy?.slice(0, 80)}`;
+        console.warn(`[preview] ${detail}`);
+        this.addLog(detail);
+      };
+      document.addEventListener("securitypolicyviolation", this._cspHandler);
+    }
 
     try {
       // Boot — リトライ付き
@@ -810,6 +891,11 @@ export class PreviewManager {
 
   /** WebContainer を破棄し、リソースを解放する。 */
   teardown(): void {
+    // CSP 違反リスナーのクリーンアップ
+    if (this._cspHandler && typeof document !== "undefined") {
+      document.removeEventListener("securitypolicyviolation", this._cspHandler);
+      this._cspHandler = null;
+    }
     if (this.unsubServerReady) {
       this.unsubServerReady();
       this.unsubServerReady = null;
