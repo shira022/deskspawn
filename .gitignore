@@ -29,3 +29,6 @@ deskspawn-*.png
 projects/
 workspace/
 *.png
+
+# pnpm
+pnpm-lock.yaml
