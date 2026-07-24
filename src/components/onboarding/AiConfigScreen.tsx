@@ -246,7 +246,7 @@ export function AiConfigScreen() {
                   <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                     <span className="flex-1">
-                      {t('ai.apiKey')} {t('ai.savedInBrowser') || 'encrypted in browser storage'}
+                      {t('ai.apiKey')} {t('ai.savedInBrowser')}
                     </span>
                     <Button
                       variant="ghost"
