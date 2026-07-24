@@ -41,7 +41,8 @@
   "ai": {
     "welcome": "Welcome to DeskSpawn",
     "welcomeDescription": "Set up the AI model you want to use. Your API key is stored in your browser's local storage and sent directly to your chosen AI provider.",
-    "savedInBrowser": "stored in your browser",
+    "savedInBrowser": "stored in your browser (never sent to any server)",
+    "securityNote": "Your API key is like a password for your AI service. It is stored only in your browser and never sent to DeskSpawn's servers. However, it could be read by malicious browser extensions. We strongly recommend setting a spending limit in your AI provider's dashboard.",
     "provider": "AI Provider",
     "providerOllamaDesc": "Local LLM",
     "providerCustomDesc": "OpenAI Compatible",

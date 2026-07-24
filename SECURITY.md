@@ -37,7 +37,7 @@ DeskSpawn is a **client-side-only web application** with no backend server. This
 
 | Data | Storage | Protection |
 |------|---------|------------|
-| AI API keys (OpenAI, Anthropic, etc.) | IndexedDB | Sandboxed by browser origin. Accessible only to JavaScript running on the same origin. |
+| AI API keys (OpenAI, Anthropic, etc.) | IndexedDB | Same-origin isolation applies. Note: browser extensions installed by the user operate outside this sandbox and can access stored data. Mitigate by setting a spending limit on your API key. |
 | Project source code (generated apps) | IndexedDB / OPFS | Same-origin isolation. |
 | Settings & preferences | LocalStorage | Standard browser sandbox. |
 
@@ -61,6 +61,9 @@ DeskSpawn is a **client-side-only web application** with no backend server. This
 ### Recommended Practices for Users
 
 - Use a dedicated API key with usage limits for DeskSpawn (most AI providers support this)
+  - [OpenAI](https://platform.openai.com/settings/organization/limits)
+  - [Anthropic](https://console.anthropic.com/settings/limits)
+  - [Google AI](https://aistudio.google.com/)
 - Keep your browser updated
 - Review generated app code before sharing or deploying it
 - Export and backup important projects
