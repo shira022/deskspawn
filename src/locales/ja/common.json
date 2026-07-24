@@ -41,7 +41,8 @@
   "ai": {
     "welcome": "DeskSpawn へようこそ",
     "welcomeDescription": "使用する AI モデルを設定してください。API キーはブラウザ内のローカルストレージに保存され、選択した AI プロバイダーに直接送信されます。",
-    "savedInBrowser": "ブラウザに保存されています",
+    "savedInBrowser": "このブラウザに保存されています（サーバーには送信されません）",
+    "securityNote": "APIキーとは、AIサービスを使うためのパスワードのようなものです。このキーはあなたのブラウザ内にのみ保存され、DeskSpawnのサーバーには送信されません。ただし、信頼できないブラウザ拡張機能がインストールされている場合は読み取られる可能性があります。各AIサービスの管理画面で「利用上限（spending limit）」を設定しておくことを強くおすすめします。",
     "provider": "AI プロバイダー",
     "providerOllamaDesc": "ローカルLLM",
     "providerCustomDesc": "OpenAI 互換",
