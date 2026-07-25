@@ -14,7 +14,7 @@ import { plannerPrompt } from "./system-prompts/planner";
 import { coderPrompt } from "./system-prompts/coder";
 import { verifierPrompt } from "./system-prompts/verifier";
 import { visualQAPrompt } from "./system-prompts/visual-qa";
-import type { Phase, Usage } from "./types";
+import type { Phase, Usage } from "@deskspawn/ai-core";
 
 // ── Phase Configuration ───────────────────────────────────────────────────────
 

@@ -1,6 +1,6 @@
-import { clsx, type ClassValue } from "clsx";
-import { twMerge } from "tailwind-merge";
-
-export function cn(...inputs: ClassValue[]) {
-  return twMerge(clsx(inputs));
-}
+/**
+ * Re-exported from @deskspawn/ui for backward compatibility.
+ * New code should import directly from "@deskspawn/ui".
+ */
+export { cn } from "@deskspawn/ui";
+export type { ClassValue } from "clsx";
