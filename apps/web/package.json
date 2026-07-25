@@ -41,7 +41,9 @@
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.6.0",
     "zod": "^4.4.3",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.14",
+    "@deskspawn/ai-core": "workspace:*",
+    "@deskspawn/ui": "workspace:*"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

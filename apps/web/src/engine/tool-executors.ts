@@ -14,7 +14,7 @@ import {
   listProjectFiles,
 } from "@/lib/storage-opfs";
 import { saveChatHistory as saveChatToStorage } from "@/lib/storage";
-import type { Artifact, FileAction, DiffAction, TemplateAction } from "./types";
+import type { Artifact, FileAction, DiffAction, TemplateAction } from "@deskspawn/ai-core";
 
 // ── Project ID management ──────────────────────────────────────────────────────
 

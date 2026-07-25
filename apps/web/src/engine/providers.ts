@@ -13,7 +13,7 @@ import { createAmazonBedrock } from '@ai-sdk/amazon-bedrock';
 import { createAzure } from '@ai-sdk/azure';
 import { createVertex } from '@ai-sdk/google-vertex/edge';
 import type { LanguageModel } from 'ai';
-import type { ProviderConfig } from './types';
+import type { ProviderConfig } from "@deskspawn/ai-core";
 
 export function getModel(config: ProviderConfig): LanguageModel {
   const { provider, model, apiKey, customEndpoint } = config;
