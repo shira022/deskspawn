@@ -10,8 +10,8 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { registerDesktopServices } from "./lib/services";
-// Import web app's CSS (same styles)
-import "../../web/src/index.css";
+// Import CSS (desktop entry imports web app's styles via local index.css)
+import "./index.css";
 
 // Register desktop services before anything renders
 registerDesktopServices();
