@@ -14,9 +14,15 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2.0.0",
+    "i18next": "^26.3.1",
+    "i18next-browser-languagedetector": "^8.2.1",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-i18next": "^17.0.8",
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^4.11.2",
+    "remark-gfm": "^4.0.1",
     "zustand": "^5.0.14",
     "@deskspawn/ui": "workspace:*",
     "@deskspawn/ai-core": "workspace:*"
