@@ -89,7 +89,7 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 let handle = app.handle().clone();
-                tokio::spawn(async move {
+                tauri::async_runtime::spawn(async move {
                     match handle.updater() {
                         Ok(updater) => {
                             match updater.check().await {
