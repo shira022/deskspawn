@@ -100,19 +100,43 @@ function apiKeyStorageKey(provider: string): string {
 }
 
 export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
+  // Try Tauri IPC (Desktop) first, fall back to IndexedDB (Web)
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("save_api_key", { provider, apiKey });
+    return;
+  } catch {
+    // Not in Tauri environment, use IndexedDB
+  }
   await setSetting(apiKeyStorageKey(provider), apiKey);
 }
 
 export async function loadApiKey(provider: string): Promise<string | null> {
+  // Try Tauri IPC (Desktop) first
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    return await invoke("load_api_key", { provider }) as string | null;
+  } catch {
+    // Not in Tauri environment
+  }
   const key = await getSetting<string>(apiKeyStorageKey(provider));
   return key ?? null;
 }
 
 export async function hasApiKey(provider: string): Promise<boolean> {
-  return !!(await getSetting<string>(apiKeyStorageKey(provider)));
+  const key = await loadApiKey(provider);
+  return key !== null && key.length > 0;
 }
 
 export async function deleteApiKey(provider: string): Promise<void> {
+  // Try Tauri IPC (Desktop) first
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("delete_api_key", { provider });
+    return;
+  } catch {
+    // Not in Tauri environment
+  }
   const db = await openDB();
   const tx = db.transaction("settings", "readwrite");
   const store = tx.objectStore("settings");
