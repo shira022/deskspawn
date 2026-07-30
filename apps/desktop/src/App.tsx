@@ -9,7 +9,6 @@ import React, { useEffect, useState } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { useAppStore } from "@/store/useAppStore";
 import { registerDesktopServices } from "./lib/services";
-import "./index.css";
 
 // Register Desktop services once at module level
 registerDesktopServices();
