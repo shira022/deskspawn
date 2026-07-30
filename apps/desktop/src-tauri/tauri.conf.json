@@ -4,9 +4,9 @@
   "version": "0.2.0",
   "identifier": "com.deskspawn.app",
   "build": {
-    "beforeDevCommand": "node scripts/build-sidecar.mjs --dev && cd ../.. && pnpm --filter desktop dev",
+    "beforeDevCommand": "cd ../.. && pnpm --filter desktop dev",
     "devUrl": "http://localhost:5173",
-    "beforeBuildCommand": "pnpm build:sidecar && pnpm build",
+    "beforeBuildCommand": "cd ../.. && pnpm --filter desktop build",
     "frontendDist": "../dist"
   },
   "app": {
