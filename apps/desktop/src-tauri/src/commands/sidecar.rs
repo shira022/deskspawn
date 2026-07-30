@@ -50,6 +50,8 @@ impl SidecarManager {
     /// Start (or restart) the sidecar binary.
     /// Uses the Tauri shell plugin's sidecar API to resolve the binary
     /// path in both dev (src-tauri/binaries/) and production (.app bundle).
+    /// Returns Ok even if the sidecar binary is not available (dev mode) —
+    /// the frontend will show "Sidecar Offline" in that case.
     pub fn start(&self, app_handle: &tauri::AppHandle) -> Result<(), String> {
         let mut guard = self.process.lock().map_err(|e| format!("Lock error: {}", e))?;
 
@@ -65,13 +67,15 @@ impl SidecarManager {
 
         // Build the sidecar command via Tauri shell plugin.
         // Binary location: src-tauri/binaries/deskspawn-sidecar-<target-triple>
-        // Dev mode  → found at project root
-        // Build mode → bundled inside .app bundle
-        let sidecar = app_handle
+        // In dev mode the binary may not exist — that's OK, we log and return.
+        let Ok(sidecar) = app_handle
             .shell()
-            .sidecar("deskspawn-sidecar")
-            .map_err(|e| format!("Failed to create sidecar command: {}", e))?
-            .env("DESKSPAWN_SECURITY_PORT", self.security_port.to_string());
+            .sidecar("deskspawn-sidecar") else {
+            log::warn!("Sidecar binary not configured (externalBin absent in dev mode). Frontend will show 'Sidecar Offline'.");
+            *guard = None;
+            return Ok(());
+        };
+        let sidecar = sidecar.env("DESKSPAWN_SECURITY_PORT", self.security_port.to_string());
 
         let (mut rx, child) = sidecar
             .spawn()
