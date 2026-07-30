@@ -1,0 +1,3 @@
+/* DeskSpawn Desktop — CSS entry point
+   Imports the web app's styles (single source of truth). */
+@import "../../web/src/index.css";
