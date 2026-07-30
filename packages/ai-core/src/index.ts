@@ -39,3 +39,16 @@ export {
 export type {
   RateLimitInfo,
 } from "./retry";
+
+// Service interfaces
+export type {
+  StreamChunk,
+  GenerateTextParams,
+  StreamTextParams,
+  AiService,
+  ProjectData,
+  AppSettings,
+  StorageService,
+  PreviewService,
+} from "./services";
+export { ServiceRegistry } from "./services";

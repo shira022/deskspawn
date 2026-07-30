@@ -13,6 +13,10 @@ import ReactDOM from "react-dom/client";
 import { App } from "./App";
 import { LandingPage } from "./routes/landing";
 import { LanguageSelectScreen } from "./components/onboarding/LanguageSelectScreen";
+import { registerWebServices } from "./lib/services";
+
+// Register platform services before any UI renders
+registerWebServices();
 import { checkCompatibility, getCompatErrorMessage, type CompatResult } from "./lib/compatibility";
 import { SETTINGS_KEY } from "./lib/constants";
 import i18n from "./lib/i18n";
