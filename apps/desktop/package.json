@@ -24,6 +24,7 @@
     "react-resizable-panels": "^4.11.2",
     "remark-gfm": "^4.0.1",
     "zustand": "^5.0.14",
+    "flag-icons": "^7.5.0",
     "@deskspawn/ui": "workspace:*",
     "@deskspawn/ai-core": "workspace:*"
   },
