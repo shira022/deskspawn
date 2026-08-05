@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web exec eslint .
 
@@ -28,7 +28,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web exec vitest run --reporter github-actions
 
@@ -39,7 +39,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web exec vitest run --config vitest.ui.config.ts --reporter github-actions
 
@@ -50,7 +50,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web exec vitest run --coverage --reporter github-actions
       - uses: actions/upload-artifact@v4
