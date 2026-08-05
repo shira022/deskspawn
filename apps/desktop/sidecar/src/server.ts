@@ -22,15 +22,15 @@ import { initMCPClients, getMCPTools, closeMCPClients } from './mcp-client.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
 // ── In-memory API key store (received from Rust backend, never from frontend) ─
-let storedApiKey: string | null = null;
+// 一元管理ルート（ADR-007）: ~/deskspawn 配下に全データを集約。
 // bun compile の exe では __dirname が実行時cwd依存（B:等の一時ドライブに
 // 解決されうる）ため、プロジェクト保存先は確実に存在するホーム基準にする。
-const PROJECTS_DIR = process.env.DESKSPAWN_PROJECTS_DIR || path.join(os.homedir(), 'deskspawn-projects');
+const DESKSPAWN_ROOT = process.env.DESKSPAWN_ROOT || path.join(os.homedir(), 'deskspawn');
+const PROJECTS_DIR = process.env.DESKSPAWN_PROJECTS_DIR || path.join(DESKSPAWN_ROOT, 'projects');
 const PROJECTS_JSON = path.join(PROJECTS_DIR, 'projects.json');
-const TEMPLATE_DIR = path.join(PROJECTS_DIR, '..', 'templates', 'react-template');
+const TEMPLATE_DIR = process.env.DESKSPAWN_TEMPLATES_DIR || path.join(DESKSPAWN_ROOT, 'templates', 'react-template');
 const WORKSPACE_DEV_PORT = 5174;
 let workspaceDevActualPort = WORKSPACE_DEV_PORT;
 

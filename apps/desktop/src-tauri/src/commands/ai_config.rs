@@ -1,3 +1,4 @@
+use crate::engine::workspace;
 use crate::models::config::AiConfig;
 use std::fs;
 use std::path::PathBuf;
@@ -15,26 +16,11 @@ pub const DEFAULT_SIDECAR_PORT: u16 = 3009;
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
+/// Config directory — unified under `~/deskspawn/config` (see ADR-007).
 fn config_dir() -> Result<PathBuf, String> {
-    #[cfg(target_os = "macos")]
-    let base = {
-        let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-        PathBuf::from(home).join(".config/deskspawn")
-    };
-    #[cfg(target_os = "windows")]
-    let base = {
-        let appdata = std::env::var("APPDATA").map_err(|_| "APPDATA not set".to_string())?;
-        PathBuf::from(appdata).join("DeskSpawn")
-    };
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    let base = {
-        let home = std::env::var("HOME").map_err(|_| "HOME not set".to_string())?;
-        PathBuf::from(home).join(".config/deskspawn")
-    };
-
+    let base = workspace::config_dir()?;
     fs::create_dir_all(&base)
         .map_err(|e| format!("Failed to create config directory: {}", e))?;
-
     Ok(base)
 }
 
