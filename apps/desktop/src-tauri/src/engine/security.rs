@@ -69,6 +69,7 @@ pub fn is_extension_allowed(path: &str) -> bool {
         "tsx", "ts", "jsx", "js", "css", "html", "json", "toml",
         "md", "yaml", "yml", "env", "env.example", "gitignore", "prettierrc",
         "eslintrc", "babelrc", "mjs", "cjs", "mts", "cts", "d.ts",
+        "txt", "csv", "svg", "xml",
     ];
 
     let p = Path::new(path);

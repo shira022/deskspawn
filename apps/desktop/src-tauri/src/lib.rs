@@ -140,6 +140,14 @@ pub fn run() {
             commands::harness::get_workspace_path,
             commands::harness::initialize_workspace,
             commands::harness::open_in_vscode,
+            // Project management commands (real files under ~/deskspawn/projects)
+            commands::projects::list_projects,
+            commands::projects::create_project,
+            commands::projects::delete_project,
+            commands::projects::list_project_files,
+            commands::projects::read_project_file,
+            commands::projects::write_project_file,
+            commands::projects::write_project_files,
             // Environment check commands
             commands::env_check::check_environment,
             commands::env_check::check_winget,

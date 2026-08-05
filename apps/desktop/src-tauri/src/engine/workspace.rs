@@ -142,3 +142,17 @@ pub fn determine_workspace_path() -> Result<PathBuf, String> {
     log::info!("Using workspace from deskspawn root: {:?}", ws);
     Ok(ws)
 }
+
+/// Serializes tests that mutate the shared `DESKSPAWN_ROOT` env var.
+///
+/// All test modules that set `DESKSPAWN_ROOT` must lock this mutex so that
+/// tests across modules (setup, projects, ...) do not race on the process-wide
+/// environment variable when cargo runs tests in parallel threads.
+#[cfg(test)]
+pub static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+/// Acquire the shared test env lock (poison-tolerant).
+#[cfg(test)]
+pub fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+    TEST_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
