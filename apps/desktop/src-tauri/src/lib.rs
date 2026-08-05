@@ -6,7 +6,6 @@ mod models;
 
 use commands::harness::AppState;
 use commands::sidecar::SidecarManager;
-use std::path::PathBuf;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
