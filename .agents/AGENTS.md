@@ -132,6 +132,15 @@ Hierarchical  feature/*   local      separate    separate │
 | `fix` | Review finds issues (separate session) | Implement review fixes |
 | `merge` | All gates passed | Feature→develop, develop→main merges |
 | `self-improve` | Skill gaps detected | Autonomous skill creation/editing |
+| `decision-recorder` | Architecture decisions made | Record decisions as ADRs in `docs/adr/` |
+
+## ADR (Architecture Decision Records) Policy
+
+- **Autonomous recording**: Any agent (regardless of coding-agent type) that identifies an important architectural decision MUST record it as an ADR using the `decision-recorder` skill, without waiting for human instruction.
+- **Scope**: Architecture-wide decisions, tech stack/framework/library selections, significant trade-off design choices, and policy changes to existing ADRs.
+- **Location**: `docs/adr/NNN-title-in-kebab-case.md` (see `docs/adr/_template.md`).
+- **Status lifecycle**: new ADRs start as `proposed` → human approval → `accepted` → superseded ADRs get `superseded` status.
+- **🔒 Privacy (MANDATORY)**: ADRs are committed to a public OSS repository. NEVER include personal information — real usernames, emails, absolute paths (e.g. `C:\Users\<user>\...`), API keys, tokens, secrets, or machine-specific identifiers. Always use generalized notation (`~/...`, `<USER_HOME>/...`) and placeholders. Run the self-check in the `decision-recorder` skill before committing.
 
 ## Session Isolation Policy
 
