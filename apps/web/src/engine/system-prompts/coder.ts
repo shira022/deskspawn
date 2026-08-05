@@ -4,7 +4,12 @@
  * Modified for browser: no shell commands, deps managed via npm/package.json.
  */
 
-export function coderPrompt(planContext?: string, _simpleMode?: boolean, language?: string): string {
+export function coderPrompt(
+  planContext?: string,
+  _simpleMode?: boolean,
+  language?: string,
+  isDesktop?: boolean,
+): string {
   const langNames: Record<string, string> = { ja: "Japanese", en: "English" };
   const langName = (language && langNames[language]) ? langNames[language] : undefined;
   const langInstr = langName
@@ -13,6 +18,19 @@ export function coderPrompt(planContext?: string, _simpleMode?: boolean, languag
 
   const planSection = planContext
     ? `\n## Implementation Plan\nFollow this architecture plan:\n\n${planContext}\n`
+    : "";
+
+  const desktopSection = isDesktop
+    ? `\n## Desktop Full-Stack Mode (ON — ADR-010)
+This is a **desktop full-stack app**: React frontend + Hono API backend + bun:sqlite.
+- Backend: \`src/server.ts\` (Hono). Data layer: \`src/lib/db.ts\` (bun:sqlite).
+- The API runs on port 4174 (auto-fallback to +10); vite proxies /api to it.
+- **Quality loop is MANDATORY**: after generating/modifying API or data code,
+  run \`bun test\` via the test tool. If tests fail, fix the code and re-run
+  until green. This is how generated code quality is guaranteed.
+- Tests live in \`src/*.test.ts\` (bun test, Hono app.request() — no server needed).
+- DB path via DATABASE_URL (default ./data/app.db). Keep the thin db helper
+  layer in src/lib/db.ts — put all SQL there.\n`
     : "";
 
   const simpleModeSection = _simpleMode
@@ -30,7 +48,7 @@ You are in **Simple Mode**. This means your responses to the user must be:
 Your code generation should remain technically excellent — only the *explanations* shown to the user change.\n`
     : "";
 
-  return `You are an expert React/TypeScript code generator. You build web applications by reading files and writing code.${planSection}${simpleModeSection}
+  return `You are an expert React/TypeScript code generator. You build web applications by reading files and writing code.${planSection}${desktopSection}${simpleModeSection}
 
 ## Tech Stack
 - **Vite + React 18 + TypeScript** for the frontend framework

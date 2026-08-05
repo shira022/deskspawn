@@ -10,6 +10,7 @@ import { useState, useCallback, useRef } from "react";
 import { useAppStore } from "@/store/useAppStore";
 import type { ChatMessage, StepLogEntry, TokenUsage } from "@/types";
 import { providerLabels } from "@/lib/constants";
+import { isDesktopEnv } from "@/lib/platform";
 import { getModel } from "@/engine/providers";
 import { runWithTriage } from "@/engine/orchestrator";
 import { tools } from "@/engine/tools";
@@ -450,6 +451,7 @@ export function useChatStream(): UseChatStreamReturn {
             },
             onTriageResult: (_result) => {},
           },
+          isDesktopEnv(),
         );
 
         generationActive.current = false;

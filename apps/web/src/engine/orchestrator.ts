@@ -83,13 +83,13 @@ export function getPhaseLabel(phase: Phase): string {
   return PHASE_LABELS[phase];
 }
 
-function getSystemPrompt(phase: Phase, planContext?: string, simpleMode?: boolean, language?: string): string {
+function getSystemPrompt(phase: Phase, planContext?: string, simpleMode?: boolean, language?: string, isDesktop?: boolean): string {
   switch (phase) {
     case "planner": return plannerPrompt(simpleMode, language);
-    case "coder": return coderPrompt(planContext, simpleMode, language);
+    case "coder": return coderPrompt(planContext, simpleMode, language, isDesktop);
     case "verifier": return verifierPrompt(simpleMode, language);
     case "visual_qa": return visualQAPrompt(simpleMode, language);
-    default: return coderPrompt(planContext, simpleMode, language);
+    default: return coderPrompt(planContext, simpleMode, language, isDesktop);
   }
 }
 
@@ -189,8 +189,9 @@ export async function runPhase(
   planContext?: string,
   _simpleMode?: boolean,
   language?: string,
+  isDesktop?: boolean,
 ): Promise<PhaseRunResult> {
-  const systemPrompt = getSystemPrompt(phase, planContext, _simpleMode, language);
+  const systemPrompt = getSystemPrompt(phase, planContext, _simpleMode, language, isDesktop);
   const toolNames = getAllowedTools(phase);
   const tools = buildTools(toolNames);
   const config = PHASE_CONFIGS[phase];
@@ -347,6 +348,7 @@ export async function runWithTriage(
   _simpleMode?: boolean,
   language?: string,
   hooks?: PipelineHooks,
+  isDesktop?: boolean,
 ): Promise<PipelineResult> {
   hooks?.onPhaseStart?.("planner");
 
@@ -355,7 +357,7 @@ export async function runWithTriage(
 
   if (triageResult.mode === "single") {
     const coderResult = await runPhase(
-      model, "coder", requestMessages, buildTools, signal, hooks, undefined, _simpleMode, language,
+      model, "coder", requestMessages, buildTools, signal, hooks, undefined, _simpleMode, language, isDesktop,
     );
     return {
       text: coderResult.text,
@@ -364,7 +366,7 @@ export async function runWithTriage(
     };
   }
 
-  return runPipeline(model, requestMessages, buildTools, signal, hooks, _simpleMode, language);
+  return runPipeline(model, requestMessages, buildTools, signal, hooks, _simpleMode, language, isDesktop);
 }
 
 const MAX_FIX_ROUNDS = 2;
@@ -406,6 +408,7 @@ export async function runPipeline(
   hooks?: PipelineHooks,
   _simpleMode?: boolean,
   language?: string,
+  isDesktop?: boolean,
 ): Promise<PipelineResult> {
   // phaseQueue を使って動的に修正ラウンドを追加できるようにする
   const phaseQueue: Phase[] = ["planner", "coder", "verifier", "visual_qa"];
@@ -446,6 +449,7 @@ export async function runPipeline(
       planContext,
       _simpleMode,
       language,
+      isDesktop,
     );
 
     hooks?.onPhaseEnd?.(phase, result);
