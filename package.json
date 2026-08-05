@@ -1,5 +1,7 @@
 {
   "name": "deskspawn-monorepo",
+  "version": "1.0.0",
+  "description": "AI-powered web app generation platform (browser edition)",
   "private": true,
   "scripts": {
     "dev": "pnpm --filter web dev",
