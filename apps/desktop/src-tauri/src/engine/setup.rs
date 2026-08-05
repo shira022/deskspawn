@@ -47,10 +47,15 @@ fn ensure_dir(dir: &Path, label: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    /// Tests mutate the shared `DESKSPAWN_ROOT` env var, so they must run
+    /// serially. This mutex serializes them even under parallel test threads.
+    static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
     /// Setup must be idempotent — running twice yields no errors and keeps
     /// the registry intact.
     #[test]
     fn setup_is_idempotent() {
+        let _guard = ENV_LOCK.lock().unwrap();
         // Use an isolated temp root via DESKSPAWN_ROOT env var.
         let tmp = std::env::temp_dir().join(format!("deskspawn-setup-test-{}", std::process::id()));
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
@@ -83,6 +88,7 @@ mod tests {
     /// Root directory resolution honors DESKSPAWN_ROOT when set.
     #[test]
     fn root_dir_honors_env_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let tmp = std::env::temp_dir().join(format!("deskspawn-root-test-{}", std::process::id()));
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
 
@@ -96,6 +102,7 @@ mod tests {
     /// A relative DESKSPAWN_ROOT is rejected (must be absolute).
     #[test]
     fn root_dir_rejects_relative_override() {
+        let _guard = ENV_LOCK.lock().unwrap();
         std::env::set_var("DESKSPAWN_ROOT", "relative/path");
         let root = workspace::root_dir();
         assert!(root.is_ok(), "falls back to home-based root");
@@ -107,6 +114,7 @@ mod tests {
     /// All subdirectory helpers resolve under the root.
     #[test]
     fn subdirs_resolve_under_root() {
+        let _guard = ENV_LOCK.lock().unwrap();
         let tmp = std::env::temp_dir().join(format!("deskspawn-subdir-test-{}", std::process::id()));
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
 
