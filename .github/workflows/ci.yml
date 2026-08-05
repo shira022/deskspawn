@@ -24,7 +24,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web exec tsc --noEmit
 
@@ -34,7 +34,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web exec vitest run --passWithNoTests
 
@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web build
 
@@ -54,6 +54,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm audit --audit-level=high
