@@ -120,4 +120,32 @@ describe("coderPrompt", () => {
     expect(result).toContain("Added a button to save your tasks");
     expect(result).toContain("Created a TodoList component");
   });
+
+  describe("desktop full-stack mode (ADR-010)", () => {
+    it("adds Desktop Full-Stack Mode section when isDesktop=true", () => {
+      const result = coderPrompt(undefined, false, undefined, true);
+      expect(result).toContain("Desktop Full-Stack Mode (ON");
+      expect(result).toContain("src/server.ts");
+      expect(result).toContain("bun:sqlite");
+    });
+
+    it("enforces the quality loop (bun test)", () => {
+      const result = coderPrompt(undefined, false, undefined, true);
+      expect(result).toContain("Quality loop is MANDATORY");
+      expect(result).toContain("bun test");
+      expect(result).toContain("app.request()");
+    });
+
+    it("omits the desktop section when isDesktop=false/undefined", () => {
+      const result = coderPrompt();
+      expect(result).not.toContain("Desktop Full-Stack Mode");
+    });
+
+    it("still includes base sections alongside desktop mode", () => {
+      const result = coderPrompt("Plan", false, "en", true);
+      expect(result).toContain("Implementation Plan");
+      expect(result).toContain("Desktop Full-Stack Mode");
+      expect(result).toContain("Respond in English");
+    });
+  });
 });
