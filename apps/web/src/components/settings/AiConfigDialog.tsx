@@ -10,6 +10,7 @@ import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useModels } from "@/hooks/useModels";
 import { hasApiKey, loadProviderConfig } from "@/lib/storage";
+import { isDesktopEnv } from "@/lib/platform";
 import type { ProviderKind, AiConfig, ModelInfo } from "@/types";
 import {
   Sparkles,
@@ -242,7 +243,7 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
         <DialogHeader className="px-6 pt-6 pb-3">
           <DialogTitle>{t('ai.apiKeySettings')}</DialogTitle>
           <DialogDescription>
-            {t('ai.welcomeDescription')}
+            {t(isDesktopEnv() ? 'ai.welcomeDescriptionDesktop' : 'ai.welcomeDescription')}
           </DialogDescription>
           <p className="mt-1 text-xs text-muted-foreground/70 leading-relaxed">
             {t('ai.securityNote')}
@@ -303,7 +304,9 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
                               ? t('ai.apiKeyInstructions.azureOpenAI')
                               : provider === "google-vertex"
                                 ? t('ai.apiKeyInstructions.googleVertex')
-                                : t('ai.apiKeyInstructions.google')}
+                                : provider === "google"
+                                  ? t('ai.apiKeyInstructions.google')
+                                  : t('ai.apiKeyInstructions.custom')}
                     </p>
                   </>
                 )}

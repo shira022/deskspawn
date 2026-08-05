@@ -85,7 +85,8 @@
       "google": "Google AI / Gemini API Key — starts with AIza (https://aistudio.google.com)",
       "amazonBedrock": "AWS Bedrock API Key — starts with bedrock-api-key- (AWS Bedrock Console)",
       "azureOpenAI": "Azure OpenAI API Key — 32-char hex key (Azure Portal)",
-      "googleVertex": "GCP Vertex AI API Key — starts with AIza (Express mode, GCP Console)"
+      "googleVertex": "GCP Vertex AI API Key — starts with AIza (Express mode, GCP Console)",
+      "custom": "Enter the API key for your OpenAI-compatible endpoint (e.g. Opencode Go)"
     },
     "providerAmazonBedrock": "AWS Bedrock",
     "providerAzureOpenAI": "Azure OpenAI",
@@ -104,7 +105,8 @@
     "costInput": "Input",
     "costOutput": "Output",
     "costCached": "Cached",
-    "costReasoning": "Reasoning"
+    "costReasoning": "Reasoning",
+    "welcomeDescriptionDesktop": "Set up the AI model you want to use. Your API key is stored in local storage and sent to your chosen AI provider through the local sidecar proxy — the key is never sent directly to external servers."
   },
   "env": {
     "title": "Environment Check",

@@ -14,7 +14,8 @@ import type { PreviewState, PreviewStatus, ErrorEntry } from "./index";
 describe("preview index (barrel export)", () => {
   it("should export previewManager as a singleton instance of PreviewManager", () => {
     expect(previewManager).toBeDefined();
-    expect(previewManager).toBeInstanceOf(PreviewManager);
+    // Proxy遅延初期化のため、プロパティアクセスで実体化して確認する
+    expect(typeof (previewManager as unknown as Record<string, unknown>).boot).toBe("function");
   });
 
   it("should export PreviewManager class", () => {

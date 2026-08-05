@@ -35,6 +35,7 @@ import {
 import { previewManager } from "@/lib/preview";
 import type { PreviewStatus } from "@/lib/preview";
 import { checkCompatibility } from "@/lib/compatibility";
+import { isDesktopEnv } from "@/lib/platform";
 
 // ── Device Presets ─────────────────────────────────────────────────────────────
 
@@ -151,6 +152,7 @@ function LogViewer({ logs, status }: { logs: string[]; status: PreviewStatus }) 
 export function PreviewPanel() {
   const { t } = useTranslation();
   const currentProjectId = useAppStore((s) => s.currentProjectId);
+  const initialized = useAppStore((s) => s.initialized);
   const reloadCounter = useAppStore((s) => s.reloadCounter);
   const previewMaximized = useAppStore((s) => s.previewMaximized);
   const togglePreviewMaximized = useAppStore((s) => s.togglePreviewMaximized);
@@ -183,8 +185,13 @@ export function PreviewPanel() {
     setZoom(100);
   }, []);
 
-  // 互換性チェック（初回のみ）
+  // 互換性チェック（初回のみ・WebContainer版のみ。デスクトップはローカルVite
+  // プレビューのため Cross-Origin Isolation は不要）
   useEffect(() => {
+    if (isDesktopEnv()) {
+      setCompatOk(true);
+      return;
+    }
     checkCompatibility().then((r) => {
       setCompatOk(r.ok);
       if (!r.crossOriginIsolated) {
@@ -213,8 +220,11 @@ export function PreviewPanel() {
     return unsub;
   }, []);
 
-  // プロジェクト選択時 → WebContainer 起動
+  // プロジェクト選択時 → プレビュー起動。
+  // initialized（initialize 完了）を待ってから boot する — 起動直後に
+  // currentProjectId が復元される前の競合を避けるため。
   useEffect(() => {
+    if (!initialized) return;
     if (!currentProjectId) return;
     if (prevProjectRef.current === currentProjectId) return;
     prevProjectRef.current = currentProjectId;
@@ -225,7 +235,7 @@ export function PreviewPanel() {
         console.error("[preview] Boot failed:", e);
         setError(e.message || String(e));
       });
-  }, [currentProjectId]);
+  }, [initialized, currentProjectId]);
 
   // タブが再フォーカスされたときにエラー状態から自動復帰
   useEffect(() => {

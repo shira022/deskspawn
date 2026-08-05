@@ -13,7 +13,7 @@ const READY_TIMEOUT_SECS: u64 = 20;
 const GRACEFUL_STOP_TIMEOUT_SECS: u64 = 5;
 
 /// Default sidecar port.
-const DEFAULT_SIDECAR_PORT: u16 = 3001;
+const DEFAULT_SIDECAR_PORT: u16 = 3009;
 
 /// Manages the sidecar process lifecycle via Tauri's shell plugin.
 ///
@@ -23,7 +23,7 @@ const DEFAULT_SIDECAR_PORT: u16 = 3001;
 pub struct SidecarManager {
     process: Mutex<Option<tauri_plugin_shell::process::CommandChild>>,
     security_port: u16,
-    /// Actual port the sidecar is listening on (may differ from 3001 if fallback)
+    /// Actual port the sidecar is listening on (may differ from 3009 if fallback)
     actual_port: Arc<Mutex<u16>>,
     /// Whether the sidecar has been verified as ready (HTTP server is listening)
     ready: Arc<AtomicBool>,
@@ -108,7 +108,7 @@ impl SidecarManager {
                             let line = line_buf[..newline_pos].trim().to_string();
                             line_buf = line_buf[newline_pos + 1..].to_string();
 
-                            // Check for ready signal: "sidecar-ready:3001"
+                            // Check for ready signal: "sidecar-ready:3009"
                             if let Some(port_str) =
                                 line.strip_prefix("sidecar-ready:")
                             {
@@ -159,15 +159,18 @@ impl SidecarManager {
     /// Poll the sidecar health endpoint until it responds or timeout.
     fn wait_for_ready(&self) -> Result<(), String> {
         let start = std::time::Instant::now();
-        let port = *self
-            .actual_port
-            .lock()
-            .map_err(|e| format!("Lock error: {}", e))?;
-        let health_url = format!("http://127.0.0.1:{}/health", port);
 
-        log::info!("Waiting for sidecar to be ready at {}...", health_url);
+        log::info!("Waiting for sidecar to be ready...");
 
         loop {
+            // Read the current port each iteration — the ready signal may
+            // arrive during startup and update actual_port (port fallback).
+            let port = *self
+                .actual_port
+                .lock()
+                .map_err(|e| format!("Lock error: {}", e))?;
+            let health_url = format!("http://127.0.0.1:{}/health", port);
+
             // Check if process is still alive
             if !self.is_running() {
                 return Err("Sidecar process exited before becoming ready".to_string());

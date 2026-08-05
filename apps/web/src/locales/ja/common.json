@@ -85,7 +85,8 @@
       "google": "Google AI / Gemini API キー — AIza で始まります（https://aistudio.google.com）",
       "amazonBedrock": "AWS Bedrock API キー — bedrock-api-key- で始まります（AWS Bedrock コンソール）",
       "azureOpenAI": "Azure OpenAI API キー — 32桁の16進数キー（Azure Portal）",
-      "googleVertex": "GCP Vertex AI API キー — AIza で始まります（Express モード, GCP コンソール）"
+      "googleVertex": "GCP Vertex AI API キー — AIza で始まります（Express モード, GCP コンソール）",
+      "custom": "OpenAI 互換エンドポイントの API キーを入力してください（例: Opencode Go のキー）"
     },
     "providerAmazonBedrock": "AWS Bedrock",
     "providerAzureOpenAI": "Azure OpenAI",
@@ -104,7 +105,8 @@
     "costInput": "入力",
     "costOutput": "出力",
     "costCached": "キャッシュ",
-    "costReasoning": "推論"
+    "costReasoning": "推論",
+    "welcomeDescriptionDesktop": "使用する AI モデルを設定してください。API キーはアプリ内のローカルストレージに保存され、選択した AI プロバイダーへの送信はローカルサイドカー（プロキシ）経由で行われます。キーが直接外部サーバーへ送信されることはありません。"
   },
   "env": {
     "title": "環境チェック",

@@ -11,7 +11,7 @@ const CREDENTIALS_FILE: &str = "credentials.json";
 
 /// Default sidecar port (used unless fallback is needed).
 /// The actual port is provided at runtime by SidecarManager.
-pub const DEFAULT_SIDECAR_PORT: u16 = 3001;
+pub const DEFAULT_SIDECAR_PORT: u16 = 3009;
 
 // ── Path helpers ──────────────────────────────────────────────────────────────
 
@@ -202,7 +202,7 @@ fn read_existing_config() -> Option<AiConfig> {
 /// 1. After every `save_ai_config` (key may have changed)
 /// 2. On app startup after the sidecar is ready
 ///
-/// `port` defaults to 3001 if not provided (or 0).
+/// `port` defaults to 3009 if not provided (or 0).
 pub fn push_api_key_to_sidecar(api_key: &str) {
     push_api_key_to_sidecar_on_port(api_key, DEFAULT_SIDECAR_PORT);
 }

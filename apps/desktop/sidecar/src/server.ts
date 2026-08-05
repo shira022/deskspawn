@@ -8,6 +8,7 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+import os from 'os';
 import { ChildProcess, spawn, execSync, execFileSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { getModel } from './providers.js';
@@ -25,18 +26,27 @@ const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
 
 // ── In-memory API key store (received from Rust backend, never from frontend) ─
 let storedApiKey: string | null = null;
-const PROJECTS_DIR = path.join(PROJECT_ROOT, 'projects');
+// bun compile の exe では __dirname が実行時cwd依存（B:等の一時ドライブに
+// 解決されうる）ため、プロジェクト保存先は確実に存在するホーム基準にする。
+const PROJECTS_DIR = process.env.DESKSPAWN_PROJECTS_DIR || path.join(os.homedir(), 'deskspawn-projects');
 const PROJECTS_JSON = path.join(PROJECTS_DIR, 'projects.json');
-const TEMPLATE_DIR = path.join(PROJECT_ROOT, 'templates', 'react-template');
+const TEMPLATE_DIR = path.join(PROJECTS_DIR, '..', 'templates', 'react-template');
 const WORKSPACE_DEV_PORT = 5174;
 let workspaceDevActualPort = WORKSPACE_DEV_PORT;
+
+/**
+ * Bun executable path — the Windows host is kept minimal (no Node.js/npm),
+ * so all package install / dev-server commands go through Bun.
+ * Override via env var BUN_PATH when the host layout differs.
+ */
+const BUN_PATH = process.env.BUN_PATH || 'C:\\Users\\shira\\dev\\tools\\bun\\bun-windows-x64\\bun.exe';
 
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 
 // ── Port resolution with fallback ────────────────────────────────────────────
-const DESIRED_PORT = process.env.PORT ? parseInt(process.env.PORT) : 3001;
+const DESIRED_PORT = process.env.PORT ? parseInt(process.env.PORT) : 3009;
 let ACTUAL_PORT = DESIRED_PORT;
 
 // ── Unhandled error resilience ───────────────────────────────────────────────
@@ -51,6 +61,23 @@ process.on('unhandledRejection', (reason) => {
 
 let workspaceDevProcess: ChildProcess | null = null;
 let workspaceDevReady = false;
+/** 直近のdev server出力（Viteエラー検出用・上限200行） */
+const workspaceDevLog: string[] = [];
+const MAX_DEV_LOG_LINES = 200;
+
+/** Viteエラーと判定するパターン（1行単位・webcontainer.ts と同等） */
+const VITE_ERROR_PATTERNS: RegExp[] = [
+  /✗\s*\[vite\]/,
+  /✗\s*Internal server error/,
+  /✗\s*\[plugin:/,
+  /\[vite\] Internal server error/,
+  /Failed to resolve import/,
+  /Could not resolve/,
+  /Module not found/,
+  /✗\s*(?:Error|error)/,
+  /error when starting dev server/i,
+  /✗\s*Build error/,
+];
 
 // ── Project registry helpers ─────────────────────────────────────────────────
 
@@ -221,7 +248,7 @@ export async function initStorage(appId?: string): Promise<StorageAdapter> {
 
 import type { StorageAdapter } from './storage';
 
-const BACKUP_URL = "http://localhost:3001/data-backup";
+const BACKUP_URL = "http://localhost:3009/data-backup";
 
 export class IndexedDBAdapter implements StorageAdapter {
   private db: IDBDatabase | null = null;
@@ -525,29 +552,41 @@ function startWorkspaceDevServer(dir: string) {
   // unnecessary HMR reloads when checkpoints are created/restored.
   patchViteConfigForDotDeskspawn(dir);
 
-  const child = spawn('npm', ['run', 'dev'], {
+  // Host has no npm — use Bun (absolute path, shell:false).
+  // PORT env は vite に効かないため CLI オプションでポートを固定する
+  const child = spawn(BUN_PATH, ['run', 'dev', '--', '--port', String(WORKSPACE_DEV_PORT)], {
     cwd: dir,
     stdio: 'pipe',
     detached: true,
-    shell: true,
     env: { ...process.env, PORT: String(WORKSPACE_DEV_PORT) },
   });
 
   workspaceDevProcess = child;
 
+  // チャンク分割で行が分断されても確実にパースするための行バッファ
+  let devLineBuf = '';
   child.stdout?.on('data', (data: Buffer) => {
-    const text = data.toString();
-    console.log(`[devserver] ${text.trim()}`);
-    // Parse actual port from Vite's "Local:" line, e.g. "➜  Local:   http://localhost:5174/"
-    const portMatch = text.match(/Local:\s+https?:\/\/localhost:(\d+)/);
-    if (portMatch) {
-      const parsedPort = parseInt(portMatch[1], 10);
-      if (!isNaN(parsedPort)) {
-        workspaceDevActualPort = parsedPort;
-        console.log(`[devserver] Detected actual port: ${parsedPort}`);
+    devLineBuf += data.toString();
+    const lines = devLineBuf.split('\n');
+    devLineBuf = lines.pop() || ''; // 最後の不完全行は次チャンクへ持ち越し
+    for (const rawLine of lines) {
+      const line = rawLine.trim();
+      if (!line) continue;
+      // 直近出力をバッファ（Viteエラー検出用）
+      workspaceDevLog.push(line);
+      if (workspaceDevLog.length > MAX_DEV_LOG_LINES) workspaceDevLog.shift();
+      console.log(`[devserver] ${line}`);
+      // Parse actual port from Vite's "Local:" line, e.g. "➜  Local:   http://localhost:5174/"
+      const portMatch = line.match(/Local:\s+https?:\/\/localhost:(\d+)/);
+      if (portMatch) {
+        const parsedPort = parseInt(portMatch[1], 10);
+        if (!isNaN(parsedPort)) {
+          workspaceDevActualPort = parsedPort;
+          console.log(`[devserver] Detected actual port: ${parsedPort}`);
+        }
+        workspaceDevReady = true;
+        console.log('[devserver] Workspace dev server is ready');
       }
-      workspaceDevReady = true;
-      console.log('[devserver] Workspace dev server is ready');
     }
   });
 
@@ -573,10 +612,10 @@ function startWorkspaceDevServer(dir: string) {
 function installDeps(dir: string): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log(`[projects] Installing dependencies in ${dir}...`);
-    const child = spawn('npm', ['install', '--ignore-scripts'], {
+    // Host has no npm — use Bun (absolute path, shell:false).
+    const child = spawn(BUN_PATH, ['install', '--ignore-scripts'], {
       cwd: dir,
       stdio: 'pipe',
-      shell: true,
     });
     let output = '';
     child.stdout?.on('data', (d: Buffer) => { output += d.toString(); });
@@ -896,13 +935,89 @@ app.post('/chat/history', (req, res) => {
  * The frontend NEVER has access to this endpoint.
  */
 app.post('/api/config', (req, res) => {
-  const { apiKey } = req.body || {};
+  const { apiKey, customEndpoint } = req.body || {};
   if (typeof apiKey === 'string') {
     storedApiKey = apiKey;
     console.log('[api/config] API key updated in sidecar memory');
+  }
+  if (typeof customEndpoint === 'string') {
+    storedCustomEndpoint = customEndpoint;
+    console.log('[api/config] custom endpoint updated in sidecar memory');
+  }
+  if (typeof apiKey === 'string' || typeof customEndpoint === 'string') {
     res.json({ success: true });
   } else {
-    res.status(400).json({ error: 'apiKey string required', errorCode: 'API_KEY_REQUIRED' });
+    res.status(400).json({ error: 'apiKey or customEndpoint string required', errorCode: 'CONFIG_REQUIRED' });
+  }
+});
+
+// ── OpenAI互換プロキシ (/v1/*) ──────────────────────────────────────────────
+// デスクトップ(WebView2)からはCORSで直接呼べないカスタムエンドポイントを中継する。
+// フロントエンドは baseURL=http://localhost:3009/v1 を指定し、実際のエンドポイントを
+// x-upstream ヘッダーで渡す。キーはリクエストの Authorization または保存済みキーを使用。
+app.use('/v1', async (req, res) => {
+  try {
+    const upstream =
+      (req.headers['x-upstream'] as string | undefined) || storedCustomEndpoint;
+    if (!upstream) {
+      res.status(400).json({
+        error: 'No upstream endpoint (set x-upstream header or POST /api/config with customEndpoint)',
+        errorCode: 'NO_UPSTREAM',
+      });
+      return;
+    }
+    const apiKey =
+      storedApiKey ||
+      (typeof req.headers.authorization === 'string'
+        ? req.headers.authorization.replace(/^Bearer\s+/i, '')
+        : '');
+    const path = req.path; // /v1 マウント内ではプレフィックス除去済み (e.g. /chat/completions)
+    const target = `${upstream.replace(/\/+$/, '')}${path}`;
+
+    const headers: Record<string, string> = {};
+    if (typeof req.headers['content-type'] === 'string') headers['Content-Type'] = req.headers['content-type'];
+    if (typeof req.headers.accept === 'string') headers['Accept'] = req.headers.accept;
+    if (apiKey) headers['Authorization'] = `Bearer ${apiKey}`;
+
+    const init: RequestInit = { method: req.method, headers };
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      init.body = JSON.stringify(req.body ?? {});
+    }
+
+    const upstreamRes = await fetch(target, init);
+    res.status(upstreamRes.status);
+
+    const contentType = upstreamRes.headers.get('content-type') || '';
+    const isStream =
+      contentType.includes('text/event-stream') ||
+      String(req.headers.accept || '').includes('text/event-stream');
+
+    if (isStream && upstreamRes.body) {
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      const reader = upstreamRes.body.getReader();
+      try {
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          res.write(value);
+        }
+      } finally {
+        res.end();
+      }
+    } else {
+      const text = await upstreamRes.text();
+      if (contentType) res.setHeader('Content-Type', contentType);
+      res.send(text);
+    }
+  } catch (error: any) {
+    console.error('[proxy] error:', error?.message || error);
+    if (!res.headersSent) {
+      res.status(502).json({ error: `Proxy error: ${error?.message || error}`, errorCode: 'PROXY_ERROR' });
+    } else {
+      res.end();
+    }
   }
 });
 
@@ -1571,6 +1686,205 @@ app.post('/projects/import', async (req, res) => {
 process.on('SIGTERM', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
 process.on('SIGINT', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
 
+// ── Desktop Preview Endpoints (local Vite dev server) ──────────────────────
+// The desktop app runs the generated app's dev server locally (via Bun) and
+// shows it in an iframe — no WebContainer/StackBlitz dependency.
+
+const PREVIEW_ROOT = path.join(PROJECTS_DIR, 'preview');
+
+/** Write project files into the preview dir (path-traversal safe).
+ *  node_modules は保持する — 実行中の vite がディレクトリをロックしていても
+ *  ソースを上書きでき、再インストールも不要になる。 */
+function writePreviewFiles(dir: string, files: Record<string, string>) {
+  if (fs.existsSync(dir)) {
+    for (const entry of fs.readdirSync(dir)) {
+      if (entry !== 'node_modules') {
+        fs.rmSync(path.join(dir, entry), { recursive: true, force: true });
+      }
+    }
+  } else {
+    fs.mkdirSync(dir, { recursive: true });
+  }
+  const rootResolved = path.resolve(dir);
+  for (const [rel, content] of Object.entries(files)) {
+    const target = path.resolve(dir, rel);
+    if (!target.startsWith(rootResolved + path.sep) && target !== rootResolved) {
+      throw new Error(`Invalid file path in preview payload: ${rel}`);
+    }
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    fs.writeFileSync(target, content, 'utf-8');
+  }
+}
+
+/** vite が実際に開いたポートをHTTPポーリングで確認する
+ *  （vite は ::1 でバインドするため localhost / 127.0.0.1 / [::1] を全て試す） */
+async function checkDevServerPort(port: number): Promise<boolean> {
+  for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+    try {
+      const res = await fetch(`http://${host}:${port}/`, {
+        signal: AbortSignal.timeout(800),
+      });
+      if (res && res.status < 500) return true;
+    } catch {
+      // try next host
+    }
+  }
+  return false;
+}
+
+/** Wait until workspaceDevReady or timeout (ms). */
+function waitForDevServer(timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const timer = setInterval(async () => {
+      if (workspaceDevReady) {
+        clearInterval(timer);
+        resolve(true);
+        return;
+      }
+      // 保険: 出力パースに依存せず、実際にポートが開いたかHTTPポーリングで確認
+      // （vite の stdout は Windows パイプでチャンク分割され「Local:」行の
+      //   正規表現パースが失敗することがあるため。ポートもフォールバックでずれる）
+      for (let port = WORKSPACE_DEV_PORT; port <= WORKSPACE_DEV_PORT + 5; port++) {
+        if (await checkDevServerPort(port)) {
+          workspaceDevActualPort = port;
+          workspaceDevReady = true;
+          console.log(`[devserver] Detected actual port via polling: ${port}`);
+          clearInterval(timer);
+          resolve(true);
+          return;
+        }
+      }
+      if (Date.now() - start > timeoutMs) {
+        clearInterval(timer);
+        resolve(false);
+      }
+    }, 500);
+  });
+}
+
+// Start local preview for a project (full file payload)
+app.post('/api/preview/start', async (req, res) => {
+  try {
+    const { projectId, files } = req.body || {};
+    if (!projectId || typeof projectId !== 'string' || !files || typeof files !== 'object') {
+      res.status(400).json({ error: 'projectId and files are required' });
+      return;
+    }
+    const dir = path.join(PREVIEW_ROOT, projectId);
+    writePreviewFiles(dir, files);
+
+    // bun install はキャッシュが効き2回目以降は高速。常に実行して
+    // node_modules の破損（中断・部分削除など）も修復する。
+    console.log(`[preview] Installing deps for ${projectId}...`);
+    await installDeps(dir);
+    startWorkspaceDevServer(dir);
+
+    const ready = await waitForDevServer(30_000);
+    if (!ready) {
+      res.status(500).json({ error: 'Dev server did not start within 30s' });
+      return;
+    }
+    const url = `http://localhost:${workspaceDevActualPort}`;
+    console.log(`[preview] Ready at ${url}`);
+    res.json({ url, port: workspaceDevActualPort });
+  } catch (e: any) {
+    console.error('[preview] start failed:', e);
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Sync files to the running preview (Vite HMR applies changes automatically)
+app.post('/api/preview/sync', (req, res) => {
+  try {
+    const { projectId, files } = req.body || {};
+    if (!projectId || !files || typeof files !== 'object') {
+      res.status(400).json({ error: 'projectId and files are required' });
+      return;
+    }
+    const dir = path.join(PREVIEW_ROOT, projectId);
+    const rootResolved = path.resolve(dir);
+    for (const [rel, content] of Object.entries(files)) {
+      const target = path.resolve(dir, rel);
+      if (!target.startsWith(rootResolved + path.sep) && target !== rootResolved) {
+        res.status(400).json({ error: `Invalid file path: ${rel}` });
+        return;
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.writeFileSync(target, content, 'utf-8');
+    }
+    res.json({ synced: Object.keys(files).length });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
+// Stop the running preview
+app.post('/api/preview/stop', (_req, res) => {
+  stopWorkspaceDevServer();
+  res.json({ stopped: true });
+});
+
+// Type-check the preview workspace (tsc --noEmit) + Vite error detection
+app.post('/api/preview/check', async (req, res) => {
+  try {
+    const { projectId } = req.body || {};
+    if (!projectId || typeof projectId !== 'string') {
+      res.status(400).json({ error: 'projectId is required' });
+      return;
+    }
+    const dir = path.join(PREVIEW_ROOT, projectId);
+    const errors: Array<{
+      type: 'typescript' | 'vite' | 'missing-package';
+      message: string;
+      filePath?: string;
+      line?: number;
+      column?: number;
+    }> = [];
+
+    // 1. tsc --noEmit (via bunx)
+    if (fs.existsSync(dir)) {
+      try {
+        execFileSync(BUN_PATH, ['x', 'tsc', '--noEmit', '--pretty', 'false'], {
+          cwd: dir,
+          encoding: 'utf-8',
+          timeout: 60_000,
+          stdio: ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (e: any) {
+        const out = `${e.stdout || ''}${e.stderr || ''}`;
+        const tscRe = /^(.+?)\((\d+),(\d+)\): error (TS\d+): (.+)$/gm;
+        let m: RegExpExecArray | null;
+        let parsed = 0;
+        while ((m = tscRe.exec(out)) !== null) {
+          errors.push({
+            type: 'typescript',
+            filePath: m[1],
+            line: parseInt(m[2], 10),
+            column: parseInt(m[3], 10),
+            message: m[5],
+          });
+          parsed++;
+        }
+        if (parsed === 0 && out.trim()) {
+          errors.push({ type: 'typescript', message: out.trim().slice(0, 500) });
+        }
+      }
+    }
+
+    // 2. Vite dev server エラー（直近出力からパターン検出）
+    for (const line of workspaceDevLog) {
+      if (VITE_ERROR_PATTERNS.some((re) => re.test(line))) {
+        errors.push({ type: 'vite', message: line.slice(0, 300) });
+      }
+    }
+
+    res.json({ errors });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message || String(e) });
+  }
+});
+
 /**
  * Kill any process holding a given port (macOS/Linux).
  * Uses lsof + kill -9. Best-effort; errors are silently swallowed.
@@ -1600,7 +1914,10 @@ function startServer(port: number): Promise<void> {
   }
 
   return new Promise((resolve, reject) => {
-    const server = app.listen(port, () => {
+    // host: '127.0.0.1' — WSL2 の localhostForwarding が「::」/「0.0.0.0」に
+    // ゾンビ共有ソケットを残すため、IPv4ループバック限定でバインドして共存する。
+    // (WebView2 は localhost → 127.0.0.1 で到達可能。WSL からの直接アクセスは不要)
+    const server = app.listen({ port, host: '127.0.0.1', reusePort: true }, () => {
       ACTUAL_PORT = port;
       // Signal readiness to Rust backend (parses this from stdout)
       console.log(`sidecar-ready:${ACTUAL_PORT}`);

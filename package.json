@@ -6,9 +6,13 @@
     "build": "pnpm --filter web build",
     "test": "pnpm --filter web test",
     "lint": "pnpm --filter web lint",
-    "preview": "pnpm --filter web preview"
+    "preview": "pnpm --filter web preview",
+    "test:e2e": "playwright test"
   },
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.62.1"
   }
 }

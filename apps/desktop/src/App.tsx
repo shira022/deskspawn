@@ -5,7 +5,7 @@
  * Platform-specific services are pre-registered for the Desktop environment.
  */
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect } from "react";
 import { MainLayout } from "@/components/layout/MainLayout";
 import { useAppStore } from "@/store/useAppStore";
 import { registerDesktopServices } from "./lib/services";
