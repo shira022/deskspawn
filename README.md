@@ -84,7 +84,7 @@ Visit **[deskspawn.pages.dev](https://deskspawn.pages.dev)** (once deployed):
 ### Prerequisites
 
 - [Node.js](https://nodejs.org/) 20+
-- npm
+- [pnpm](https://pnpm.io/) (`npm install -g pnpm`)
 
 ### Setup
 
@@ -94,58 +94,51 @@ git clone https://github.com/shira022/deskspawn.git
 cd deskspawn
 
 # Install dependencies
-npm install
+pnpm install
 
-# Start the dev server
-npm run dev
+# Start the web dev server
+pnpm dev
 ```
 
 The dev server will start at `http://localhost:5173`. It automatically serves COOP/COEP headers required by WebContainer.
 
-### Commands
+### Commands (Web app)
 
 | Command | Description |
 |---|---|
-| `npm run dev` | Start Vite dev server |
-| `npm run build` | TypeScript check + production build |
-| `npm run preview` | Preview production build locally |
-| `npm test` | Run unit tests |
-| `npm run test:ui` | Run UI component tests |
-| `npm run lint` | Run ESLint |
+| `pnpm dev` | Start Vite dev server |
+| `pnpm build` | TypeScript check + production build |
+| `pnpm preview` | Preview production build locally |
+| `pnpm test` | Run unit tests |
+| `pnpm test:ui` | Run UI component tests |
+| `pnpm lint` | Run ESLint |
+| `pnpm --filter desktop tauri dev` | Start Tauri desktop app (dev mode) |
 
 ### Project Structure
 
 ```
-deskspawn/
-├── src/                        # Main application
-│   ├── App.tsx                 # Root component
-│   ├── main.tsx                # Entry point + boot sequence
-│   ├── engine/                 # Multi-agent AI pipeline
-│   │   ├── orchestrator.ts     # Agent orchestration
-│   │   ├── triage.ts           # Request triage
-│   │   ├── tools.ts            # AI tool definitions
-│   │   ├── tool-executors.ts   # Tool execution logic
-│   │   ├── providers.ts        # AI provider resolution
-│   │   └── system-prompts/     # Agent prompt templates
-│   ├── lib/                    # Utilities
-│   │   ├── storage.ts          # IndexedDB layer
-│   │   ├── storage-opfs.ts     # OPFS file storage
-│   │   ├── preview/            # WebContainer management
-│   │   ├── compatibility.ts    # Browser feature detection
-│   │   └── i18n.ts             # Internationalization
-│   ├── store/                  # Zustand state management
-│   ├── components/             # UI components
-│   │   ├── ui/                # Base primitives (shadcn-style)
-│   │   ├── chat/              # Chat panel, messages
-│   │   ├── preview/           # Live preview panel
-│   │   ├── file-tree/         # File explorer
-│   │   └── settings/          # Configuration dialogs
-│   ├── routes/                 # Routing (landing + app)
-│   ├── locales/                # i18n translations
-│   └── hooks/                  # Custom React hooks
-├── public/                     # Static assets
-│   └── _headers                # Cloudflare Pages security headers
-└── .github/workflows/          # CI pipeline
+deskspawn/                          # pnpm workspace root
+├── apps/
+│   └── web/                        # Web app (Cloudflare Pages)
+│       ├── src/                    # Main application
+│       │   ├── App.tsx             # Root component
+│       │   ├── main.tsx            # Entry point + boot sequence
+│       │   ├── engine/             # Multi-agent AI pipeline
+│       │   ├── lib/                # Utilities
+│       │   ├── store/              # Zustand state management
+│       │   ├── components/         # UI components
+│       │   ├── routes/             # Routing (landing + app)
+│       │   ├── locales/            # i18n translations
+│       │   └── hooks/              # Custom React hooks
+│       ├── public/                 # Static assets + _headers
+│       ├── vite.config.ts
+│       └── vitest.config.ts
+├── packages/
+│   ├── ui/                         # Shared UI components
+│   ├── ai-core/                    # Shared AI pipeline types
+│   └── config/                     # Shared TS config
+├── pnpm-workspace.yaml
+└── package.json
 ```
 
 ---
@@ -161,8 +154,9 @@ DeskSpawn is designed to be deployed as a static site. The recommended hosting p
 3. Click **Create a project** → **Connect to Git**
 4. Select your fork and configure:
    - **Project name**: `deskspawn`
-   - **Build command**: `npm run build`
-   - **Build output directory**: `dist`
+   - **Build command**: `cd apps/web && npm run build` (or `pnpm --filter web build` on Cloudflare with pnpm installed)
+   - **Build output directory**: `apps/web/dist`
+   - **Root directory** (optional): `apps/web`
 5. Deploy
 
 The security headers in `public/_headers` will automatically apply:

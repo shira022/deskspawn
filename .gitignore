@@ -29,3 +29,13 @@ deskspawn-*.png
 projects/
 workspace/
 *.png
+
+# Playwright E2E
+node_modules/.cache/
+test-results/
+playwright-report/
+e2e/.auth/
+
+# Preview test fixture (not part of the repo)
+preview-test/
+
