@@ -295,6 +295,10 @@ export async function deleteAppDatabase(projectId: string): Promise<void> {
 // ── Chat History Operations ───────────────────────────────────────────────────
 
 export async function getChatHistory(projectId: string): Promise<any[]> {
+  if (isDesktopRuntime()) {
+    const { getChatHistoryDesktop } = await import("@/lib/storage-desktop");
+    return getChatHistoryDesktop(projectId);
+  }
   const db = await openDB();
   const tx = db.transaction("chat_history", "readonly");
   const store = tx.objectStore("chat_history");
@@ -307,6 +311,10 @@ export async function getChatHistory(projectId: string): Promise<any[]> {
 }
 
 export async function saveChatHistory(projectId: string, messages: any[]): Promise<void> {
+  if (isDesktopRuntime()) {
+    const { saveChatHistoryDesktop } = await import("@/lib/storage-desktop");
+    return saveChatHistoryDesktop(projectId, messages);
+  }
   const db = await openDB();
   const tx = db.transaction("chat_history", "readwrite");
   const store = tx.objectStore("chat_history");

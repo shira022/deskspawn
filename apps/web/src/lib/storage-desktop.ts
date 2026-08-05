@@ -142,3 +142,44 @@ export async function writeProjectFilesDesktop(
 export function isDesktopStorageActive(): boolean {
   return isDesktopRuntime();
 }
+
+// ── Chat History (persisted per-project in SQLite via Rust IPC, ADR-009) ──────
+
+/** Chat message shape returned by the Rust backend. */
+export interface ChatMessage {
+  id: number;
+  role: string;
+  content: string;
+  created_at: string;
+}
+
+/** Load chat history from the project's SQLite DB (Rust side). */
+export async function getChatHistoryDesktop(projectId: string): Promise<any[]> {
+  try {
+    const msgs = await tauriInvoke<ChatMessage[]>("get_chat_history", { projectId });
+    return msgs.map((m) => ({ role: m.role, content: m.content }));
+  } catch (e) {
+    console.warn("[storage-desktop] get_chat_history failed:", e);
+    return [];
+  }
+}
+
+/** Append the latest chat message to the project's SQLite DB (Rust side). */
+export async function saveChatHistoryDesktop(
+  projectId: string,
+  messages: any[],
+): Promise<void> {
+  try {
+    // Persist incrementally: the last message is the new one.
+    const last = messages[messages.length - 1];
+    if (last && typeof last.role === "string" && typeof last.content === "string") {
+      await tauriInvoke("append_chat_message", {
+        projectId,
+        role: last.role,
+        content: last.content,
+      });
+    }
+  } catch (e) {
+    console.warn("[storage-desktop] append_chat_message failed:", e);
+  }
+}

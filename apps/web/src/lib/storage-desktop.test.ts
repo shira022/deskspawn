@@ -145,7 +145,42 @@ describe("storage-desktop", () => {
 
   it("isDesktopStorageActive reflects the __DESKSPAWN_DESKTOP__ flag", () => {
     expect(isDesktopStorageActive()).toBe(false);
-    (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ = true;
+    (windowShim as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ = true;
     expect(isDesktopStorageActive()).toBe(true);
+  });
+
+  it("getChatHistoryDesktop maps Rust rows to engine shape", async () => {
+    invokeMock.mockResolvedValue([
+      { id: 1, role: "user", content: "hello", created_at: "2026-08-05T00:00:00Z" },
+      { id: 2, role: "assistant", content: "hi", created_at: "2026-08-05T00:00:01Z" },
+    ]);
+    const { getChatHistoryDesktop } = await import("./storage-desktop");
+    const history = await getChatHistoryDesktop("proj-1");
+    expect(history).toEqual([
+      { role: "user", content: "hello" },
+      { role: "assistant", content: "hi" },
+    ]);
+    expect(invokeMock).toHaveBeenCalledWith("get_chat_history", { projectId: "proj-1" });
+  });
+
+  it("getChatHistoryDesktop returns [] on failure", async () => {
+    invokeMock.mockRejectedValue(new Error("db closed"));
+    const { getChatHistoryDesktop } = await import("./storage-desktop");
+    const history = await getChatHistoryDesktop("proj-1");
+    expect(history).toEqual([]);
+  });
+
+  it("saveChatHistoryDesktop appends only the last message", async () => {
+    invokeMock.mockResolvedValue(42);
+    const { saveChatHistoryDesktop } = await import("./storage-desktop");
+    await saveChatHistoryDesktop("proj-1", [
+      { role: "user", content: "old" },
+      { role: "assistant", content: "new" },
+    ]);
+    expect(invokeMock).toHaveBeenCalledWith("append_chat_message", {
+      projectId: "proj-1",
+      role: "assistant",
+      content: "new",
+    });
   });
 });
