@@ -204,7 +204,19 @@ export async function loadLastProvider(): Promise<string | null> {
 
 // ── Project Operations ────────────────────────────────────────────────────────
 
+/**
+ * Desktop uses real files via Rust IPC (ADR-008); Web uses IndexedDB.
+ * The desktop adapter is imported lazily so the web bundle stays unaffected.
+ */
+function isDesktopRuntime(): boolean {
+  return typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__);
+}
+
 export async function listProjects(): Promise<StoredProject[]> {
+  if (isDesktopRuntime()) {
+    const { listProjectsDesktop } = await import("@/lib/storage-desktop");
+    return listProjectsDesktop();
+  }
   const db = await openDB();
   const tx = db.transaction("projects", "readonly");
   const store = tx.objectStore("projects");
@@ -216,6 +228,10 @@ export async function listProjects(): Promise<StoredProject[]> {
 }
 
 export async function getProject(id: string): Promise<StoredProject | null> {
+  if (isDesktopRuntime()) {
+    const { getProjectDesktop } = await import("@/lib/storage-desktop");
+    return getProjectDesktop(id);
+  }
   const db = await openDB();
   const tx = db.transaction("projects", "readonly");
   const store = tx.objectStore("projects");
@@ -227,6 +243,10 @@ export async function getProject(id: string): Promise<StoredProject | null> {
 }
 
 export async function saveProject(project: StoredProject): Promise<void> {
+  if (isDesktopRuntime()) {
+    const { saveProjectDesktop } = await import("@/lib/storage-desktop");
+    return saveProjectDesktop(project);
+  }
   const db = await openDB();
   const tx = db.transaction("projects", "readwrite");
   const store = tx.objectStore("projects");
@@ -238,6 +258,10 @@ export async function saveProject(project: StoredProject): Promise<void> {
 }
 
 export async function deleteProject(id: string): Promise<void> {
+  if (isDesktopRuntime()) {
+    const { deleteProjectDesktop } = await import("@/lib/storage-desktop");
+    return deleteProjectDesktop(id);
+  }
   const db = await openDB();
   const tx = db.transaction("projects", "readwrite");
   const store = tx.objectStore("projects");

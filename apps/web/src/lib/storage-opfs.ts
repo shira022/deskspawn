@@ -213,7 +213,19 @@ export async function isOpfsAvailable(): Promise<boolean> {
 
 // ── Unified API (auto-routes to OPFS or IndexedDB) ────────────────────────────
 
+/**
+ * Desktop uses real files via Rust IPC (ADR-008); Web uses OPFS/IndexedDB.
+ * The desktop adapter is imported lazily so the web bundle stays unaffected.
+ */
+function isDesktopRuntime(): boolean {
+  return typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__);
+}
+
 export async function readProjectFile(projectId: string, filePath: string): Promise<string | null> {
+  if (isDesktopRuntime()) {
+    const { readProjectFileDesktop } = await import("@/lib/storage-desktop");
+    return readProjectFileDesktop(projectId, filePath);
+  }
   if (await isOpfsAvailable()) {
     return readOpfsFile(projectId, filePath);
   }
@@ -221,6 +233,10 @@ export async function readProjectFile(projectId: string, filePath: string): Prom
 }
 
 export async function writeProjectFile(projectId: string, filePath: string, content: string): Promise<void> {
+  if (isDesktopRuntime()) {
+    const { writeProjectFileDesktop } = await import("@/lib/storage-desktop");
+    return writeProjectFileDesktop(projectId, filePath, content);
+  }
   if (await isOpfsAvailable()) {
     return writeOpfsFile(projectId, filePath, content);
   }
@@ -228,6 +244,13 @@ export async function writeProjectFile(projectId: string, filePath: string, cont
 }
 
 export async function deleteProjectFile(projectId: string, filePath: string): Promise<void> {
+  if (isDesktopRuntime()) {
+    const { writeProjectFileDesktop } = await import("@/lib/storage-desktop");
+    // Deleting = writing empty content is not supported; use OPFS path only.
+    // Desktop deletion is handled via delete_project on the whole project.
+    await writeProjectFileDesktop(projectId, filePath, "");
+    return;
+  }
   if (await isOpfsAvailable()) {
     return deleteOpfsFile(projectId, filePath);
   }
@@ -235,6 +258,17 @@ export async function deleteProjectFile(projectId: string, filePath: string): Pr
 }
 
 export async function listProjectFiles(projectId: string): Promise<FileInfo[]> {
+  if (isDesktopRuntime()) {
+    const { listProjectFilesDesktop } = await import("@/lib/storage-desktop");
+    const relPaths = await listProjectFilesDesktop(projectId);
+    // Map to FileInfo shape (web interface compatibility).
+    return relPaths.map((p) => ({
+      path: p,
+      size: 0,
+      lastModified: "",
+      isDirectory: false,
+    }));
+  }
   if (await isOpfsAvailable()) {
     return listOpfsFiles(projectId);
   }
@@ -242,6 +276,11 @@ export async function listProjectFiles(projectId: string): Promise<FileInfo[]> {
 }
 
 export async function deleteProjectDir(projectId: string): Promise<void> {
+  if (isDesktopRuntime()) {
+    const { deleteProjectDesktop } = await import("@/lib/storage-desktop");
+    await deleteProjectDesktop(projectId);
+    return;
+  }
   if (await isOpfsAvailable()) {
     return deleteOpfsDir(projectId);
   }
