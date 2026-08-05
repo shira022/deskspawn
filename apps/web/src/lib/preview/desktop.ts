@@ -6,7 +6,6 @@
  * PreviewPanel and tool-executors can use it transparently.
  */
 
-import { listProjectFiles, readProjectFiles } from "@/lib/storage-opfs";
 import { sidecarBase } from "@/lib/sidecar";
 import type { PreviewState, PreviewStatus, StateListener } from "./types";
 
@@ -73,18 +72,6 @@ export class DesktopPreviewManager {
     };
   }
 
-  /** OPFS から全プロジェクトファイルを読み込む */
-  private async collectFiles(projectId: string): Promise<Record<string, string>> {
-    const infos = await listProjectFiles(projectId);
-    const paths = infos.map((f) => f.path);
-    const contents = await readProjectFiles(projectId, paths);
-    const files: Record<string, string> = {};
-    for (const [p, c] of Object.entries(contents)) {
-      if (c !== null) files[p] = c;
-    }
-    return files;
-  }
-
   /** サイドカーにローカルVite dev server を起動させ、プレビューを開始する */
   async boot(projectId: string): Promise<void> {
     if (this._projectId === projectId && this._status === "ready") {
@@ -112,12 +99,12 @@ export class DesktopPreviewManager {
     advanceTo("starting-dev", 5000, "Starting Vite dev server...");
 
     try {
-      const files = await this.collectFiles(projectId);
-      this.addLog("Sending project files to sidecar...");
+      // デスクトップ版は実体ディレクトリを直接参照するためファイル送信は
+      // 不要。sidecarは実体でbun install→vite起動する（ADR-008）。
       const res = await fetch(`${sidecarBase()}/api/preview/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, files }),
+        body: JSON.stringify({ projectId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -135,32 +122,17 @@ export class DesktopPreviewManager {
     }
   }
 
-  /** ファイル変更をサイドカーに同期する（Vite HMR が自動反映） */
+  /** ファイル変更をサイドカーに同期する（Vite HMR が自動反映）。
+   *  デスクトップ版では実体ディレクトリをRust IPCで直接書き込むため、
+   *  ファイル同期は不要。viteのHMRが自動反映する（ADR-008）。 */
   async syncAndReload(projectId: string): Promise<void> {
     if (this._projectId !== projectId) {
       await this.boot(projectId);
       return;
     }
-    this.setState({ status: "syncing", error: null });
-    this.addLog("Syncing project files...");
-    try {
-      const files = await this.collectFiles(projectId);
-      const res = await fetch(`${sidecarBase()}/api/preview/sync`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId, files }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || `Preview sync failed (${res.status})`);
-      }
-      this.addLog(`Synced ${data.synced ?? Object.keys(files).length} file(s)`);
-      this.setState({ status: "ready" });
-    } catch (e: any) {
-      const msg = e.message || String(e);
-      console.error("[preview] sync failed:", e);
-      this.setState({ status: "error", error: msg });
-    }
+    // 実体を直接編集しているため、再同期は不要（HMRが反映）。
+    // ただし旧フロー（files送信）との互換のため、ここでは何もしない。
+    this.setState({ status: "ready" });
   }
 
   /** エラーチェック前の同期 — デスクトップでは syncAndReload と同じ（Vite HMR が反映） */

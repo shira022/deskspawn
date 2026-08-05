@@ -148,6 +148,8 @@ pub fn run() {
             commands::projects::read_project_file,
             commands::projects::write_project_file,
             commands::projects::write_project_files,
+            commands::projects::get_chat_history,
+            commands::projects::append_chat_message,
             // Environment check commands
             commands::env_check::check_environment,
             commands::env_check::check_winget,

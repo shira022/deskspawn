@@ -1689,10 +1689,17 @@ process.on('SIGINT', () => { stopWorkspaceDevServer(); closeMCPClients(); proces
 // ── Desktop Preview Endpoints (local Vite dev server) ──────────────────────
 // The desktop app runs the generated app's dev server locally (via Bun) and
 // shows it in an iframe — no WebContainer/StackBlitz dependency.
+//
+// ADR-008/ADR-010: the project's real files live at
+// `~/deskspawn/projects/<id>/` and the dev server runs directly on that
+// directory (no preview/ copy). The frontend reads/writes files through Rust
+// IPC; preview endpoints only manage the dev server lifecycle.
 
-const PREVIEW_ROOT = path.join(PROJECTS_DIR, 'preview');
+function previewDir(projectId: string): string {
+  return path.join(PROJECTS_DIR, projectId);
+}
 
-/** Write project files into the preview dir (path-traversal safe).
+/** Write project files into the project dir (path-traversal safe).
  *  node_modules は保持する — 実行中の vite がディレクトリをロックしていても
  *  ソースを上書きでき、再インストールも不要になる。 */
 function writePreviewFiles(dir: string, files: Record<string, string>) {
@@ -1763,16 +1770,24 @@ function waitForDevServer(timeoutMs: number): Promise<boolean> {
   });
 }
 
-// Start local preview for a project (full file payload)
+// Start local preview for a project (runs directly on the real project dir).
+// `files` is optional: when provided (legacy web-style flow) they are written
+// into the project dir first; in the desktop flow the frontend has already
+// written files through Rust IPC, so the dev server runs on the real files.
 app.post('/api/preview/start', async (req, res) => {
   try {
     const { projectId, files } = req.body || {};
-    if (!projectId || typeof projectId !== 'string' || !files || typeof files !== 'object') {
-      res.status(400).json({ error: 'projectId and files are required' });
+    if (!projectId || typeof projectId !== 'string') {
+      res.status(400).json({ error: 'projectId is required' });
       return;
     }
-    const dir = path.join(PREVIEW_ROOT, projectId);
-    writePreviewFiles(dir, files);
+    const dir = previewDir(projectId);
+    if (files && typeof files === 'object') {
+      writePreviewFiles(dir, files);
+    } else if (!fs.existsSync(path.join(dir, 'package.json'))) {
+      res.status(400).json({ error: 'Project has no package.json — create the project first' });
+      return;
+    }
 
     // bun install はキャッシュが効き2回目以降は高速。常に実行して
     // node_modules の破損（中断・部分削除など）も修復する。
@@ -1802,7 +1817,7 @@ app.post('/api/preview/sync', (req, res) => {
       res.status(400).json({ error: 'projectId and files are required' });
       return;
     }
-    const dir = path.join(PREVIEW_ROOT, projectId);
+    const dir = previewDir(projectId);
     const rootResolved = path.resolve(dir);
     for (const [rel, content] of Object.entries(files)) {
       const target = path.resolve(dir, rel);
@@ -1833,7 +1848,7 @@ app.post('/api/preview/check', async (req, res) => {
       res.status(400).json({ error: 'projectId is required' });
       return;
     }
-    const dir = path.join(PREVIEW_ROOT, projectId);
+    const dir = previewDir(projectId);
     const errors: Array<{
       type: 'typescript' | 'vite' | 'missing-package';
       message: string;

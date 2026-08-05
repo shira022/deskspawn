@@ -208,6 +208,46 @@ pub fn write_project_files(
     Ok(written)
 }
 
+/// Load chat history for a project from its SQLite DB (ADR-009).
+#[tauri::command]
+pub async fn get_chat_history(project_id: String) -> Result<Vec<ChatMessage>, String> {
+    let pool = crate::engine::storage::open_chat_db(&project_id).await?;
+    let rows = crate::engine::storage::load_messages(&pool, &project_id).await?;
+    let msgs = rows
+        .into_iter()
+        .map(|(id, role, content, created_at)| ChatMessage {
+            id,
+            role,
+            content,
+            created_at,
+        })
+        .collect();
+    crate::engine::storage::close(pool).await;
+    Ok(msgs)
+}
+
+/// Append a chat message to the project's SQLite DB (ADR-009).
+#[tauri::command]
+pub async fn append_chat_message(
+    project_id: String,
+    role: String,
+    content: String,
+) -> Result<i64, String> {
+    let pool = crate::engine::storage::open_chat_db(&project_id).await?;
+    let id = crate::engine::storage::append_message(&pool, &project_id, &role, &content).await?;
+    crate::engine::storage::close(pool).await;
+    Ok(id)
+}
+
+/// Chat message shape returned to the frontend.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct ChatMessage {
+    pub id: i64,
+    pub role: String,
+    pub content: String,
+    pub created_at: String,
+}
+
 fn ensure_dir_exists(dir: &Path) -> Result<(), String> {
     fs::create_dir_all(dir).map_err(|e| format!("Failed to create dir: {}", e))
 }
