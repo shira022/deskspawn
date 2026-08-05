@@ -34,6 +34,37 @@ test.beforeAll(async () => {
   const ctx = browser.contexts()[0];
   page = ctx.pages()[0];
   await page.bringToFront();
+
+  // 前回実行の状態が残っていると各テストの前提（フレッシュ状態）が崩れる。
+  // ローカルストレージをクリアし、デスクトップのルート設定だけ再適用して
+  // 毎回クリーンな状態から開始する（E2Eの再現性確保）。
+  await page.evaluate(() => {
+    localStorage.clear();
+    localStorage.setItem('deskspawn_route', '/app');
+  });
+  await page.reload();
+  await page.waitForTimeout(1000);
+
+  // 初回起動時は言語選択画面（LanguageSelect）が表示される。
+  // データクリーンアップ後など新規環境では必ず通るため、日本語を選択して
+  // メイン画面に進む（クリーンな環境でのE2E再現性のため）。
+  const langJapanese = page.getByRole('button', { name: /日本語/ });
+  if (await langJapanese.isVisible().catch(() => false)) {
+    await langJapanese.click();
+    await page.waitForTimeout(800);
+  }
+
+  // 言語選択後はランディングページが表示される（「今すぐ始める」/「使ってみる」）。
+  // 新規環境では必ず通るため、メイン画面まで進める。
+  const startBtn = page.getByRole('button', { name: '今すぐ始める' });
+  const tryBtn = page.getByRole('button', { name: '使ってみる' });
+  if (await startBtn.isVisible().catch(() => false)) {
+    await startBtn.click();
+  } else if (await tryBtn.isVisible().catch(() => false)) {
+    await tryBtn.click();
+  }
+  // メイン画面（新規アプリボタン）が表示されるまで待つ
+  await page.getByRole('button', { name: '新規アプリ' }).waitFor({ timeout: 15_000 }).catch(() => {});
 });
 
 test.afterAll(async () => {

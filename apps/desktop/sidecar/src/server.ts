@@ -1045,6 +1045,12 @@ app.post('/chat/history', (req, res) => {
 
 // ── API key management (from Rust backend, never from frontend) ───────────────
 
+/** API key held in process memory (set via POST /api/config from Rust only). */
+let storedApiKey: string | undefined;
+
+/** Custom endpoint held in process memory (set via POST /api/config). */
+let storedCustomEndpoint: string | undefined;
+
 /**
  * Receive API key from the Rust backend (after keychain save or on startup).
  * The key is stored only in process memory — never written to disk.
@@ -1140,7 +1146,11 @@ app.use('/v1', async (req, res) => {
 // ── Health check ─────────────────────────────────────────────────────────────
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', workspace: executors.getWorkspaceDir() });
+  res.json({
+    status: 'ok',
+    workspace: executors.getWorkspaceDir(),
+    apiServer: { ready: apiReady, port: apiActualPort },
+  });
 });
 
 // ── Model discovery endpoint ──────────────────────────────────────────────────
@@ -1929,11 +1939,18 @@ app.post('/api/preview/start', async (req, res) => {
 });
 
 // Sync files to the running preview (Vite HMR applies changes automatically)
+// デスクトップ版では実体ディレクトリを直接編集するため同期は不要（ADR-008）。
+// files は任意: 送られてきた場合のみ実体に書き込む（Web互換フロー用）。
 app.post('/api/preview/sync', (req, res) => {
   try {
     const { projectId, files } = req.body || {};
-    if (!projectId || !files || typeof files !== 'object') {
-      res.status(400).json({ error: 'projectId and files are required' });
+    if (!projectId || typeof projectId !== 'string') {
+      res.status(400).json({ error: 'projectId is required' });
+      return;
+    }
+    if (!files || typeof files !== 'object') {
+      // デスクトップフロー: 実体を直接参照しているため同期不要。
+      res.json({ synced: 0, desktopDirect: true });
       return;
     }
     const dir = previewDir(projectId);
@@ -1945,6 +1962,10 @@ app.post('/api/preview/sync', (req, res) => {
         return;
       }
       fs.mkdirSync(path.dirname(target), { recursive: true });
+      if (typeof content !== 'string') {
+        res.status(400).json({ error: `Invalid content for ${rel}` });
+        return;
+      }
       fs.writeFileSync(target, content, 'utf-8');
     }
     res.json({ synced: Object.keys(files).length });

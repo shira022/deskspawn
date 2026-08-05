@@ -72,21 +72,31 @@ describe("storage-desktop", () => {
     expect(missing).toBeNull();
   });
 
-  it("saveProjectDesktop creates when missing", async () => {
+  it("saveProjectDesktop returns the backend-assigned id", async () => {
     // First call: list_projects → empty (missing)
     invokeMock.mockResolvedValueOnce([]);
-    // Second call: create_project → returns created meta
+    // Second call: create_project → returns created meta with backend id
     invokeMock.mockResolvedValueOnce({
-      id: "new-id",
+      id: "proj-backend-1",
       name: "New App",
       created_at: "t",
       updated_at: "t",
     });
 
-    await saveProjectDesktop({ id: "caller-id", name: "New App", createdAt: "t", updatedAt: "t" });
+    const id = await saveProjectDesktop({ id: "caller-id", name: "New App", createdAt: "t", updatedAt: "t" });
 
+    expect(id).toBe("proj-backend-1");
     expect(invokeMock).toHaveBeenNthCalledWith(1, "list_projects", undefined);
     expect(invokeMock).toHaveBeenNthCalledWith(2, "create_project", { name: "New App" });
+  });
+
+  it("saveProjectDesktop returns existing project id without creating", async () => {
+    invokeMock.mockResolvedValueOnce([
+      { id: "proj-exists", name: "Existing", created_at: "t", updated_at: "t" },
+    ]);
+    const id = await saveProjectDesktop({ id: "proj-exists", name: "Existing", createdAt: "t", updatedAt: "t" });
+    expect(id).toBe("proj-exists");
+    expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 
   it("deleteProjectDesktop invokes Rust delete", async () => {
