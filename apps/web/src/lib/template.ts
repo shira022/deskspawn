@@ -60,6 +60,48 @@ const PACKAGE_JSON = JSON.stringify(
   2,
 );
 
+/**
+ * Desktop package.json — full-stack generated app (ADR-010).
+ * Adds a Hono backend (bun:sqlite for persistence, zero extra deps beyond
+ * hono) and vitest for the quality loop (P5). The dev server runs vite for
+ * the frontend and `bun src/server.ts` for the API.
+ */
+const PACKAGE_JSON_DESKTOP = JSON.stringify(
+  {
+    name: "generated-app",
+    private: true,
+    version: "0.1.0",
+    type: "module",
+    scripts: {
+      dev: "vite",
+      "dev:api": "bun --watch src/server.ts",
+      build: "tsc -b && vite build",
+      preview: "vite preview",
+      test: "bun test",
+    },
+    dependencies: {
+      clsx: "^2.1.1",
+      hono: "^4.6.14",
+      "lucide-react": "^0.468.0",
+      react: "^18.3.1",
+      "react-dom": "^18.3.1",
+      "tailwind-merge": "^2.6.0",
+      zustand: "^5.0.2",
+    },
+    devDependencies: {
+      "@tailwindcss/vite": "^4.3.0",
+      "@types/react": "^18.3.12",
+      "@types/react-dom": "^18.3.1",
+      "@vitejs/plugin-react": "^4.3.4",
+      tailwindcss: "^4.3.0",
+      typescript: "~5.6.3",
+      vite: "^6.0.0",
+    },
+  },
+  null,
+  2,
+);
+
 const TSCONFIG_JSON = JSON.stringify(
   {
     compilerOptions: {
@@ -106,6 +148,187 @@ export default defineConfig({
     strictPort: false,
   },
 });`;
+
+/**
+ * Desktop vite.config.ts — full-stack generated app (ADR-010).
+ * API proxy: /api → Hono backend (default 4174, auto-fallback +10).
+ * The actual backend port is patched by DeskSpawn at project creation.
+ */
+function getViteConfigDesktop(apiPort: number): string {
+  return `import path from "path";
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
+
+export default defineConfig({
+  plugins: [
+    tailwindcss(),
+    react(),
+  ],
+  resolve: {
+    alias: {
+      "@": path.resolve(__dirname, "./src"),
+    },
+  },
+  server: {
+    port: 4173,
+    strictPort: false,
+    proxy: {
+      "/api": {
+        target: "http://localhost:${apiPort}",
+        changeOrigin: true,
+      },
+    },
+  },
+});`;
+}
+
+/**
+ * Desktop Hono backend — the generated app's API (ADR-010).
+ * Uses bun:sqlite (bundled with bun, zero deps). DB path comes from
+ * DATABASE_URL (defaults to ./data/app.db). Run with `bun src/server.ts`.
+ *
+ * IMPORTANT: bun auto-starts the server from the default export when the file
+ * is the entry point. Do NOT call Bun.serve() manually here — it would bind
+ * the port twice (EADDRINUSE). hostname is pinned to 127.0.0.1 to avoid
+ * binding conflicts on Windows/WSL. When imported by tests (bun test) this
+ * module is not an entry point, so no server starts — use app.request().
+ */
+const SERVER_TS = `import { Hono } from "hono";
+import { cors } from "hono/cors";
+import { openDb, getItems, addItem, deleteItem } from "./lib/db";
+
+// DATABASE_URL abstraction: default to ./data/app.db; override via env
+// (e.g. DATABASE_URL=file:./other.db or a hosted libsql URL in the future).
+const db = openDb();
+
+const app = new Hono();
+app.use("/api/*", cors());
+
+app.get("/api/health", (c) => c.json({ status: "ok" }));
+
+// ── Example CRUD (items) ────────────────────────────────────────────
+// AI agents: keep the shape simple — id (integer), title, done.
+app.get("/api/items", (c) => c.json(getItems(db)));
+app.post("/api/items", async (c) => {
+  const { title } = await c.req.json();
+  if (!title || typeof title !== "string") {
+    return c.json({ error: "title is required" }, 400);
+  }
+  return c.json(addItem(db, title), 201);
+});
+app.delete("/api/items/:id", async (c) => {
+  const id = Number(c.req.param("id"));
+  deleteItem(db, id);
+  return c.body(null, 204);
+});
+
+const port = Number(process.env.PORT) || 4174;
+export default {
+  port,
+  hostname: "127.0.0.1",
+  fetch: app.fetch,
+};
+`;
+
+/**
+ * Desktop db.ts — thin bun:sqlite helper layer (ADR-010).
+ * All SQL lives here so a future Drizzle migration touches only this file.
+ */
+const DB_TS = `import { Database } from "bun:sqlite";
+import { mkdirSync } from "fs";
+import path from "path";
+
+export interface Item {
+  id: number;
+  title: string;
+  done: number;
+}
+
+const DB_URL = process.env.DATABASE_URL || "file:./data/app.db";
+const dbPath = DB_URL.replace(/^file:/, "");
+
+export function openDb(): Database {
+  // Ensure the data directory exists (default: ./data/)
+  const dir = path.dirname(path.resolve(dbPath));
+  mkdirSync(dir, { recursive: true });
+  const db = new Database(path.resolve(dbPath));
+  db.exec(\`CREATE TABLE IF NOT EXISTS items (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    title TEXT NOT NULL,
+    done INTEGER NOT NULL DEFAULT 0
+  )\`);
+  return db;
+}
+
+export function getItems(db: Database): Item[] {
+  return db.query("SELECT * FROM items ORDER BY id DESC").all() as Item[];
+}
+
+export function addItem(db: Database, title: string): Item {
+  const res = db.query("INSERT INTO items (title) VALUES (?)").run(title);
+  const id = Number(res.lastInsertRowid);
+  return { id, title, done: 0 };
+}
+
+export function deleteItem(db: Database, id: number): void {
+  db.query("DELETE FROM items WHERE id = ?").run(id);
+}
+`;
+
+/**
+ * Desktop server test — Hono's app.request() enables tests without a server
+ * (quality loop, ADR-012 / P5).
+ */
+const SERVER_TEST_TS = `import { describe, expect, it } from "vitest";
+import { Hono } from "hono";
+import { openDb, getItems, addItem, type Item } from "./lib/db";
+
+// In-memory DB for tests (DATABASE_URL=:memory: keeps the filesystem clean).
+process.env.DATABASE_URL = ":memory:";
+const db = openDb();
+
+function buildApp() {
+  const app = new Hono();
+  app.get("/api/items", (c) => c.json(getItems(db)));
+  app.post("/api/items", async (c) => {
+    const { title } = await c.req.json();
+    if (!title || typeof title !== "string") {
+      return c.json({ error: "title is required" }, 400);
+    }
+    return c.json(addItem(db, title), 201);
+  });
+  return app;
+}
+
+describe("items API", () => {
+  it("returns empty list initially", async () => {
+    const res = await buildApp().request("/api/items");
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual([]);
+  });
+
+  it("adds an item", async () => {
+    const res = await buildApp().request("/api/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ title: "hello" }),
+    });
+    expect(res.status).toBe(201);
+    const item = (await res.json()) as Item;
+    expect(item.title).toBe("hello");
+  });
+
+  it("rejects missing title with 400", async () => {
+    const res = await buildApp().request("/api/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+});
+`;
 
 const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <rect width="100" height="100" rx="20" fill="#6366f1"/>
@@ -577,20 +800,35 @@ function getTypesIndex(locale: TemplateLocale): string {
 
 // ── Public API ──────────────────────────────────────────────────
 
+/** Default backend API port for desktop generated apps (ADR-010). */
+export const DESKTOP_API_PORT = 4174;
+
 /**
  * Returns the default project template files with content localized
  * for the given language.
  *
  * @param language - Language code (e.g. "ja", "en"). Falls back to "ja".
+ * @param isDesktop - When true, emits the full-stack template (ADR-010):
+ *   Hono backend (src/server.ts), bun:sqlite (src/lib/db.ts), vitest,
+ *   and a vite config that proxies /api to the backend port.
  */
-export function getTemplateFiles(language: LanguageCode): FileEntry[] {
+export function getTemplateFiles(
+  language: LanguageCode,
+  isDesktop: boolean = false,
+): FileEntry[] {
   const locale = templateLocale[language] ?? templateLocale.ja;
 
-  return [
+  const files: FileEntry[] = [
     { path: "index.html", content: getIndexHtml(language) },
-    { path: "package.json", content: PACKAGE_JSON },
+    {
+      path: "package.json",
+      content: isDesktop ? PACKAGE_JSON_DESKTOP : PACKAGE_JSON,
+    },
     { path: "tsconfig.json", content: TSCONFIG_JSON },
-    { path: "vite.config.ts", content: VITE_CONFIG },
+    {
+      path: "vite.config.ts",
+      content: isDesktop ? getViteConfigDesktop(DESKTOP_API_PORT) : VITE_CONFIG,
+    },
     { path: "public/favicon.svg", content: FAVICON_SVG },
     { path: "src/vite-env.d.ts", content: VITE_ENV_DTS },
     { path: "src/lib/storage.ts", content: STORAGE_TS },
@@ -603,6 +841,17 @@ export function getTemplateFiles(language: LanguageCode): FileEntry[] {
     { path: "src/hooks/index.ts", content: getHooksIndex(locale) },
     { path: "src/types/index.ts", content: getTypesIndex(locale) },
   ];
+
+  if (isDesktop) {
+    // Full-stack additions (ADR-010): Hono API + bun:sqlite + vitest.
+    files.push(
+      { path: "src/server.ts", content: SERVER_TS },
+      { path: "src/lib/db.ts", content: DB_TS },
+      { path: "src/server.test.ts", content: SERVER_TEST_TS },
+    );
+  }
+
+  return files;
 }
 
 /**

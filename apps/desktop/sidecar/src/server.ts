@@ -21,7 +21,7 @@ import { initMCPClients, getMCPTools, closeMCPClients } from './mcp-client.js';
 // preview import removed — no longer needed (no Tauri backend)
 
 const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+void __filename;
 
 // ── In-memory API key store (received from Rust backend, never from frontend) ─
 // 一元管理ルート（ADR-007）: ~/deskspawn 配下に全データを集約。
@@ -541,13 +541,129 @@ function killOrphanDevServer() {
   }
 }
 
+// ── Generated-app API server (full-stack, ADR-010) ─────────────────────────
+// The desktop template includes a Hono backend (src/server.ts, bun:sqlite).
+// The sidecar spawns it as a child (default port 4174, auto-fallback up to
+// +10) and patches vite.config.ts's /api proxy target to the actual port.
+
+const API_DESIRED_PORT = 4174;
+const API_MAX_FALLBACK = 10;
+let apiProcess: ReturnType<typeof spawn> | null = null;
+let apiActualPort = API_DESIRED_PORT;
+let apiReady = false;
+
+function stopApiServer() {
+  if (apiProcess && apiProcess.pid) {
+    try {
+      process.kill(-apiProcess.pid, 'SIGTERM');
+    } catch { /* already gone */ }
+    apiProcess = null;
+  }
+  apiReady = false;
+}
+
+/** Patch vite.config.ts's /api proxy target to the actual API port. */
+function patchViteConfigApiProxy(dir: string, apiPort: number) {
+  const viteConfigPath = path.join(dir, 'vite.config.ts');
+  if (!fs.existsSync(viteConfigPath)) return;
+  let config = fs.readFileSync(viteConfigPath, 'utf-8');
+  // Replace any localhost:port in the proxy target block with the real port.
+  config = config.replace(
+    /(target:\s*"http:\/\/localhost:)\d+(")/,
+    `$1${apiPort}$2`,
+  );
+  fs.writeFileSync(viteConfigPath, config, 'utf-8');
+  console.log(`[apiserver] vite proxy patched to http://localhost:${apiPort}`);
+}
+
+/**
+ * Start the generated app's Hono backend (bun src/server.ts) with port
+ * fallback: try 4174..4174+10, detect the actual port via HTTP polling.
+ * Returns the actual port or 0 on failure.
+ */
+async function startApiServer(dir: string): Promise<number> {
+  stopApiServer();
+  const serverTs = path.join(dir, 'src', 'server.ts');
+  if (!fs.existsSync(serverTs)) {
+    // Plain web template (no backend) — nothing to start.
+    return 0;
+  }
+
+  for (let attempt = 0; attempt <= API_MAX_FALLBACK; attempt++) {
+    const port = API_DESIRED_PORT + attempt;
+    console.log(`[apiserver] Starting API server on port ${port}...`);
+    const child = spawn(BUN_PATH, ['src/server.ts'], {
+      cwd: dir,
+      stdio: 'pipe',
+      detached: true,
+      env: { ...process.env, PORT: String(port), NODE_ENV: 'development' },
+    });
+    child.stdout?.on('data', (d: Buffer) => console.log(`[apiserver] ${d.toString().trim()}`));
+    child.stderr?.on('data', (d: Buffer) => {
+      const msg = d.toString();
+      console.warn(`[apiserver:err] ${msg.trim()}`);
+      // Port-in-use detection: Bun prints EADDRINUSE on stderr.
+      if (/EADDRINUSE|Address already in use|listen EADDRINUSE/.test(msg)) {
+        child.kill('SIGTERM');
+        apiProcess = null;
+        return;
+      }
+    });
+    child.on('exit', (code) => {
+      if (apiProcess === child) {
+        console.log(`[apiserver] Exited with code ${code}`);
+        apiReady = false;
+      }
+    });
+
+    // Wait for readiness via HTTP polling (health endpoint).
+    const ready = await waitForApiPort(port, 5000);
+    if (ready) {
+      apiProcess = child;
+      apiActualPort = port;
+      apiReady = true;
+      console.log(`[apiserver] API server ready at http://localhost:${port}`);
+      patchViteConfigApiProxy(dir, port);
+      return port;
+    }
+    // Not ready — likely port conflict; kill and try next.
+    try { child.kill('SIGTERM'); } catch { /* noop */ }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  console.error('[apiserver] Failed to start API server after fallback attempts');
+  return 0;
+}
+
+/** Poll http://localhost:<port>/api/health until ready or timeout. */
+function waitForApiPort(port: number, timeoutMs: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const timer = setInterval(async () => {
+      try {
+        const res = await fetch(`http://localhost:${port}/api/health`, {
+          signal: AbortSignal.timeout(800),
+        });
+        if (res.ok) {
+          clearInterval(timer);
+          resolve(true);
+          return;
+        }
+      } catch { /* retry */ }
+      if (Date.now() - start > timeoutMs) {
+        clearInterval(timer);
+        resolve(false);
+        return;
+      }
+    }, 400);
+  });
+}
+
 function startWorkspaceDevServer(dir: string) {
   stopWorkspaceDevServer();
   killOrphanDevServer();
 
   console.log(`[devserver] Starting dev server in ${dir}...`);
   workspaceDevReady = false;
-
   // Ensure the project's vite.config.ts ignores .deskspawn/ to prevent
   // unnecessary HMR reloads when checkpoints are created/restored.
   patchViteConfigForDotDeskspawn(dir);
@@ -1793,6 +1909,9 @@ app.post('/api/preview/start', async (req, res) => {
     // node_modules の破損（中断・部分削除など）も修復する。
     console.log(`[preview] Installing deps for ${projectId}...`);
     await installDeps(dir);
+    // フルスタック生成アプリ（ADR-010）: Hono API を先に起動し、
+    // 実ポートを vite.config.ts の /api proxy にパッチしてから vite を起動。
+    await startApiServer(dir);
     startWorkspaceDevServer(dir);
 
     const ready = await waitForDevServer(30_000);
@@ -1802,7 +1921,7 @@ app.post('/api/preview/start', async (req, res) => {
     }
     const url = `http://localhost:${workspaceDevActualPort}`;
     console.log(`[preview] Ready at ${url}`);
-    res.json({ url, port: workspaceDevActualPort });
+    res.json({ url, port: workspaceDevActualPort, apiPort: apiActualPort });
   } catch (e: any) {
     console.error('[preview] start failed:', e);
     res.status(500).json({ error: e.message || String(e) });
@@ -1837,6 +1956,7 @@ app.post('/api/preview/sync', (req, res) => {
 // Stop the running preview
 app.post('/api/preview/stop', (_req, res) => {
   stopWorkspaceDevServer();
+  stopApiServer();
   res.json({ stopped: true });
 });
 
