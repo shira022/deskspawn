@@ -65,21 +65,24 @@ export async function getProjectDesktop(id: string): Promise<StoredProject | nul
   return projects.find((p) => p.id === id) ?? null;
 }
 
-export async function saveProjectDesktop(project: StoredProject): Promise<void> {
+/**
+ * Persist a project. On desktop the Rust backend owns the registry and
+ * assigns its own id (`proj-...`); that id is returned so callers use the
+ * REAL directory id (the caller's temporary UUID would not match any
+ * on-disk project dir).
+ */
+export async function saveProjectDesktop(project: StoredProject): Promise<string> {
   const existing = await getProjectDesktop(project.id);
-  if (!existing) {
-    const created = await tauriInvoke<{
-      id: string;
-      name: string;
-      created_at: string;
-      updated_at: string;
-    }>("create_project", { name: project.name });
-    if (created.id !== project.id) {
-      console.warn(
-        `[storage-desktop] backend id ${created.id} differs from caller id ${project.id}`,
-      );
-    }
+  if (existing) {
+    return existing.id;
   }
+  const created = await tauriInvoke<{
+    id: string;
+    name: string;
+    created_at: string;
+    updated_at: string;
+  }>("create_project", { name: project.name });
+  return created.id;
 }
 
 export async function deleteProjectDesktop(id: string): Promise<void> {

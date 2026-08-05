@@ -67,16 +67,19 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
         updatedAt: now,
       };
 
-      // Save to IndexedDB
-      await saveProject(project);
+      // Save to IndexedDB (web) or Rust registry (desktop).
+      // Desktop: the backend assigns its own id (`proj-...`) which is the REAL
+      // directory id — use it for everything below so files land in the
+      // actual on-disk project dir (ADR-008).
+      const realProjectId = await saveProject(project);
 
       // Set current project in engine
-      setProjectId(projectId);
+      setProjectId(realProjectId);
 
       // Refresh project list
       const updatedProjects = await listProjects();
       setProjects(updatedProjects);
-      setCurrentProjectId(projectId);
+      setCurrentProjectId(realProjectId);
 
       // Reset session state
       clearMessages();
@@ -86,17 +89,17 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
       setFileTree([]);
       setSelectedFile(null);
 
-      // Copy template files into the new project
-      await writeProjectFiles(projectId, getTemplateFiles(settings.language));
+      // Copy template files into the new project (real dir on desktop)
+      await writeProjectFiles(realProjectId, getTemplateFiles(settings.language));
 
       // Write the actual project ID so the generated app uses the correct DB name
-      await writeProjectFile(projectId, "src/lib/project-id.ts",
+      await writeProjectFile(realProjectId, "src/lib/project-id.ts",
         `// ============================================================
 // Project ID — injected by DeskSpawn at project creation time.
 // DO NOT MODIFY: Uniquely identifies this project's IndexedDB.
 // ============================================================
 
-export const PROJECT_ID = "${projectId}";
+export const PROJECT_ID = "${realProjectId}";
 `,
       );
 

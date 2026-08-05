@@ -242,7 +242,7 @@ export async function getProject(id: string): Promise<StoredProject | null> {
   });
 }
 
-export async function saveProject(project: StoredProject): Promise<void> {
+export async function saveProject(project: StoredProject): Promise<string> {
   if (isDesktopRuntime()) {
     const { saveProjectDesktop } = await import("@/lib/storage-desktop");
     return saveProjectDesktop(project);
@@ -255,6 +255,7 @@ export async function saveProject(project: StoredProject): Promise<void> {
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
+  return project.id;
 }
 
 export async function deleteProject(id: string): Promise<void> {

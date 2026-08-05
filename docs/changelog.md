@@ -5,6 +5,39 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v0.4.0 (Desktop Redesign — Full-Stack Generated Apps) — 2026-08-05
+
+**Highlights:**
+
+- 📁 **Unified local storage** — all desktop data lives under `~/deskspawn/`
+  (projects, templates, config, workspace, tools, logs). No more
+  cwd-dependent save locations (ADR-007).
+- 💾 **Real files on disk** — project source is stored as actual files
+  (OPFS copy removed), editable directly and visible in Explorer (ADR-008).
+- 🗄️ **Hybrid management data** — project list/settings in JSON, per-project
+  chat history in SQLite (Rust-managed) (ADR-009).
+- ⚡ **Full-stack generated apps (desktop)** — React + **Hono** + **bun:sqlite**
+  templates with `DATABASE_URL` abstraction and auto port fallback
+  (4174 → +10) (ADR-010).
+- 🧪 **Quality loop** — generated apps ship with `bun test`; the coder agent
+  must run tests and fix until green (ADR-012).
+- 🧵 **Direct preview on real files** — vite runs on the project directory
+  itself; no copy/sync step (ADR-008).
+- 📋 **ADR archive** — `docs/adr/` now records all major decisions
+  (ADR-001..012) including historical ones; a decision-recorder skill is
+  bundled with privacy rules (no personal info in ADRs).
+- 🧪 **Expanded test suite** — 542 frontend tests + 17 Rust tests covering
+  storage adapters, full-stack template, chat DB, workspace, and preview.
+
+**Breaking Changes:**
+
+- Desktop projects created before v0.4.0 are not migrated (previous preview
+  data was cleaned up). Start new projects under `~/deskspawn/projects/`.
+- Generated apps on desktop are now full-stack (Hono API + SQLite) instead of
+  SPA-only; the web version keeps the SPA template.
+
+---
+
 ## v0.1.0 (Initial Release) — 2026-06-05
 
 **Highlights:**
