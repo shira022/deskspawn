@@ -225,3 +225,50 @@ describe("DEFAULT_TEMPLATE_FILES", () => {
     expect(app!.content).toContain("アプリの生成を待機しています");
   });
 });
+
+describe("getTemplateFiles isDesktop (full-stack, ADR-010)", () => {
+  it("adds server.ts, db.ts and server.test.ts for desktop", () => {
+    const files = getTemplateFiles("ja", true);
+    const paths = files.map((f) => f.path);
+    expect(paths).toContain("src/server.ts");
+    expect(paths).toContain("src/lib/db.ts");
+    expect(paths).toContain("src/server.test.ts");
+    expect(files.length).toBe(18); // 15 base + 3 full-stack
+  });
+
+  it("keeps the web template untouched (15 files, no server)", () => {
+    const web = getTemplateFiles("ja", false);
+    const paths = web.map((f) => f.path);
+    expect(web.length).toBe(15);
+    expect(paths).not.toContain("src/server.ts");
+  });
+
+  it("desktop package.json includes hono and bun-based scripts", () => {
+    const files = getTemplateFiles("ja", true);
+    const pkg = files.find((f) => f.path === "package.json")!.content;
+    const parsed = JSON.parse(pkg);
+    expect(parsed.dependencies.hono).toBeDefined();
+    expect(parsed.scripts["dev:api"]).toContain("bun");
+    expect(parsed.scripts.test).toBe("bun test");
+  });
+
+  it("desktop vite.config.ts proxies /api to the backend port", () => {
+    const files = getTemplateFiles("ja", true);
+    const vite = files.find((f) => f.path === "vite.config.ts")!.content;
+    expect(vite).toContain('"/api"');
+    expect(vite).toContain("http://localhost:4174");
+    expect(vite).toContain("changeOrigin");
+  });
+
+  it("desktop server.ts is testable without a server (Hono app.request)", () => {
+    const files = getTemplateFiles("ja", true);
+    const server = files.find((f) => f.path === "src/server.ts")!.content;
+    expect(server).toContain("export default {");
+    expect(server).toContain("hostname: \"127.0.0.1\"");
+    // Auto-start via default export; explicit Bun.serve would double-bind.
+    expect(server).not.toContain("Bun.serve(");
+    // The test file uses app.request() — no server needed.
+    const testFile = files.find((f) => f.path === "src/server.test.ts")!.content;
+    expect(testFile).toContain(".request(");
+  });
+});
