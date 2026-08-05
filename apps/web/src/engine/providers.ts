@@ -14,6 +14,7 @@ import { createAzure } from '@ai-sdk/azure';
 import { createVertex } from '@ai-sdk/google-vertex/edge';
 import type { LanguageModel } from 'ai';
 import type { ProviderConfig } from "@deskspawn/ai-core";
+import { sidecarBase } from "@/lib/sidecar";
 
 export function getModel(config: ProviderConfig): LanguageModel {
   const { provider, model, apiKey, customEndpoint } = config;
@@ -82,10 +83,15 @@ export function getModel(config: ProviderConfig): LanguageModel {
           'Custom provider API key is not configured. Please enter your API key in the settings.',
         );
       }
+      // デスクトップ(Tauri)ではサイドカープロキシ経由で呼ぶ (CORS回避)
+      const isDesktop =
+        typeof window !== 'undefined' &&
+        (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ === true;
       const client = createOpenAICompatible({
         name: 'custom-provider',
-        baseURL: customEndpoint,
+        baseURL: isDesktop ? `${sidecarBase()}/v1` : customEndpoint,
         apiKey,
+        headers: isDesktop ? { 'x-upstream': customEndpoint } : undefined,
       });
       return client.chatModel(model) as unknown as LanguageModel;
     }

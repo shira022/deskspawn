@@ -6,6 +6,10 @@
    apps/web/src/index.css to ensure identical rendering on both platforms. */
 
 @import "tailwindcss";
+/* Tailwind v4 の自動ソース検出はビルドルート(apps/desktop)内のみ。
+   共有コンポーネント(apps/web/src)のユーティリティクラスを生成するため
+   明示的に @source でスキャン対象を追加する。 */
+@source "../../web/src";
 @import "flag-icons/css/flag-icons.min.css";
 
 @custom-variant dark (&:is(.dark *));
@@ -100,6 +104,12 @@
   }
   body {
     @apply bg-background text-foreground;
+  }
+  /* アプリをビューポート全体に広げる (h-full チェーンの起点) — web/src/index.css と同一 */
+  html,
+  body,
+  #root {
+    height: 100%;
   }
 }
 

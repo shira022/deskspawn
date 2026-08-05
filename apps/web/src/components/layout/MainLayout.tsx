@@ -187,7 +187,7 @@ export function MainLayout() {
   return (
     <div className="flex h-full flex-col overflow-hidden">
       {/* Toolbar */}
-      <div className="flex h-10 items-center justify-between border-b bg-muted/30 px-3">
+      <div className="relative z-10 flex h-10 items-center justify-between border-b bg-muted/30 px-3">
         <div className="flex items-center gap-2">
           <button
             onClick={() => {

@@ -62,11 +62,11 @@ export async function getSidecarStatus(): Promise<string> {
 }
 
 export async function getSidecarPort(): Promise<number> {
-  if (!(await ensureTauri())) return 3001;
+  if (!(await ensureTauri())) return 3009;
   try {
     return await tauriApi!.invoke<number>("sidecar_port");
   } catch {
-    return 3001;
+    return 3009;
   }
 }
 

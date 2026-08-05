@@ -1,16 +1,14 @@
 /**
- * Browser-native model discovery for all supported providers.
+ * Sidecar model discovery for all supported providers.
  *
- * Ported from sidecar/src/models-fetcher.ts — runs entirely in the browser
- * without a sidecar HTTP server.
+ * Original implementation (referenced by the web app's ported copy).
  *
  * Sources:
  *  - models.dev/api.json   → cached catalog of 75+ providers (in-memory)
  *  - Ollama /api/tags       → local models running on the host
  *  - Custom /v1/models      → OpenAI-compatible endpoint
  */
-import type { ModelInfo, ModelCost } from "@/types";
-import { sidecarBase } from "@/lib/sidecar";
+import type { ModelInfo, ModelCost } from './types.js';
 
 // ─── In-memory cache ───────────────────────────────────────────────────────────
 
@@ -51,20 +49,21 @@ type ModelsDevCatalog = Record<string, ModelsDevProvider>;
 
 /** Map deskspawn provider IDs to models.dev keys */
 const PROVIDER_TO_MODELSDEV: Record<string, string> = {
-  openai: "openai",
-  anthropic: "anthropic",
-  google: "google",
-  "amazon-bedrock": "amazon-bedrock",
-  "google-vertex": "google-vertex",
+  openai: 'openai',
+  anthropic: 'anthropic',
+  google: 'google',
+  'amazon-bedrock': 'amazon-bedrock',
+  'google-vertex': 'google-vertex',
 };
 
 function convertModelsDevModel(raw: ModelsDevModel): ModelInfo {
   const inputModalities = raw.modalities?.input ?? [];
-  const supportsImageInput = inputModalities.includes("image");
+  const supportsImageInput = inputModalities.includes('image');
 
   return {
     id: raw.id,
     name: raw.name,
+    supportsTemperature: raw.temperature,
     supportsReasoning: raw.reasoning,
     supportsToolCall: raw.tool_call,
     supportsImageInput,
@@ -114,7 +113,7 @@ async function fetchModelsDevCatalog(): Promise<ModelsDevCatalog> {
   const timeout = setTimeout(() => controller.abort(), 5000);
 
   try {
-    const res = await fetch("https://models.dev/api.json", { signal: controller.signal });
+    const res = await fetch('https://models.dev/api.json', { signal: controller.signal });
     if (!res.ok) throw new Error(`models.dev fetch failed: ${res.status}`);
     const data = (await res.json()) as ModelsDevCatalog;
     modelsDevCatalog = data;
@@ -131,20 +130,20 @@ async function fetchModelsFromModelsDev(provider: string): Promise<ModelInfo[]> 
   if (!providerData?.models) return [];
 
   return Object.values(providerData.models)
-    .filter((m) => m.status !== "deprecated")
+    .filter((m) => m.status !== 'deprecated')
     .filter((m) => {
       // Exclude embedding and non-text-generation models
-      const family = (m.family ?? "").toLowerCase();
-      const name = (m.name ?? "").toLowerCase();
-      const id = (m.id ?? "").toLowerCase();
-      if (family.includes("embed")) return false;
-      if (name.includes("embed")) return false;
-      if (id.includes("embed")) return false;
-      if (family.includes("moderation")) return false;
-      if (family.includes("tts")) return false;
-      if (family.includes("whisper")) return false;
-      if (family.includes("dall")) return false;
-      if (family.includes("audio")) return false;
+      const family = (m.family ?? '').toLowerCase();
+      const name = (m.name ?? '').toLowerCase();
+      const id = (m.id ?? '').toLowerCase();
+      if (family.includes('embed')) return false;
+      if (name.includes('embed')) return false;
+      if (id.includes('embed')) return false;
+      if (family.includes('moderation')) return false;
+      if (family.includes('tts')) return false;
+      if (family.includes('whisper')) return false;
+      if (family.includes('dall')) return false;
+      if (family.includes('audio')) return false;
       return true;
     })
     .filter((m) => {
@@ -156,7 +155,7 @@ async function fetchModelsFromModelsDev(provider: string): Promise<ModelInfo[]> 
     .filter((m) => {
       // Exclude image-only generation models (e.g. DALL-E, Imagen)
       const outputModalities = m.modalities?.output ?? [];
-      if (outputModalities.length > 0 && outputModalities.every((mod) => mod !== "text")) {
+      if (outputModalities.length > 0 && outputModalities.every((mod) => mod !== 'text')) {
         return false;
       }
       return true;
@@ -178,14 +177,15 @@ interface OllamaTagsResponse {
 }
 
 async function fetchOllamaModels(endpoint: string): Promise<ModelInfo[]> {
-  const base = endpoint || "http://localhost:11434";
-  const url = `${base.replace(/\/+$/, "")}/api/tags`;
+  const base = endpoint || 'http://localhost:11434';
+  const url = `${base.replace(/\/+$/, '')}/api/tags`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Ollama /api/tags failed: ${res.status}`);
   const data = (await res.json()) as OllamaTagsResponse;
   return (data.models ?? []).map((m) => ({
     id: m.name,
     name: m.name,
+    supportsTemperature: true,
     supportsReasoning: false,
     supportsToolCall: true,
     supportsImageInput: false,
@@ -211,20 +211,13 @@ async function fetchCustomModels(
   endpoint: string,
   apiKey?: string,
 ): Promise<ModelInfo[]> {
-  // デスクトップ(Tauri)ではサイドカープロキシ経由で取得 (CORS回避)
-  const isDesktop =
-    typeof window !== "undefined" &&
-    (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ === true;
-  const base = (isDesktop ? `${sidecarBase()}/v1` : endpoint).replace(/\/+$/, "");
+  const base = endpoint.replace(/\/+$/, '');
   const url = `${base}/models`;
   const headers: Record<string, string> = {
-    Accept: "application/json",
+    Accept: 'application/json',
   };
-  if (isDesktop) {
-    headers["x-upstream"] = endpoint.replace(/\/+$/, "");
-  }
   if (apiKey) {
-    headers["Authorization"] = `Bearer ${apiKey}`;
+    headers['Authorization'] = `Bearer ${apiKey}`;
   }
   const res = await fetch(url, { headers });
   if (!res.ok) throw new Error(`Custom /models fetch failed: ${res.status}`);
@@ -232,6 +225,7 @@ async function fetchCustomModels(
   return (data.data ?? []).map((m) => ({
     id: m.id,
     name: m.id,
+    supportsTemperature: true,
     supportsReasoning: false,
     supportsToolCall: true,
     supportsImageInput: false,
@@ -244,11 +238,10 @@ async function fetchCustomModels(
 
 /**
  * Fetch available models for a given provider.
- * Runs entirely in the browser — no sidecar server needed.
  *
- * @param provider   - deskspawn provider ID
- * @param endpoint   - optional custom endpoint (used for ollama / custom)
- * @param apiKey     - optional API key (used for custom provider auth)
+ * @param provider - deskspawn provider ID
+ * @param endpoint - optional custom endpoint (used for ollama / custom)
+ * @param apiKey   - optional API key (used for custom provider auth)
  */
 export async function getModelsForProvider(
   provider: string,
@@ -256,23 +249,22 @@ export async function getModelsForProvider(
   apiKey?: string,
 ): Promise<ModelInfo[]> {
   switch (provider) {
-    case "openai":
-    case "anthropic":
-    case "google":
-    case "amazon-bedrock":
-    case "google-vertex": {
+    case 'openai':
+    case 'anthropic':
+    case 'google':
+    case 'amazon-bedrock':
+    case 'google-vertex': {
       const key = PROVIDER_TO_MODELSDEV[provider];
       return fetchModelsFromModelsDev(key);
     }
-    // Azure OpenAI にはモデル一覧 API がなく、ユーザーがデプロイしたモデル名を
-    // 直接入力する必要があるため、空リストを返して UI で自由入力させる
-    case "azure-openai":
+    // Azure OpenAI has no model list API; users enter deployed model names directly.
+    case 'azure-openai':
       return [];
-    case "ollama":
-      return fetchOllamaModels(endpoint ?? "http://localhost:11434");
-    case "custom": {
-      if (!endpoint) throw new Error("customEndpoint is required for custom provider");
-      return fetchCustomModels(endpoint, apiKey ?? "");
+    case 'ollama':
+      return fetchOllamaModels(endpoint ?? 'http://localhost:11434');
+    case 'custom': {
+      if (!endpoint) throw new Error('customEndpoint is required for custom provider');
+      return fetchCustomModels(endpoint, apiKey ?? '');
     }
     default:
       throw new Error(`Unknown provider: ${provider}`);
