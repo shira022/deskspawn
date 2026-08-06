@@ -99,23 +99,31 @@ function apiKeyStorageKey(provider: string): string {
   return `api_key_${provider}`;
 }
 
-export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
+/**
+ * APIキー保存の実際の保存先（M2）。
+ * - Desktop: "keychain"（OSキーチェーン）| "file"（credentials.json 平文フォールバック）
+ * - Web: "browser"（IndexedDB 平文）
+ */
+export type ApiKeyStorageMethod = "keychain" | "file" | "browser" | "";
+
+export async function saveApiKey(provider: string, apiKey: string): Promise<ApiKeyStorageMethod> {
   // Try Tauri IPC (Desktop) first, fall back to IndexedDB (Web)
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("save_api_key", { provider, apiKey });
-    return;
+    const result = await invoke<{ method: string }>("save_api_key", { provider, apiKey });
+    return (result?.method as ApiKeyStorageMethod) || "";
   } catch {
     // Not in Tauri environment, use IndexedDB
   }
   await setSetting(apiKeyStorageKey(provider), apiKey);
+  return "browser";
 }
 
 export async function loadApiKey(provider: string): Promise<string | null> {
   // Try Tauri IPC (Desktop) first
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke("load_api_key", { provider }) as string | null;
+    return (await invoke("load_api_key", { provider })) as string | null;
   } catch {
     // Not in Tauri environment
   }

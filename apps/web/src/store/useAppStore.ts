@@ -36,7 +36,7 @@ import type {
   Toast,
 } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
-import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, listApps } from "@/lib/storage";
+import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, listApps, type ApiKeyStorageMethod } from "@/lib/storage";
 import { setAppId, listCheckpoints as engineListCheckpoints, persistChatHistory, loadChatHistory } from "@/engine/tool-executors";
 import { SETTINGS_KEY } from "@/lib/constants";
 import { setModelCostCache, clearModelCostCache } from "@/lib/cost";
@@ -59,7 +59,9 @@ interface Store {
 
   // AI Config
   aiConfig: AiConfig | null;
-  setAiConfig: (config: AiConfig) => void;
+  /** APIキーの実際の保存先（M2: UI表示用）。"" は未保存 */
+  apiKeyStorageMethod: ApiKeyStorageMethod;
+  setAiConfig: (config: AiConfig) => Promise<ApiKeyStorageMethod>;
   reloadAiConfig: () => Promise<void>;
 
   // Chat
@@ -224,6 +226,7 @@ export const useAppStore = create<Store>((set, get) => ({
 
   // ── AI Config ──────────────────────────────────────────────────────
   aiConfig: null,
+  apiKeyStorageMethod: "",
   setAiConfig: async (aiConfig) => {
     // Save per-provider config (everything except apiKey)
     await saveProviderConfig(aiConfig.provider, {
@@ -234,8 +237,9 @@ export const useAppStore = create<Store>((set, get) => ({
     });
 
     // Save/delete API key
+    let storageMethod: ApiKeyStorageMethod = "";
     if (aiConfig.apiKey) {
-      await saveApiKey(aiConfig.provider, aiConfig.apiKey);
+      storageMethod = await saveApiKey(aiConfig.provider, aiConfig.apiKey);
     } else if (aiConfig.apiKeyConfigured === false) {
       await deleteApiKey(aiConfig.provider);
     }
@@ -253,7 +257,9 @@ export const useAppStore = create<Store>((set, get) => ({
         apiKey: "",
         apiKeyConfigured: configured,
       },
+      apiKeyStorageMethod: storageMethod,
     });
+    return storageMethod;
   },
 
   /** Reload the AI config from storage (e.g. after session unlock). */

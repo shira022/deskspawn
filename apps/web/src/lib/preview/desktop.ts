@@ -6,7 +6,7 @@
  * PreviewPanel and tool-executors can use it transparently.
  */
 
-import { sidecarBase } from "@/lib/sidecar";
+import { sidecarFetch } from "@/lib/sidecar";
 import type { PreviewState, PreviewStatus, StateListener } from "./types";
 
 export class DesktopPreviewManager {
@@ -101,7 +101,7 @@ export class DesktopPreviewManager {
     try {
       // デスクトップ版は実体ディレクトリを直接参照するためファイル送信は
       // 不要。sidecarは実体でbun install→vite起動する（ADR-008）。
-      const res = await fetch(`${sidecarBase()}/api/preview/start`, {
+      const res = await sidecarFetch("/api/preview/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ appId }),
@@ -147,7 +147,7 @@ export class DesktopPreviewManager {
     }
     this.addLog("Running type check (tsc --noEmit)...");
     try {
-      const res = await fetch(`${sidecarBase()}/api/preview/check`, {
+      const res = await sidecarFetch("/api/preview/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ appId }),
@@ -179,7 +179,7 @@ export class DesktopPreviewManager {
     this._url = null;
     this._status = "idle";
     try {
-      await fetch(`${sidecarBase()}/api/preview/stop`, { method: "POST" });
+      await sidecarFetch("/api/preview/stop", { method: "POST" });
     } catch {
       // サイドカー未起動なら無視
     }

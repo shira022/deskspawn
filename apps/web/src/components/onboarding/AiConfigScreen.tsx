@@ -41,7 +41,7 @@ const apiKeyPlaceholder: Record<ProviderKind, string> = {
 };
 
 export function AiConfigScreen() {
-  const { setPhase, setAiConfig, aiConfig: existingConfig } = useAppStore();
+  const { setPhase, setAiConfig, aiConfig: existingConfig, apiKeyStorageMethod } = useAppStore();
   const { t } = useTranslation();
   const providers: { id: ProviderKind; name: string; icon: React.ReactNode; description: string }[] = [
     { id: "openai", name: "OpenAI", icon: <Sparkles className="h-5 w-5" />, description: "GPT" },
@@ -247,7 +247,7 @@ export function AiConfigScreen() {
                   <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                     <span className="flex-1">
-                      {t('ai.apiKey')} {t(isDesktopEnv() ? 'ai.savedInKeychain' : 'ai.savedInBrowser')}
+                      {t('ai.apiKey')} {t(apiKeyStorageMethod === 'file' ? 'ai.savedInFile' : isDesktopEnv() ? 'ai.savedInKeychain' : 'ai.savedInBrowser')}
                     </span>
                     <Button
                       variant="ghost"

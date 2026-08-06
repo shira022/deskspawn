@@ -340,3 +340,157 @@ describe("importAppFromZip", () => {
     ]);
   });
 });
+
+// ─── M1 セキュリティ強化のテスト ──────────────────────────────────────────────
+
+describe("isZipEntrySafe（zip slip 対策）", () => {
+  let isZipEntrySafe: (path: string) => boolean;
+
+  beforeEach(async () => {
+    ({ isZipEntrySafe } = await import("./app-export"));
+  });
+
+  it("accepts normal relative paths", () => {
+    expect(isZipEntrySafe("src/index.html")).toBe(true);
+    expect(isZipEntrySafe("src/app/main.ts")).toBe(true);
+  });
+
+  it("rejects parent-directory traversal", () => {
+    expect(isZipEntrySafe("../evil.ts")).toBe(false);
+    expect(isZipEntrySafe("src/../../etc/passwd")).toBe(false);
+    expect(isZipEntrySafe("..")).toBe(false);
+  });
+
+  it("rejects absolute paths and drive letters", () => {
+    expect(isZipEntrySafe("/etc/passwd")).toBe(false);
+    expect(isZipEntrySafe("C:/Windows/system32/cmd.exe")).toBe(false);
+    expect(isZipEntrySafe("C:\\Windows\\cmd.exe")).toBe(false);
+  });
+
+  it("rejects backslash separators", () => {
+    expect(isZipEntrySafe("src\\..\\evil.ts")).toBe(false);
+  });
+
+  it("rejects empty or dot components", () => {
+    expect(isZipEntrySafe("")).toBe(false);
+    expect(isZipEntrySafe("src//main.ts")).toBe(false);
+    expect(isZipEntrySafe("src/./main.ts")).toBe(false);
+  });
+});
+
+describe("importAppFromZip セキュリティ（M1）", () => {
+  beforeEach(() => {
+    vi.mocked(storageOpfs.writeAppFiles).mockReset().mockResolvedValue(undefined);
+    mockState.loadAsync.mockReset();
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
+  function createMockFile(name: string): File {
+    const blob = new Blob(["mock-zip"], { type: "application/zip" });
+    const file = new File([blob], name, { type: "application/zip" });
+    vi.spyOn(file, "arrayBuffer").mockResolvedValue(new ArrayBuffer(0));
+    return file;
+  }
+
+  it("rejects zip-slip entries (../ traversal)", async () => {
+    const file = createMockFile("Evil.deskspawn.zip");
+    const mockZipLoaded = {
+      file: vi.fn(() => null),
+      files: {
+        "src/app.ts": { dir: false },
+        "../outside.ts": { dir: false },
+      },
+    };
+    (mockZipLoaded.files["src/app.ts"] as any) = {
+      dir: false,
+      async: vi.fn(() => Promise.resolve("console.log('ok')")),
+    };
+    (mockZipLoaded.files["../outside.ts"] as any) = {
+      dir: false,
+      async: vi.fn(() => Promise.resolve("// outside")),
+    };
+    mockState.loadAsync.mockResolvedValue(mockZipLoaded);
+
+    const { importAppFromZip } = await import("./app-export");
+    await expect(importAppFromZip(file, "new-app-id")).rejects.toThrow(
+      "Unsafe zip entry rejected",
+    );
+  });
+
+  it("rejects absolute-path entries", async () => {
+    const file = createMockFile("Abs.deskspawn.zip");
+    const mockZipLoaded = {
+      file: vi.fn(() => null),
+      files: {
+        "C:/Windows/evil.ts": { dir: false },
+      },
+    };
+    (mockZipLoaded.files["C:/Windows/evil.ts"] as any) = {
+      dir: false,
+      async: vi.fn(() => Promise.resolve("// evil")),
+    };
+    mockState.loadAsync.mockResolvedValue(mockZipLoaded);
+
+    const { importAppFromZip } = await import("./app-export");
+    await expect(importAppFromZip(file, "new-app-id")).rejects.toThrow(
+      "Unsafe zip entry rejected",
+    );
+  });
+
+  it("skips .env files during import (secrets)", async () => {
+    const file = createMockFile("EnvTest.deskspawn.zip");
+    const mockZipLoaded = {
+      file: vi.fn(() => null),
+      files: {
+        "src/app.ts": { dir: false },
+        ".env": { dir: false },
+        ".env.local": { dir: false },
+      },
+    };
+    (mockZipLoaded.files["src/app.ts"] as any) = {
+      dir: false,
+      async: vi.fn(() => Promise.resolve("console.log('app')")),
+    };
+    (mockZipLoaded.files[".env"] as any) = {
+      dir: false,
+      async: vi.fn(() => Promise.resolve("API_KEY=secret")),
+    };
+    (mockZipLoaded.files[".env.local"] as any) = {
+      dir: false,
+      async: vi.fn(() => Promise.resolve("API_KEY=secret")),
+    };
+    mockState.loadAsync.mockResolvedValue(mockZipLoaded);
+
+    const { importAppFromZip } = await import("./app-export");
+    const result = await importAppFromZip(file, "new-app-id");
+
+    expect(result.filesImported).toBe(1);
+    expect(storageOpfs.writeAppFiles).toHaveBeenCalledWith("new-app-id", [
+      { path: "src/app.ts", content: "console.log('app')" },
+    ]);
+  });
+
+  it("rejects oversized single file (zip bomb)", async () => {
+    const file = createMockFile("Bomb.deskspawn.zip");
+    const huge = "x".repeat(10 * 1024 * 1024 + 1);
+    const mockZipLoaded = {
+      file: vi.fn(() => null),
+      files: {
+        "src/huge.txt": { dir: false },
+      },
+    };
+    (mockZipLoaded.files["src/huge.txt"] as any) = {
+      dir: false,
+      async: vi.fn(() => Promise.resolve(huge)),
+    };
+    mockState.loadAsync.mockResolvedValue(mockZipLoaded);
+
+    const { importAppFromZip } = await import("./app-export");
+    await expect(importAppFromZip(file, "new-app-id")).rejects.toThrow(
+      "File too large in archive",
+    );
+  });
+});

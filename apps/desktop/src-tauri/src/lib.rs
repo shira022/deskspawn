@@ -48,8 +48,12 @@ pub fn run() {
                 workspace_path: workspace_path.clone(),
             });
 
+            // H1: 認証トークンを初期化（サイドカー / security_server / IPC で共有）
+            let auth_token = engine::security::init_auth_token();
+
             // Start the security HTTP server (Rust-backed file ops for sidecar)
-            let security_port = engine::security_server::start(workspace_path.clone());
+            let security_port =
+                engine::security_server::start(workspace_path.clone(), auth_token);
             log::info!("Security server started on port {}", security_port);
 
             // Initialize and start the sidecar manager (pass security port)
@@ -81,7 +85,9 @@ pub fn run() {
                 let key_port = sidecar_port;
                 std::thread::spawn(move || {
                     if let Some(api_key) = commands::ai_config::load_full_config_for_sidecar() {
-                        commands::ai_config::push_api_key_to_sidecar_on_port(&api_key, key_port);
+                        // カスタムエンドポイントは push 側で config から読み取るため
+                        // ここでは明示指定しない（None）
+                        commands::ai_config::push_api_key_to_sidecar_on_port(&api_key, None, key_port);
                         // Clear the key from Rust's stack after pushing
                         drop(api_key);
                     }
@@ -150,6 +156,8 @@ pub fn run() {
             commands::apps::write_app_files,
             commands::apps::get_chat_history,
             commands::apps::append_chat_message,
+            commands::apps::export_app_zip,
+            commands::apps::import_app_zip,
             // Environment check commands
             commands::env_check::check_environment,
             commands::env_check::check_winget,
@@ -160,12 +168,17 @@ pub fn run() {
             // AI config commands
             commands::ai_config::save_ai_config,
             commands::ai_config::load_ai_config,
+            commands::ai_config::sync_sidecar_config,
+            commands::ai_config::save_api_key,
+            commands::ai_config::load_api_key,
+            commands::ai_config::delete_api_key,
             // Sidecar management commands
             commands::sidecar::restart_tauri,
             commands::sidecar::restart_sidecar,
             commands::sidecar::kill_sidecar,
             commands::sidecar::sidecar_status,
             commands::sidecar::sidecar_port,
+            commands::sidecar::get_sidecar_token,
             // Updater
             check_for_updates,
         ])

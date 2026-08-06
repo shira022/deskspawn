@@ -64,6 +64,34 @@ export interface ApplyResult {
   errors?: string[];
 }
 
+// ── M4: AI生成コードの危険パターン検証 ─────────────────────────────────────────
+// Rust 側（engine/security.rs の FORBIDDEN_TS_PATTERNS）と同期させること。
+// fetch / require / process.env 等の正当な API 呼び出しは許可（生成アプリで一般的）。
+const FORBIDDEN_TS_PATTERNS = [
+  "eval(",
+  "new Function(",
+  "document.write(",
+  ".innerHTML",
+  "child_process",
+  "exec(",
+  "execSync(",
+  "spawn(",
+  "spawnSync(",
+];
+
+function isTsSourceFile(path: string): boolean {
+  return /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/.test(path);
+}
+
+/** 危険パターンを含む TS/JS コードを拒否する（違反時は throw）。 */
+function checkTsSecurity(path: string, content: string): void {
+  if (!isTsSourceFile(path)) return;
+  const violations = FORBIDDEN_TS_PATTERNS.filter((p) => content.includes(p));
+  if (violations.length > 0) {
+    throw new Error(`Security check failed for ${path}: ${violations.join(", ")}`);
+  }
+}
+
 /**
  * AIからのアーティファクト（コード変更）を適用する。
  * ファイル作成/編集、CRUDテンプレート生成に対応。
@@ -107,6 +135,8 @@ export async function applyArtifact(artifact: Artifact): Promise<ApplyResult> {
  */
 async function executeFileAction(pid: string, action: FileAction, result: ApplyResult): Promise<void> {
   const resolvedPath = action.filePath.replace(/^@\//, "src/");
+  // M4: AI生成コードの危険パターン検証（デスクトップは Rust 側でも検証される）
+  checkTsSecurity(resolvedPath, action.content);
   await writeAppFile(pid, resolvedPath, action.content);
   result.filesChanged.push(action.filePath);
 }
@@ -133,6 +163,8 @@ async function executeDiffAction(pid: string, action: DiffAction, result: ApplyR
   }
 
   const newContent = existing.replace(action.search, action.replace);
+  // M4: 検証（search/replace 後の内容を検査）
+  checkTsSecurity(resolvedPath, newContent);
   await writeAppFile(pid, resolvedPath, newContent);
   result.filesChanged.push(action.filePath);
 }

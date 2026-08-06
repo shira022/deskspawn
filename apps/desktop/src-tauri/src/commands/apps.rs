@@ -6,8 +6,10 @@
 use crate::engine::workspace;
 use crate::engine::security;
 use serde::{Deserialize, Serialize};
+use std::io::{Read, Write};
 use std::fs;
 use std::path::{Path, PathBuf};
+use tauri_plugin_dialog::DialogExt;
 
 /// App metadata stored in the registry.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,7 +59,29 @@ fn write_registry(apps: &[AppMeta]) -> Result<(), String> {
     }
     let raw = serde_json::to_string_pretty(apps)
         .map_err(|e| format!("Failed to serialize registry: {}", e))?;
-    fs::write(&path, raw).map_err(|e| format!("Failed to write registry: {}", e))
+    // アトミック書き込み: 一時ファイル → rename。クラッシュ時のレジストリ破損を防ぐ。
+    let tmp_path = path.with_extension("json.tmp");
+    fs::write(&tmp_path, &raw).map_err(|e| format!("Failed to write registry tmp: {}", e))?;
+    fs::rename(&tmp_path, &path).map_err(|e| format!("Failed to commit registry: {}", e))
+}
+
+/// app_id の形式検証 + レジストリ存在チェック。
+///
+/// セキュリティ: 許可形式を `app-<32 hex>`（UUID v4）のみに限定することで、
+/// `..` や絶対パスを含む app_id によるパストラバーサルを構造的に排除する。
+/// （旧形式 `proj-*` / `app-<nanos>-<pid>` は 0.x 開発期のみで、正式リリース前）
+fn validate_app_id(app_id: &str) -> Result<(), String> {
+    let ok_format = app_id.len() == 36
+        && app_id.starts_with("app-")
+        && app_id[4..].chars().all(|c| c.is_ascii_hexdigit());
+    if !ok_format {
+        return Err(format!("Invalid app id format: {}", app_id));
+    }
+    let apps = read_registry()?;
+    if !apps.iter().any(|a| a.id == app_id) {
+        return Err(format!("App not found: {}", app_id));
+    }
+    Ok(())
 }
 
 /// Ensure an app directory exists on disk (creates if missing).
@@ -97,12 +121,9 @@ pub fn create_app(name: String) -> Result<AppMeta, String> {
 /// Delete an app: removes registry entry and the on-disk directory.
 #[tauri::command]
 pub fn delete_app(app_id: String) -> Result<(), String> {
+    validate_app_id(&app_id)?;
     let mut apps = read_registry()?;
-    let before = apps.len();
     apps.retain(|p| p.id != app_id);
-    if apps.len() == before {
-        return Err(format!("App not found: {}", app_id));
-    }
     write_registry(&apps)?;
 
     // Remove the on-disk directory (recursive, guarded to app root only).
@@ -116,6 +137,7 @@ pub fn delete_app(app_id: String) -> Result<(), String> {
 /// List files inside an app directory (recursive, excluding node_modules/.git).
 #[tauri::command]
 pub fn list_app_files(app_id: String) -> Result<Vec<String>, String> {
+    validate_app_id(&app_id)?;
     let dir = workspace::app_dir(&app_id)?;
     if !dir.exists() {
         return Err(format!("App not found: {}", app_id));
@@ -148,6 +170,7 @@ fn walk_app_files(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<()
 /// Read a file from an app directory (path-traversal safe).
 #[tauri::command]
 pub fn read_app_file(app_id: String, path: String) -> Result<String, String> {
+    validate_app_id(&app_id)?;
     let dir = workspace::app_dir(&app_id)?;
     let target = dir.join(&path);
     if !security::is_path_safe(&dir, &target) {
@@ -166,6 +189,7 @@ pub fn read_app_file(app_id: String, path: String) -> Result<String, String> {
 /// Write a file into an app directory (path-traversal safe, creates parents).
 #[tauri::command]
 pub fn write_app_file(app_id: String, path: String, content: String) -> Result<(), String> {
+    validate_app_id(&app_id)?;
     let dir = workspace::app_dir(&app_id)?;
     let target = dir.join(&path);
     if !security::is_path_safe(&dir, &target) {
@@ -174,6 +198,11 @@ pub fn write_app_file(app_id: String, path: String, content: String) -> Result<(
     // Basic extension allowlist for app source files.
     if !security::is_extension_allowed(&path) {
         return Err(format!("Extension not allowed: {}", path));
+    }
+    // M4: 生成コードの危険パターン検証（child_process / eval 等）
+    if security::is_typescript_file(&path) {
+        security::check_typescript_security(&content)
+            .map_err(|v| format!("Security check failed for {}: {}", path, v.join(", ")))?;
     }
     if let Some(parent) = target.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dir: {}", e))?;
@@ -188,6 +217,7 @@ pub fn write_app_files(
     app_id: String,
     files: Vec<(String, String)>,
 ) -> Result<usize, String> {
+    validate_app_id(&app_id)?;
     let dir = workspace::app_dir(&app_id)?;
     ensure_dir_exists(&dir)?;
     let mut written = 0usize;
@@ -198,6 +228,11 @@ pub fn write_app_files(
         }
         if !security::is_extension_allowed(&path) {
             return Err(format!("Extension not allowed: {}", path));
+        }
+        // M4: 生成コードの危険パターン検証
+        if security::is_typescript_file(&path) {
+            security::check_typescript_security(&content)
+                .map_err(|v| format!("Security check failed for {}: {}", path, v.join(", ")))?;
         }
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent).map_err(|e| format!("Failed to create parent dir: {}", e))?;
@@ -211,6 +246,7 @@ pub fn write_app_files(
 /// Load chat history for an app from its SQLite DB (ADR-009).
 #[tauri::command]
 pub async fn get_chat_history(app_id: String) -> Result<Vec<ChatMessage>, String> {
+    validate_app_id(&app_id)?;
     let pool = crate::engine::storage::open_chat_db(&app_id).await?;
     let rows = crate::engine::storage::load_messages(&pool, &app_id).await?;
     let msgs = rows
@@ -233,6 +269,7 @@ pub async fn append_chat_message(
     role: String,
     content: String,
 ) -> Result<i64, String> {
+    validate_app_id(&app_id)?;
     let pool = crate::engine::storage::open_chat_db(&app_id).await?;
     let id = crate::engine::storage::append_message(&pool, &app_id, &role, &content).await?;
     crate::engine::storage::close(pool).await;
@@ -253,13 +290,270 @@ fn ensure_dir_exists(dir: &Path) -> Result<(), String> {
 }
 
 fn uuid_v4() -> String {
-    // Simple UUID v4 from getrandom via rand? We avoid extra deps: use a
-    // timestamp + random suffix. Good enough for app ids.
-    let ts = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_nanos())
-        .unwrap_or(0);
-    format!("app-{:x}-{:x}", ts, std::process::id())
+    // セキュアなランダム ID（UUID v4, 122bit エントロピー）
+    format!("app-{}", uuid::Uuid::new_v4().simple())
+}
+
+// ── Export / Import (zip backup, M1) ─────────────────────────────────────────
+
+/// zip に含めるべきでないパス（秘密情報・キャッシュ・依存物）。
+fn is_excluded_zip_path(name: &str) -> bool {
+    const EXCLUDED: &[&str] = &["node_modules/", ".git/", "dist/", ".deskspawn/", ".cache/"];
+    EXCLUDED.iter().any(|p| name.starts_with(p))
+}
+
+/// シークレットを含み得る環境変数ファイル（.env / .env.local 等）。
+/// .env.example は値の入っていないテンプレートのため許可する。
+fn is_env_file(name: &str) -> bool {
+    let base = name.rsplit('/').next().unwrap_or(name);
+    if base == ".env" {
+        return true;
+    }
+    base.starts_with(".env.") && !base.ends_with(".example")
+}
+
+/// zip エントリ名の安全性チェック（zip slip 対策）。
+/// - `..` による親ディレクトリ脱出を拒否
+/// - 絶対パス / Windows ドライブパス / バックスラッシュを拒否
+fn is_zip_entry_safe(name: &str) -> bool {
+    if name.is_empty() || name.starts_with('/') || name.contains('\\') {
+        return false;
+    }
+    // Windows ドライブレター（C: 等）
+    if name.len() >= 2 && name.as_bytes()[1] == b':' {
+        return false;
+    }
+    for comp in name.split('/') {
+        if comp.is_empty() || comp == "." || comp == ".." {
+            return false;
+        }
+    }
+    true
+}
+
+/// アプリのソースファイルを（メモリ上で）zip 化する。deskspawn.json メタを含む。
+fn build_app_zip(meta_name: &str, files: &[(String, String)]) -> Result<Vec<u8>, String> {
+    let mut buf = std::io::Cursor::new(Vec::new());
+    {
+        let mut zip = zip::ZipWriter::new(&mut buf);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Deflated);
+
+        let meta_json = serde_json::json!({
+            "name": meta_name,
+            "version": "1.0",
+            "exportedAt": now_iso8601(),
+        });
+        zip.start_file("deskspawn.json", options)
+            .map_err(|e| format!("Zip write failed: {}", e))?;
+        zip.write_all(meta_json.to_string().as_bytes())
+            .map_err(|e| format!("Zip write failed: {}", e))?;
+
+        for (path, content) in files {
+            zip.start_file(path, options)
+                .map_err(|e| format!("Zip write failed ({}): {}", path, e))?;
+            zip.write_all(content.as_bytes())
+                .map_err(|e| format!("Zip write failed ({}): {}", path, e))?;
+        }
+        zip.finish()
+            .map_err(|e| format!("Zip finish failed: {}", e))?;
+    }
+    Ok(buf.into_inner())
+}
+
+/// エクスポート: 保存ダイアログ → zip 生成 → 書き込み。
+/// デスクトップ版は実ファイルがディスクにあるため Rust 側で完結する（M1-B）。
+#[tauri::command]
+pub fn export_app_zip(app: tauri::AppHandle, app_id: String) -> Result<String, String> {
+    validate_app_id(&app_id)?;
+
+    let dir = workspace::app_dir(&app_id)?;
+    if !dir.exists() {
+        return Err(format!("App not found: {}", app_id));
+    }
+
+    // ファイル収集（.env はシークレット同梱防止のため除外）
+    let mut rel_files = Vec::new();
+    walk_app_files_export(&dir, &dir, &mut rel_files)?;
+    if rel_files.is_empty() {
+        return Err("No source files found to export".to_string());
+    }
+
+    // 内容を読み込む（サイズ上限: 単一 10MB・合計 50MB）
+    let mut files: Vec<(String, String)> = Vec::new();
+    let mut total = 0usize;
+    for rel in &rel_files {
+        let content = fs::read_to_string(dir.join(rel))
+            .map_err(|e| format!("Failed to read {}: {}", rel, e))?;
+        if content.len() > 10_485_760 {
+            return Err(format!("File too large to export: {}", rel));
+        }
+        total += content.len();
+        if total > 50_000_000 {
+            return Err("App too large to export (max 50MB total)".to_string());
+        }
+        files.push((rel.clone(), content));
+    }
+
+    // アプリ名（レジストリから）
+    let apps = read_registry()?;
+    let meta_name = apps
+        .iter()
+        .find(|a| a.id == app_id)
+        .map(|a| a.name.clone())
+        .unwrap_or_else(|| "App".to_string());
+
+    let zip_bytes = build_app_zip(&meta_name, &files)?;
+
+    // 保存ダイアログ
+    let safe_name: String = meta_name
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let file_path = app
+        .dialog()
+        .file()
+        .add_filter("DeskSpawn app", &["zip"])
+        .set_file_name(format!("{}.deskspawn.zip", safe_name))
+        .blocking_save_file()
+        .ok_or_else(|| "Export cancelled".to_string())?
+        .into_path()
+        .map_err(|e| format!("Invalid save path: {}", e))?;
+
+    fs::write(&file_path, &zip_bytes)
+        .map_err(|e| format!("Failed to write zip: {}", e))?;
+    Ok(file_path.display().to_string())
+}
+
+/// インポート: ファイル選択ダイアログ → zip 展開（zip slip 対策込み）→ 新規アプリ登録。
+#[tauri::command]
+pub fn import_app_zip(app: tauri::AppHandle) -> Result<AppMeta, String> {
+    let file_path = app
+        .dialog()
+        .file()
+        .add_filter("DeskSpawn app", &["zip"])
+        .blocking_pick_file()
+        .ok_or_else(|| "Import cancelled".to_string())?
+        .into_path()
+        .map_err(|e| format!("Invalid file path: {}", e))?;
+
+    let bytes = fs::read(&file_path).map_err(|e| format!("Failed to read zip: {}", e))?;
+    if bytes.len() > 50_000_000 {
+        return Err("Archive too large (max 50MB)".to_string());
+    }
+
+    let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes))
+        .map_err(|e| format!("Invalid zip file: {}", e))?;
+
+    let mut entries: Vec<(String, String)> = Vec::new();
+    let mut app_name: Option<String> = None;
+    let mut total_size = 0usize;
+
+    for i in 0..archive.len() {
+        let mut entry = archive
+            .by_index(i)
+            .map_err(|e| format!("Failed to read zip entry: {}", e))?;
+        let name = entry.name().to_string();
+
+        if entry.is_dir() {
+            continue;
+        }
+        if name == "deskspawn.json" {
+            let mut s = String::new();
+            entry
+                .read_to_string(&mut s)
+                .map_err(|e| format!("Failed to read deskspawn.json: {}", e))?;
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {
+                if let Some(n) = v.get("name").and_then(|x| x.as_str()) {
+                    app_name = Some(n.to_string());
+                }
+            }
+            continue;
+        }
+
+        // zip slip 対策
+        if !is_zip_entry_safe(&name) {
+            return Err(format!("Unsafe zip entry rejected: {}", name));
+        }
+        if is_excluded_zip_path(&name) || is_env_file(&name) {
+            continue;
+        }
+        if !security::is_extension_allowed(&name) {
+            return Err(format!("Extension not allowed: {}", name));
+        }
+        if entry.size() > 10_485_760 {
+            return Err(format!("File too large in archive: {}", name));
+        }
+        total_size += entry.size() as usize;
+        if total_size > 50_000_000 {
+            return Err("Archive too large (max 50MB)".to_string());
+        }
+
+        let mut content = String::new();
+        entry
+            .read_to_string(&mut content)
+            .map_err(|e| format!("Failed to read entry {}: {}", name, e))?;
+        entries.push((name, content));
+    }
+
+    if entries.is_empty() {
+        return Err("No source files found in the archive".to_string());
+    }
+    if entries.len() > 1000 {
+        return Err("Too many files in archive (max 1000)".to_string());
+    }
+
+    // 新規アプリとして登録（ディレクトリ作成 → 書き込み → レジストリ登録）
+    let id = uuid_v4();
+    let name = app_name.unwrap_or_else(|| "Imported App".to_string());
+    let dir = workspace::app_dir(&id)?;
+    ensure_dir_exists(&dir)?;
+    for (path, content) in &entries {
+        let target = dir.join(path);
+        if !security::is_path_safe(&dir, &target) {
+            return Err(format!("Path traversal detected: {}", path));
+        }
+        // インポートコードも M4 の危険パターン検証を通す
+        if security::is_typescript_file(path) {
+            security::check_typescript_security(content)
+                .map_err(|v| format!("Security check failed for {}: {}", path, v.join(", ")))?;
+        }
+        if let Some(parent) = target.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create parent dir: {}", e))?;
+        }
+        fs::write(&target, content).map_err(|e| format!("Failed to write {}: {}", path, e))?;
+    }
+
+    let meta = AppMeta::new(id, name);
+    let mut apps = read_registry()?;
+    apps.push(meta.clone());
+    write_registry(&apps)?;
+    Ok(meta)
+}
+
+/// walk_app_files の export 版（.env / .env.* を除外）。
+fn walk_app_files_export(root: &Path, dir: &Path, files: &mut Vec<String>) -> Result<(), String> {
+    let entries = fs::read_dir(dir).map_err(|e| format!("Failed to read dir: {}", e))?;
+    for entry in entries {
+        let entry = entry.map_err(|e| format!("Failed to read entry: {}", e))?;
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().to_string();
+        if path.is_dir() {
+            if name == "node_modules" || name == ".git" || name == ".deskspawn" || name == "dist" {
+                continue;
+            }
+            walk_app_files_export(root, &path, files)?;
+        } else if path.is_file() {
+            if is_env_file(&name) {
+                continue;
+            }
+            if let Ok(rel) = path.strip_prefix(root) {
+                files.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    Ok(())
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -382,4 +676,124 @@ mod tests {
             assert_eq!(read_app_file(meta.id.clone(), "sub/c.txt".to_string()).unwrap(), "3");
         });
     }
+
+    #[test]
+    fn app_id_traversal_and_invalid_format_is_rejected() {
+        with_temp_root(|| {
+            let meta = create_app("Secure2".to_string()).unwrap();
+
+            // app_id に ../ を含む攻撃 → 形式検証で構造的に拒否（C1）
+            assert!(read_app_file("..".to_string(), "config/config.json".to_string()).is_err());
+            assert!(write_app_file("..".to_string(), "config/config.json".to_string(), "x".to_string()).is_err());
+            assert!(write_app_files("../../".to_string(), vec![("a.txt".to_string(), "x".to_string())]).is_err());
+            assert!(list_app_files("../..".to_string()).is_err());
+            assert!(delete_app("..".to_string()).is_err());
+
+            // 不正形式（レジストリに無い ID・旧形式・非 hex）
+            assert!(read_app_file("app-00000000000000000000000000000000".to_string(), "a.txt".to_string()).is_err());
+            assert!(read_app_file("proj-abc".to_string(), "a.txt".to_string()).is_err());
+            assert!(read_app_file("app-zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz".to_string(), "a.txt".to_string()).is_err());
+            assert!(read_app_file("App-0123456789abcdef0123456789abcdef".to_string(), "a.txt".to_string()).is_err());
+
+            // 正常系は引き続き動く（存在しないファイルは File not found）
+            assert!(read_app_file(meta.id.clone(), "no-such-file.txt".to_string()).is_err());
+        });
+    }
+
+    #[test]
+    fn forbidden_ts_pattern_blocks_ai_generated_code() {
+        with_temp_root(|| {
+            let meta = create_app("TsGuard".to_string()).unwrap();
+            // M4: 危険パターンは書き込み拒否
+            assert!(write_app_file(
+                meta.id.clone(),
+                "src/evil.ts".to_string(),
+                "child_process.exec('rm -rf /')".to_string(),
+            )
+            .is_err());
+            assert!(write_app_files(
+                meta.id.clone(),
+                vec![("src/evil2.tsx".to_string(), "eval('alert(1)')".to_string())],
+            )
+            .is_err());
+            // 正当なコードは許可（fetch 等）
+            write_app_file(
+                meta.id.clone(),
+                "src/api.ts".to_string(),
+                "const res = await fetch('/api/data'); export { res };".to_string(),
+            )
+            .unwrap();
+            // 非 TS ファイルは検証対象外
+            write_app_file(meta.id.clone(), "data.json".to_string(), "{}".to_string()).unwrap();
+        });
+    }
+
+    #[test]
+    fn zip_entry_safety_checks() {
+        assert!(is_zip_entry_safe("src/App.tsx"));
+        assert!(is_zip_entry_safe("package.json"));
+        assert!(!is_zip_entry_safe("../escape.txt"));
+        assert!(!is_zip_entry_safe("a/../../escape.txt"));
+        assert!(!is_zip_entry_safe("/etc/passwd"));
+        assert!(!is_zip_entry_safe("C:/windows/evil.txt"));
+        assert!(!is_zip_entry_safe("..\\evil.txt"));
+        assert!(!is_zip_entry_safe("a\\..\\evil.txt"));
+        assert!(!is_zip_entry_safe(""));
+        assert!(!is_zip_entry_safe("a//b"));
+        assert!(!is_zip_entry_safe("./a"));
+    }
+
+    #[test]
+    fn env_file_detection() {
+        assert!(is_env_file(".env"));
+        assert!(is_env_file(".env.local"));
+        assert!(is_env_file("src/.env"));
+        assert!(is_env_file("config/.env.production"));
+        // .env.example はテンプレートとして許可
+        assert!(!is_env_file(".env.example"));
+        assert!(!is_env_file("src/App.tsx"));
+        assert!(!is_env_file("package.json"));
+    }
+
+    #[test]
+    fn build_app_zip_roundtrip() {
+        let files = vec![
+            ("src/App.tsx".to_string(), "export default function App() { return null; }".to_string()),
+            ("package.json".to_string(), "{}".to_string()),
+        ];
+        let bytes = build_app_zip("Test App", &files).unwrap();
+
+        let mut archive = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        assert_eq!(archive.len(), 3); // deskspawn.json + 2 files
+
+        {
+            let mut meta = archive.by_name("deskspawn.json").unwrap();
+            let mut s = String::new();
+            meta.read_to_string(&mut s).unwrap();
+            assert!(s.contains("Test App"));
+        } // meta はここで drop（ZipFile の借用解放）
+
+        let mut src = archive.by_name("src/App.tsx").unwrap();
+        let mut src_s = String::new();
+        src.read_to_string(&mut src_s).unwrap();
+        assert!(src_s.contains("return null"));
+    }
+
+    #[test]
+    fn uuid_v4_format_is_strict() {
+        let id = uuid_v4();
+        assert_eq!(id.len(), 36);
+        assert!(id.starts_with("app-"));
+        assert!(id[4..].chars().all(|c| c.is_ascii_hexdigit()));
+        // 一意性
+        let ids: std::collections::HashSet<String> = (0..100).map(|_| uuid_v4()).collect();
+        assert_eq!(ids.len(), 100);
+    }
+}
+
+/// get_chat_history の同期ラッパー（async 関数をテストから呼ぶためのヘルパー）。
+#[cfg(test)]
+fn get_chat_history_sync(app_id: &str) -> Result<Vec<ChatMessage>, String> {
+    let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    rt.block_on(get_chat_history(app_id.to_string()))
 }

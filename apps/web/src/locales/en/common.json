@@ -107,7 +107,8 @@
     "costCached": "Cached",
     "costReasoning": "Reasoning",
     "welcomeDescriptionDesktop": "Set up the AI model you want to use. Your API key is stored in local storage and sent to your chosen AI provider through the local sidecar proxy — the key is never sent directly to external servers.",
-    "savedInKeychain": "stored in your OS keychain (Windows Credential Manager)"
+    "savedInKeychain": "stored in your OS keychain (Windows Credential Manager)",
+    "savedInFile": "stored in a settings file (plain text, not in the OS keychain)"
   },
   "env": {
     "title": "Environment Check",

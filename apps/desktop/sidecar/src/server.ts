@@ -42,7 +42,57 @@ let workspaceDevActualPort = WORKSPACE_DEV_PORT;
 const BUN_PATH = process.env.BUN_PATH || 'C:\\Users\\shira\\dev\\tools\\bun\\bun-windows-x64\\bun.exe';
 
 const app = express();
-app.use(cors());
+
+// ── H1: 認証トークン ──────────────────────────────────────────────────────────
+// Rust が起動時に生成し DESKSPAWN_AUTH_TOKEN で渡す。外部オリジン（任意の
+// Web サイトのタブ）からの無認証アクセスを防ぐ。未設定時は開発モードとみなし
+// 警告ログを出して認証をスキップする（bun run server.ts での単体起動用）。
+const AUTH_TOKEN = process.env.DESKSPAWN_AUTH_TOKEN || '';
+if (!AUTH_TOKEN) {
+  console.warn('[sidecar] DESKSPAWN_AUTH_TOKEN not set — running WITHOUT auth (dev mode only!)');
+}
+
+// CORS: DeskSpawn の WebView / 開発サーバー オリジンのみ許可。
+// 任意オリジン許可（cors() デフォルト）はブラウザタブ攻撃を許すため禁止。
+const ALLOWED_ORIGINS = [
+  'tauri://localhost',
+  'http://tauri.localhost',
+  'https://tauri.localhost',
+  'http://localhost:5173', // デスクトップ dev (tauri.conf.json devUrl)
+  'http://127.0.0.1:5173',
+  'http://localhost:5178', // Web 版 E2E dev サーバー
+  'http://127.0.0.1:5178',
+];
+app.use(cors({ origin: ALLOWED_ORIGINS }));
+
+// 認証ミドルウェア: X-DeskSpawn-Token ヘッダ必須（トークン設定時）。
+// トークンは Rust の IPC（get_sidecar_token）経由でのみ WebView 内 JS が取得でき、
+// 外部オリジンの Web ページからは到達できない。
+// 注意: bun ランタイムでは `req.headers['x-deskpawn-token']` のブラケットアクセスが
+// 効かない（null を返す）ため、Express の req.get() + Object.keys フォールバックを使う。
+function getHeader(req: any, name: string): string {
+  const viaGet = req.get(name);
+  if (typeof viaGet === 'string') return viaGet;
+  const lower = name.toLowerCase();
+  const keys = Object.keys(req.headers);
+  for (const k of keys) {
+    if (k.toLowerCase() === lower) {
+      const raw = req.headers[k];
+      return typeof raw === 'string' ? raw : Array.isArray(raw) ? (raw[0] ?? '') : '';
+    }
+  }
+  return '';
+}
+
+app.use((req, res, next) => {
+  if (!AUTH_TOKEN) return next(); // dev モード（トークン未設定）
+  if (getHeader(req, 'X-DeskSpawn-Token') !== AUTH_TOKEN) {
+    res.status(401).json({ error: 'Unauthorized', errorCode: 'UNAUTHORIZED' });
+    return;
+  }
+  next();
+});
+
 app.use(express.json({ limit: '10mb' }));
 
 // ── Port resolution with fallback ────────────────────────────────────────────
@@ -1075,15 +1125,16 @@ app.post('/api/config', (req, res) => {
 
 // ── OpenAI互換プロキシ (/v1/*) ──────────────────────────────────────────────
 // デスクトップ(WebView2)からはCORSで直接呼べないカスタムエンドポイントを中継する。
-// フロントエンドは baseURL=http://localhost:3009/v1 を指定し、実際のエンドポイントを
-// x-upstream ヘッダーで渡す。キーはリクエストの Authorization または保存済みキーを使用。
+// フロントエンドは baseURL=http://localhost:3009/v1 を指定する。
+// 上流エンドポイントは Rust が POST /api/config で設定した storedCustomEndpoint
+// のみを使用する（H1: x-upstream ヘッダによる任意転送は SSRF リスクのため廃止）。
+// キーは保存済みキー（storedApiKey）を優先し、無ければリクエストの Authorization を使用。
 app.use('/v1', async (req, res) => {
   try {
-    const upstream =
-      (req.headers['x-upstream'] as string | undefined) || storedCustomEndpoint;
+    const upstream = storedCustomEndpoint;
     if (!upstream) {
       res.status(400).json({
-        error: 'No upstream endpoint (set x-upstream header or POST /api/config with customEndpoint)',
+        error: 'No upstream endpoint configured (POST /api/config with customEndpoint)',
         errorCode: 'NO_UPSTREAM',
       });
       return;

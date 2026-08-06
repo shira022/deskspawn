@@ -30,7 +30,30 @@ const EXCLUDED_PATTERNS = [
   /^dist\//,
   /^\.deskspawn\//,
   /^\.cache\//,
+  /(^|\/)\.env$/, // シークレットを含み得る環境変数ファイル（M1）
+  /(^|\/)\.env\.[^/]+$/, // .env.local / .env.production 等（.env.example はテンプレートとして許可）
 ];
+
+/** zip エントリの単一ファイル上限（10MB） */
+const MAX_ENTRY_SIZE = 10 * 1024 * 1024;
+/** zip 全体の合計上限（50MB） */
+const MAX_TOTAL_SIZE = 50 * 1024 * 1024;
+/** zip の最大ファイル数（1000） */
+const MAX_FILE_COUNT = 1000;
+
+/**
+ * zip エントリパスの安全性チェック（zip slip 対策 / M1）。
+ * - `..` による親ディレクトリ脱出を拒否
+ * - 絶対パス / Windows ドライブパス / バックスラッシュを拒否
+ */
+export function isZipEntrySafe(path: string): boolean {
+  if (!path || path.startsWith("/") || path.includes("\\")) return false;
+  if (path.length >= 2 && path.charCodeAt(1) === 0x3a /* ':' */) return false;
+  for (const comp of path.split("/")) {
+    if (!comp || comp === "." || comp === "..") return false;
+  }
+  return true;
+}
 
 // ── Export ─────────────────────────────────────────────────────────────────────
 
@@ -65,11 +88,18 @@ export async function exportAppAsZip(
 
     // Skip excluded patterns
     if (EXCLUDED_PATTERNS.some((p) => p.test(file.path))) continue;
+    if (!isZipEntrySafe(file.path)) continue;
 
     const content = await readAppFile(appId, file.path);
     if (content !== null) {
+      if (content.length > MAX_ENTRY_SIZE) {
+        throw new Error(`File too large to export: ${file.path}`);
+      }
       zip.file(file.path, content);
       fileCount++;
+      if (fileCount > MAX_FILE_COUNT) {
+        throw new Error("Too many files to export (max 1000)");
+      }
     }
   }
 
@@ -143,6 +173,7 @@ export async function importAppFromZip(
 
   // 2. Collect all source files from the zip (skip metadata, excluded dirs)
   const entries: Array<{ path: string; content: string }> = [];
+  let totalSize = 0;
 
   for (const [path, zipEntry] of Object.entries(zip.files)) {
     // Skip directories and metadata
@@ -151,8 +182,23 @@ export async function importAppFromZip(
 
     // Skip excluded patterns
     if (EXCLUDED_PATTERNS.some((p) => p.test(path))) continue;
+    // zip slip 対策: 親ディレクトリ脱出・絶対パスを拒否
+    if (!isZipEntrySafe(path)) {
+      throw new Error(`Unsafe zip entry rejected: ${path}`);
+    }
+    if (entries.length >= MAX_FILE_COUNT) {
+      throw new Error("Too many files in archive (max 1000)");
+    }
 
     const content = await zipEntry.async("string");
+    // サイズ制限（単一・合計）
+    if (content.length > MAX_ENTRY_SIZE) {
+      throw new Error(`File too large in archive: ${path}`);
+    }
+    totalSize += content.length;
+    if (totalSize > MAX_TOTAL_SIZE) {
+      throw new Error("Archive too large (max 50MB total)");
+    }
     entries.push({ path, content });
   }
 

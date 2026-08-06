@@ -27,6 +27,7 @@ import { listApps, deleteApp as deleteStoredApp, saveApp } from "@/lib/storage";
 import { deleteAppDir as deleteOpfsDir } from "@/lib/storage-opfs";
 import { setAppId, deleteAppCheckpoints } from "@/engine/tool-executors";
 import { exportAppAsZip, importAppFromZip } from "@/lib/app-export";
+import { isDesktopEnv } from "@/lib/platform";
 
 interface AppSwitcherProps {
   open: boolean;
@@ -156,7 +157,13 @@ export function AppSwitcher({ open, onOpenChange, onNewApp }: AppSwitcherProps) 
   const handleExport = async (app: AppMeta) => {
     setExportingId(app.id);
     try {
-      await exportAppAsZip(app.id, app.name);
+      if (isDesktopEnv()) {
+        // M1-B: デスクトップは実ファイルを Rust 側で zip 化して保存ダイアログを出す
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("export_app_zip", { appId: app.id });
+      } else {
+        await exportAppAsZip(app.id, app.name);
+      }
       const { addToast } = useAppStore.getState();
       addToast({ message: t('app.exportSuccess', { name: app.name }), variant: "success" });
     } catch (e: any) {
@@ -175,22 +182,32 @@ export function AppSwitcher({ open, onOpenChange, onNewApp }: AppSwitcherProps) 
 
     setImporting(true);
     try {
-      const appId = crypto.randomUUID();
-      const result = await importAppFromZip(file, appId);
-
-      const now = new Date().toISOString();
-      await saveApp({
-        id: appId,
-        name: result.appName,
-        createdAt: now,
-        updatedAt: now,
-      });
-
-      // Refresh app list
-      const updatedApps = await listApps();
       const { setApps, addToast } = useAppStore.getState();
-      setApps(updatedApps);
-      addToast({ message: t('app.importSuccess', { name: result.appName }), variant: "success" });
+      if (isDesktopEnv()) {
+        // M1-B: デスクトップは Rust が zip 展開（zip slip 対策込み）して
+        // 実ディレクトリ + レジストリへ登録する。ファイル選択ダイアログも Rust 側。
+        const { invoke } = await import("@tauri-apps/api/core");
+        const meta = await invoke<{ id: string; name: string }>("import_app_zip");
+        const updatedApps = await listApps();
+        setApps(updatedApps);
+        addToast({ message: t('app.importSuccess', { name: meta.name }), variant: "success" });
+      } else {
+        const appId = crypto.randomUUID();
+        const result = await importAppFromZip(file, appId);
+
+        const now = new Date().toISOString();
+        await saveApp({
+          id: appId,
+          name: result.appName,
+          createdAt: now,
+          updatedAt: now,
+        });
+
+        // Refresh app list
+        const updatedApps = await listApps();
+        setApps(updatedApps);
+        addToast({ message: t('app.importSuccess', { name: result.appName }), variant: "success" });
+      }
     } catch (e: any) {
       const { addToast } = useAppStore.getState();
       addToast({ message: e.message || t('app.importError'), variant: "error" });
