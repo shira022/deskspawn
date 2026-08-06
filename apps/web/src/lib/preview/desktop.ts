@@ -6,7 +6,7 @@
  * PreviewPanel and tool-executors can use it transparently.
  */
 
-import { sidecarBase } from "@/lib/sidecar";
+import { sidecarFetch } from "@/lib/sidecar";
 import type { PreviewState, PreviewStatus, StateListener } from "./types";
 
 export class DesktopPreviewManager {
@@ -14,15 +14,15 @@ export class DesktopPreviewManager {
   private _url: string | null = null;
   private _error: string | null = null;
   private _logs: string[] = [];
-  private _projectId: string | null = null;
+  private _appId: string | null = null;
   private listeners = new Set<StateListener>();
 
   get isBooted(): boolean {
-    return this._projectId !== null && this._status !== "idle";
+    return this._appId !== null && this._status !== "idle";
   }
 
-  get projectId(): string | null {
-    return this._projectId;
+  get appId(): string | null {
+    return this._appId;
   }
 
   get url(): string | null {
@@ -73,13 +73,13 @@ export class DesktopPreviewManager {
   }
 
   /** サイドカーにローカルVite dev server を起動させ、プレビューを開始する */
-  async boot(projectId: string): Promise<void> {
-    if (this._projectId === projectId && this._status === "ready") {
+  async boot(appId: string): Promise<void> {
+    if (this._appId === appId && this._status === "ready") {
       return;
     }
-    this._projectId = projectId;
+    this._appId = appId;
     this.clearLogs();
-    this.addLog(`Starting local preview for project: ${projectId}`);
+    this.addLog(`Starting local preview for app: ${appId}`);
     this.setState({ status: "booting", error: null });
 
     // サイドカーの実際の進行（bun install → vite起動）を反映した段階的ステータス。
@@ -101,10 +101,10 @@ export class DesktopPreviewManager {
     try {
       // デスクトップ版は実体ディレクトリを直接参照するためファイル送信は
       // 不要。sidecarは実体でbun install→vite起動する（ADR-008）。
-      const res = await fetch(`${sidecarBase()}/api/preview/start`, {
+      const res = await sidecarFetch("/api/preview/start", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ appId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -125,9 +125,9 @@ export class DesktopPreviewManager {
   /** ファイル変更をサイドカーに同期する（Vite HMR が自動反映）。
    *  デスクトップ版では実体ディレクトリをRust IPCで直接書き込むため、
    *  ファイル同期は不要。viteのHMRが自動反映する（ADR-008）。 */
-  async syncAndReload(projectId: string): Promise<void> {
-    if (this._projectId !== projectId) {
-      await this.boot(projectId);
+  async syncAndReload(appId: string): Promise<void> {
+    if (this._appId !== appId) {
+      await this.boot(appId);
       return;
     }
     // 実体を直接編集しているため、再同期は不要（HMRが反映）。
@@ -136,21 +136,21 @@ export class DesktopPreviewManager {
   }
 
   /** エラーチェック前の同期 — デスクトップでは syncAndReload と同じ（Vite HMR が反映） */
-  async syncForErrors(projectId: string): Promise<void> {
-    await this.syncAndReload(projectId);
+  async syncForErrors(appId: string): Promise<void> {
+    await this.syncAndReload(appId);
   }
 
   /** tsc --noEmit + Viteエラー検出（サイドカーで実行） */
-  async checkProject(projectId: string): Promise<import("./types").ErrorEntry[]> {
-    if (this._projectId !== projectId && this._status !== "ready") {
+  async checkApp(appId: string): Promise<import("./types").ErrorEntry[]> {
+    if (this._appId !== appId && this._status !== "ready") {
       return [];
     }
     this.addLog("Running type check (tsc --noEmit)...");
     try {
-      const res = await fetch(`${sidecarBase()}/api/preview/check`, {
+      const res = await sidecarFetch("/api/preview/check", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ projectId }),
+        body: JSON.stringify({ appId }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -175,11 +175,11 @@ export class DesktopPreviewManager {
 
   /** プレビューを停止する */
   async teardown(): Promise<void> {
-    this._projectId = null;
+    this._appId = null;
     this._url = null;
     this._status = "idle";
     try {
-      await fetch(`${sidecarBase()}/api/preview/stop`, { method: "POST" });
+      await sidecarFetch("/api/preview/stop", { method: "POST" });
     } catch {
       // サイドカー未起動なら無視
     }

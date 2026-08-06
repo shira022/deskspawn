@@ -1,7 +1,7 @@
 /**
- * OPFS (Origin Private File System) storage for project source files.
+ * OPFS (Origin Private File System) storage for app source files.
  *
- * Provides a file-system-like interface for reading/writing project files
+ * Provides a file-system-like interface for reading/writing app files
  * (source code, config, etc.) within the browser's origin storage.
  *
  * Falls back to IndexedDB when OPFS is not available (Firefox, Safari).
@@ -30,8 +30,8 @@ async function getOpfsRoot(): Promise<FileSystemDirectoryHandle> {
   return navigator.storage.getDirectory();
 }
 
-function projectDirName(projectId: string): string {
-  return `project_${projectId}`;
+function appDirName(appId: string): string {
+  return `app_${appId}`;
 }
 
 async function ensureDir(dir: FileSystemDirectoryHandle, pathParts: string[]): Promise<FileSystemDirectoryHandle> {
@@ -42,13 +42,13 @@ async function ensureDir(dir: FileSystemDirectoryHandle, pathParts: string[]): P
   return current;
 }
 
-async function readOpfsFile(projectId: string, filePath: string): Promise<string | null> {
+async function readOpfsFile(appId: string, filePath: string): Promise<string | null> {
   try {
     const root = await getOpfsRoot();
-    const projectDir = await root.getDirectoryHandle(projectDirName(projectId), { create: false });
+    const appDir = await root.getDirectoryHandle(appDirName(appId), { create: false });
     const parts = filePath.split("/");
     const fileName = parts.pop()!;
-    let current = projectDir;
+    let current = appDir;
     for (const part of parts) {
       current = await current.getDirectoryHandle(part, { create: false });
     }
@@ -60,25 +60,25 @@ async function readOpfsFile(projectId: string, filePath: string): Promise<string
   }
 }
 
-async function writeOpfsFile(projectId: string, filePath: string, content: string): Promise<void> {
+async function writeOpfsFile(appId: string, filePath: string, content: string): Promise<void> {
   const root = await getOpfsRoot();
-  const projectDir = await root.getDirectoryHandle(projectDirName(projectId), { create: true });
+  const appDir = await root.getDirectoryHandle(appDirName(appId), { create: true });
   const parts = filePath.split("/");
   const fileName = parts.pop()!;
-  const parentDir = await ensureDir(projectDir, parts);
+  const parentDir = await ensureDir(appDir, parts);
   const fileHandle = await parentDir.getFileHandle(fileName, { create: true });
   const writable = await fileHandle.createWritable();
   await writable.write(content);
   await writable.close();
 }
 
-async function deleteOpfsFile(projectId: string, filePath: string): Promise<void> {
+async function deleteOpfsFile(appId: string, filePath: string): Promise<void> {
   try {
     const root = await getOpfsRoot();
-    const projectDir = await root.getDirectoryHandle(projectDirName(projectId), { create: false });
+    const appDir = await root.getDirectoryHandle(appDirName(appId), { create: false });
     const parts = filePath.split("/");
     const fileName = parts.pop()!;
-    let current = projectDir;
+    let current = appDir;
     for (const part of parts) {
       current = await current.getDirectoryHandle(part, { create: false });
     }
@@ -88,14 +88,14 @@ async function deleteOpfsFile(projectId: string, filePath: string): Promise<void
   }
 }
 
-async function listOpfsFiles(projectId: string): Promise<FileInfo[]> {
+async function listOpfsFiles(appId: string): Promise<FileInfo[]> {
   const result: FileInfo[] = [];
   try {
     const root = await getOpfsRoot();
-    const projectDir = await root.getDirectoryHandle(projectDirName(projectId), { create: false });
-    await walkOpfsDir(projectDir, "", result);
+    const appDir = await root.getDirectoryHandle(appDirName(appId), { create: false });
+    await walkOpfsDir(appDir, "", result);
   } catch {
-    // Project directory doesn't exist yet
+    // App directory doesn't exist yet
   }
   return result;
 }
@@ -128,10 +128,10 @@ async function walkOpfsDir(
   }
 }
 
-async function deleteOpfsDir(projectId: string): Promise<void> {
+async function deleteOpfsDir(appId: string): Promise<void> {
   try {
     const root = await getOpfsRoot();
-    await root.removeEntry(projectDirName(projectId), { recursive: true });
+    await root.removeEntry(appDirName(appId), { recursive: true });
   } catch {
     // May not exist
   }
@@ -140,39 +140,39 @@ async function deleteOpfsDir(projectId: string): Promise<void> {
 // ── IndexedDB Fallback Implementation ──────────────────────────────────────────
 // Used when OPFS is not available (Firefox, Safari).
 
-function idbProjectKey(projectId: string): string {
-  return `project_files_${projectId}`;
+function idbAppKey(appId: string): string {
+  return `app_files_${appId}`;
 }
 
-interface IdbProjectStore {
-  projectId: string;
+interface IdbAppStore {
+  appId: string;
   files: Record<string, string>;
 }
 
-async function readIdbFile(projectId: string, filePath: string): Promise<string | null> {
-  const raw = await getSetting<IdbProjectStore>(idbProjectKey(projectId));
+async function readIdbFile(appId: string, filePath: string): Promise<string | null> {
+  const raw = await getSetting<IdbAppStore>(idbAppKey(appId));
   return raw?.files?.[filePath] ?? null;
 }
 
-async function writeIdbFile(projectId: string, filePath: string, content: string): Promise<void> {
-  const key = idbProjectKey(projectId);
-  const raw = (await getSetting<IdbProjectStore>(key)) || { projectId, files: {} };
+async function writeIdbFile(appId: string, filePath: string, content: string): Promise<void> {
+  const key = idbAppKey(appId);
+  const raw = (await getSetting<IdbAppStore>(key)) || { appId, files: {} };
   raw.files[filePath] = content;
   await setSetting(key, raw);
 }
 
-async function deleteIdbFile(projectId: string, filePath: string): Promise<void> {
-  const key = idbProjectKey(projectId);
-  const raw = await getSetting<IdbProjectStore>(key);
+async function deleteIdbFile(appId: string, filePath: string): Promise<void> {
+  const key = idbAppKey(appId);
+  const raw = await getSetting<IdbAppStore>(key);
   if (raw?.files) {
     delete raw.files[filePath];
     await setSetting(key, raw);
   }
 }
 
-async function listIdbFiles(projectId: string): Promise<FileInfo[]> {
-  const key = idbProjectKey(projectId);
-  const raw = await getSetting<IdbProjectStore>(key);
+async function listIdbFiles(appId: string): Promise<FileInfo[]> {
+  const key = idbAppKey(appId);
+  const raw = await getSetting<IdbAppStore>(key);
   if (!raw?.files) return [];
   return Object.entries(raw.files).map(([path, content]) => ({
     path,
@@ -182,9 +182,9 @@ async function listIdbFiles(projectId: string): Promise<FileInfo[]> {
   }));
 }
 
-async function deleteIdbDir(projectId: string): Promise<void> {
-  const key = idbProjectKey(projectId);
-  await setSetting(key, { projectId, files: {} });
+async function deleteIdbDir(appId: string): Promise<void> {
+  const key = idbAppKey(appId);
+  await setSetting(key, { appId, files: {} });
 }
 
 // ── Auto-detect OPFS availability ─────────────────────────────────────────────
@@ -221,46 +221,46 @@ function isDesktopRuntime(): boolean {
   return typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__);
 }
 
-export async function readProjectFile(projectId: string, filePath: string): Promise<string | null> {
+export async function readAppFile(appId: string, filePath: string): Promise<string | null> {
   if (isDesktopRuntime()) {
-    const { readProjectFileDesktop } = await import("@/lib/storage-desktop");
-    return readProjectFileDesktop(projectId, filePath);
+    const { readAppFileDesktop } = await import("@/lib/storage-desktop");
+    return readAppFileDesktop(appId, filePath);
   }
   if (await isOpfsAvailable()) {
-    return readOpfsFile(projectId, filePath);
+    return readOpfsFile(appId, filePath);
   }
-  return readIdbFile(projectId, filePath);
+  return readIdbFile(appId, filePath);
 }
 
-export async function writeProjectFile(projectId: string, filePath: string, content: string): Promise<void> {
+export async function writeAppFile(appId: string, filePath: string, content: string): Promise<void> {
   if (isDesktopRuntime()) {
-    const { writeProjectFileDesktop } = await import("@/lib/storage-desktop");
-    return writeProjectFileDesktop(projectId, filePath, content);
+    const { writeAppFileDesktop } = await import("@/lib/storage-desktop");
+    return writeAppFileDesktop(appId, filePath, content);
   }
   if (await isOpfsAvailable()) {
-    return writeOpfsFile(projectId, filePath, content);
+    return writeOpfsFile(appId, filePath, content);
   }
-  return writeIdbFile(projectId, filePath, content);
+  return writeIdbFile(appId, filePath, content);
 }
 
-export async function deleteProjectFile(projectId: string, filePath: string): Promise<void> {
+export async function deleteAppFile(appId: string, filePath: string): Promise<void> {
   if (isDesktopRuntime()) {
-    const { writeProjectFileDesktop } = await import("@/lib/storage-desktop");
+    const { writeAppFileDesktop } = await import("@/lib/storage-desktop");
     // Deleting = writing empty content is not supported; use OPFS path only.
-    // Desktop deletion is handled via delete_project on the whole project.
-    await writeProjectFileDesktop(projectId, filePath, "");
+    // Desktop deletion is handled via delete_app on the whole app.
+    await writeAppFileDesktop(appId, filePath, "");
     return;
   }
   if (await isOpfsAvailable()) {
-    return deleteOpfsFile(projectId, filePath);
+    return deleteOpfsFile(appId, filePath);
   }
-  return deleteIdbFile(projectId, filePath);
+  return deleteIdbFile(appId, filePath);
 }
 
-export async function listProjectFiles(projectId: string): Promise<FileInfo[]> {
+export async function listAppFiles(appId: string): Promise<FileInfo[]> {
   if (isDesktopRuntime()) {
-    const { listProjectFilesDesktop } = await import("@/lib/storage-desktop");
-    const relPaths = await listProjectFilesDesktop(projectId);
+    const { listAppFilesDesktop } = await import("@/lib/storage-desktop");
+    const relPaths = await listAppFilesDesktop(appId);
     // Map to FileInfo shape (web interface compatibility).
     return relPaths.map((p) => ({
       path: p,
@@ -270,47 +270,47 @@ export async function listProjectFiles(projectId: string): Promise<FileInfo[]> {
     }));
   }
   if (await isOpfsAvailable()) {
-    return listOpfsFiles(projectId);
+    return listOpfsFiles(appId);
   }
-  return listIdbFiles(projectId);
+  return listIdbFiles(appId);
 }
 
-export async function deleteProjectDir(projectId: string): Promise<void> {
+export async function deleteAppDir(appId: string): Promise<void> {
   if (isDesktopRuntime()) {
-    const { deleteProjectDesktop } = await import("@/lib/storage-desktop");
-    await deleteProjectDesktop(projectId);
+    const { deleteAppDesktop } = await import("@/lib/storage-desktop");
+    await deleteAppDesktop(appId);
     return;
   }
   if (await isOpfsAvailable()) {
-    return deleteOpfsDir(projectId);
+    return deleteOpfsDir(appId);
   }
-  return deleteIdbDir(projectId);
+  return deleteIdbDir(appId);
 }
 
 /**
- * Check if a file or directory exists in the project.
+ * Check if a file or directory exists in the app.
  */
-export async function projectFileExists(projectId: string, filePath: string): Promise<boolean> {
-  const content = await readProjectFile(projectId, filePath);
+export async function appFileExists(appId: string, filePath: string): Promise<boolean> {
+  const content = await readAppFile(appId, filePath);
   return content !== null;
 }
 
 /**
- * Read multiple project files at once (batch operation).
+ * Read multiple app files at once (batch operation).
  */
-export async function readProjectFiles(projectId: string, filePaths: string[]): Promise<Record<string, string | null>> {
+export async function readAppFiles(appId: string, filePaths: string[]): Promise<Record<string, string | null>> {
   const result: Record<string, string | null> = {};
   for (const fp of filePaths) {
-    result[fp] = await readProjectFile(projectId, fp);
+    result[fp] = await readAppFile(appId, fp);
   }
   return result;
 }
 
 /**
- * Write multiple project files at once (batch operation).
+ * Write multiple app files at once (batch operation).
  */
-export async function writeProjectFiles(projectId: string, files: FileEntry[]): Promise<void> {
+export async function writeAppFiles(appId: string, files: FileEntry[]): Promise<void> {
   for (const f of files) {
-    await writeProjectFile(projectId, f.path, f.content);
+    await writeAppFile(appId, f.path, f.content);
   }
 }

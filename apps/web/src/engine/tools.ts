@@ -12,23 +12,23 @@ import { z } from 'zod';
 
 export const readFileTool = tool({
   description:
-    'Read a file from the project workspace. Returns file contents as a string.',
+    'Read a file from the app workspace. Returns file contents as a string.',
   inputSchema: z.object({
     path: z
       .string()
-      .describe('Relative path from project root, e.g. "src/App.tsx"'),
+      .describe('Relative path from app root, e.g. "src/App.tsx"'),
   }),
 });
 
 export const listFilesTool = tool({
-  description: 'List all files in the project workspace.',
+  description: 'List all files in the app workspace.',
   inputSchema: z.object({}),
 });
 
 const FileActionSchema = z.object({
   type: z.literal('file'),
   mode: z.enum(['file', 'diff']),
-  filePath: z.string().describe('Relative path from project root'),
+  filePath: z.string().describe('Relative path from app root'),
   content: z.string().optional().describe('File content (for mode=file)'),
   search: z.string().optional().describe('Text to search for (for mode=diff)'),
   replace: z.string().optional().describe('Replacement text (for mode=diff)'),
@@ -53,7 +53,7 @@ const TemplateActionSchema = z.object({
 
 export const applyArtifactTool = tool({
   description:
-    'Apply code changes to the project. Create or modify files, or generate CRUD templates from a schema. Prefer using multiple mode=file actions over mode=diff for reliability.',
+    'Apply code changes to the app. Create or modify files, or generate CRUD templates from a schema. Prefer using multiple mode=file actions over mode=diff for reliability.',
   inputSchema: z.object({
     id: z.string().describe('Unique identifier for this change'),
     title: z.string().describe('Human-readable summary of the change'),
@@ -72,7 +72,7 @@ export const applyArtifactTool = tool({
 
 export const getErrorsTool = tool({
   description:
-    'Check for errors in the project. Runs tsc --noEmit for TypeScript type errors, scans for missing packages, checks for unresolved local imports (files that are imported via relative/@/ paths but do not exist), detects missing `import React` in files that use React.createElement (a common silent runtime error), checks for empty #root (blank page detection), AND detects Vite dev server errors (CSS parsing, plugin errors, module resolution failures, etc.) from the preview server output.',
+    'Check for errors in the app. Runs tsc --noEmit for TypeScript type errors, scans for missing packages, checks for unresolved local imports (files that are imported via relative/@/ paths but do not exist), detects missing `import React` in files that use React.createElement (a common silent runtime error), checks for empty #root (blank page detection), AND detects Vite dev server errors (CSS parsing, plugin errors, module resolution failures, etc.) from the preview server output.',
   inputSchema: z.object({}),
 });
 

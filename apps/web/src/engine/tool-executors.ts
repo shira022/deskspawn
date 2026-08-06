@@ -8,39 +8,39 @@
  */
 
 import {
-  readProjectFile,
-  writeProjectFile,
-  deleteProjectFile,
-  listProjectFiles,
+  readAppFile,
+  writeAppFile,
+  deleteAppFile,
+  listAppFiles,
 } from "@/lib/storage-opfs";
 import { saveChatHistory as saveChatToStorage } from "@/lib/storage";
 import type { Artifact, FileAction, DiffAction, TemplateAction } from "@deskspawn/ai-core";
 
-// ── Project ID management ──────────────────────────────────────────────────────
+// ── App ID management ──────────────────────────────────────────────────────
 
-let _currentProjectId = "";
+let _currentAppId = "";
 
-export function setProjectId(projectId: string) {
-  _currentProjectId = projectId;
+export function setAppId(appId: string) {
+  _currentAppId = appId;
 }
 
-export function getProjectId(): string {
-  return _currentProjectId;
+export function getAppId(): string {
+  return _currentAppId;
 }
 
 // ── File Operations ────────────────────────────────────────────────────────────
 
 /**
- * プロジェクト内のファイルを読み込む。
+ * アプリ内のファイルを読み込む。
  * @/ エイリアスを ./src/ に変換して解決する。
  */
 export async function readFile(relativePath: string): Promise<string> {
-  const pid = getProjectId();
-  if (!pid) throw new Error("No project selected. Create or switch to a project first.");
+  const pid = getAppId();
+  if (!pid) throw new Error("No app selected. Create or switch to an app first.");
 
   // @/ エイリアスを実際のパスに変換
   const resolvedPath = relativePath.replace(/^@\//, "src/");
-  const content = await readProjectFile(pid, resolvedPath);
+  const content = await readAppFile(pid, resolvedPath);
   if (content === null) {
     throw new Error(`File not found: ${relativePath}`);
   }
@@ -48,12 +48,12 @@ export async function readFile(relativePath: string): Promise<string> {
 }
 
 /**
- * プロジェクト内の全ファイルを一覧表示する。
+ * アプリ内の全ファイルを一覧表示する。
  */
 export async function listFiles(): Promise<Array<{ path: string; size: number; lastModified: string; isDirectory: boolean }>> {
-  const pid = getProjectId();
+  const pid = getAppId();
   if (!pid) return [];
-  return listProjectFiles(pid);
+  return listAppFiles(pid);
 }
 
 // ── Apply Artifact ─────────────────────────────────────────────────────────────
@@ -64,14 +64,42 @@ export interface ApplyResult {
   errors?: string[];
 }
 
+// ── M4: AI生成コードの危険パターン検証 ─────────────────────────────────────────
+// Rust 側（engine/security.rs の FORBIDDEN_TS_PATTERNS）と同期させること。
+// fetch / require / process.env 等の正当な API 呼び出しは許可（生成アプリで一般的）。
+const FORBIDDEN_TS_PATTERNS = [
+  "eval(",
+  "new Function(",
+  "document.write(",
+  ".innerHTML",
+  "child_process",
+  "exec(",
+  "execSync(",
+  "spawn(",
+  "spawnSync(",
+];
+
+function isTsSourceFile(path: string): boolean {
+  return /\.(ts|tsx|js|jsx|mjs|cjs|mts|cts)$/.test(path);
+}
+
+/** 危険パターンを含む TS/JS コードを拒否する（違反時は throw）。 */
+function checkTsSecurity(path: string, content: string): void {
+  if (!isTsSourceFile(path)) return;
+  const violations = FORBIDDEN_TS_PATTERNS.filter((p) => content.includes(p));
+  if (violations.length > 0) {
+    throw new Error(`Security check failed for ${path}: ${violations.join(", ")}`);
+  }
+}
+
 /**
  * AIからのアーティファクト（コード変更）を適用する。
  * ファイル作成/編集、CRUDテンプレート生成に対応。
  */
 export async function applyArtifact(artifact: Artifact): Promise<ApplyResult> {
-  const pid = getProjectId();
+  const pid = getAppId();
   if (!pid) {
-    return { success: false, filesChanged: [], errors: ["No project selected."] };
+    return { success: false, filesChanged: [], errors: ["No app selected."] };
   }
 
   const result: ApplyResult = {
@@ -107,7 +135,9 @@ export async function applyArtifact(artifact: Artifact): Promise<ApplyResult> {
  */
 async function executeFileAction(pid: string, action: FileAction, result: ApplyResult): Promise<void> {
   const resolvedPath = action.filePath.replace(/^@\//, "src/");
-  await writeProjectFile(pid, resolvedPath, action.content);
+  // M4: AI生成コードの危険パターン検証（デスクトップは Rust 側でも検証される）
+  checkTsSecurity(resolvedPath, action.content);
+  await writeAppFile(pid, resolvedPath, action.content);
   result.filesChanged.push(action.filePath);
 }
 
@@ -116,7 +146,7 @@ async function executeFileAction(pid: string, action: FileAction, result: ApplyR
  */
 async function executeDiffAction(pid: string, action: DiffAction, result: ApplyResult): Promise<void> {
   const resolvedPath = action.filePath.replace(/^@\//, "src/");
-  const existing = await readProjectFile(pid, resolvedPath);
+  const existing = await readAppFile(pid, resolvedPath);
   if (existing === null) {
     throw new Error(`File not found for diff: ${action.filePath}`);
   }
@@ -133,7 +163,9 @@ async function executeDiffAction(pid: string, action: DiffAction, result: ApplyR
   }
 
   const newContent = existing.replace(action.search, action.replace);
-  await writeProjectFile(pid, resolvedPath, newContent);
+  // M4: 検証（search/replace 後の内容を検査）
+  checkTsSecurity(resolvedPath, newContent);
+  await writeAppFile(pid, resolvedPath, newContent);
   result.filesChanged.push(action.filePath);
 }
 
@@ -193,7 +225,7 @@ export async function delete${pascalName}(id: ${idTsType}): Promise<void> {
 `;
 
   const hooksPath = `src/hooks/use${pascalName}.ts`;
-  await writeProjectFile(pid, hooksPath, tsHooks);
+  await writeAppFile(pid, hooksPath, tsHooks);
   result.filesChanged.push(hooksPath);
 }
 
@@ -208,14 +240,14 @@ export interface ErrorEntry {
 }
 
 /**
- * プロジェクトのエラーをチェックする。
+ * アプリのエラーをチェックする。
  * WebContainer 内で tsc --noEmit を実行し、型エラーを収集する。
  *
  * WebContainer が起動していない場合や tsc が利用できない場合は
  * 空配列を返す（プレビューが Vite 画面上にエラーを表示する）。
  */
 export async function getErrors(): Promise<ErrorEntry[]> {
-  const pid = getProjectId();
+  const pid = getAppId();
   if (!pid) return [];
 
   try {
@@ -242,11 +274,11 @@ export async function getErrors(): Promise<ErrorEntry[]> {
     // package.json が変更されている場合は npm install + dev server 再起動まで行う。
     await previewManager.syncForErrors(pid);
 
-    // 【重要】checkProject() は以下のチェックを実行する:
+    // 【重要】checkApp() は以下のチェックを実行する:
     //   - tsc --noEmit（TypeScript 型チェック）
     //   - 不足パッケージ検出（import されているが package.json にないパッケージ）
     //   - Vite dev server エラー検出（CSS パース、プラグイン、モジュール解決失敗など）
-    const errors = await previewManager.checkProject(pid);
+    const errors = await previewManager.checkApp(pid);
     if (errors.length > 0) {
       const byType = errors.reduce((acc, e) => { acc[e.type] = (acc[e.type] || 0) + 1; return acc; }, {} as Record<string, number>);
       console.log(`[getErrors] Found ${errors.length} error(s):`, JSON.stringify(byType));
@@ -264,7 +296,7 @@ export async function getErrors(): Promise<ErrorEntry[]> {
 
 interface CheckpointData {
   id: string;
-  projectId: string;
+  appId: string;
   createdAt: string;
   files: Record<string, string>;
 }
@@ -275,18 +307,18 @@ const CHECKPOINTS_KEY = "deskspawn_checkpoints";
  * チェックポイントをメモリに作成する。
  * ファイル一覧のスナップショットをIndexedDBに保存する。
  */
-export async function createCheckpoint(projectId: string, checkpointId?: string): Promise<string> {
-  const pid = projectId || getProjectId();
-  if (!pid) throw new Error("No project selected.");
+export async function createCheckpoint(appId: string, checkpointId?: string): Promise<string> {
+  const pid = appId || getAppId();
+  if (!pid) throw new Error("No app selected.");
 
   const id = checkpointId || crypto.randomUUID();
-  const files = await listProjectFiles(pid);
+  const files = await listAppFiles(pid);
 
   // ソースファイルのみをチェックポイントに保存
   const snapshot: Record<string, string> = {};
   for (const file of files) {
     if (file.isDirectory) continue;
-    const content = await readProjectFile(pid, file.path);
+    const content = await readAppFile(pid, file.path);
     if (content !== null) {
       snapshot[file.path] = content;
     }
@@ -295,7 +327,7 @@ export async function createCheckpoint(projectId: string, checkpointId?: string)
   // IndexedDBに保存
   const { getSetting, setSetting } = await import("@/lib/storage");
   const existing = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
-  existing[id] = { id, projectId: pid, createdAt: new Date().toISOString(), files: snapshot };
+  existing[id] = { id, appId: pid, createdAt: new Date().toISOString(), files: snapshot };
   await setSetting(CHECKPOINTS_KEY, existing);
 
   return id;
@@ -307,9 +339,9 @@ export async function createCheckpoint(projectId: string, checkpointId?: string)
  * デスクトップ版の「全削除 → 復元」戦略を踏襲し、復元前にチェックポイント
  * スナップショットに含まれないファイルを削除する（orphaned files 対策）。
  */
-export async function restoreCheckpoint(projectId: string, checkpointId: string): Promise<void> {
-  const pid = projectId || getProjectId();
-  if (!pid) throw new Error("No project selected.");
+export async function restoreCheckpoint(appId: string, checkpointId: string): Promise<void> {
+  const pid = appId || getAppId();
+  if (!pid) throw new Error("No app selected.");
 
   const { getSetting } = await import("@/lib/storage");
   const checkpoints = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
@@ -317,14 +349,14 @@ export async function restoreCheckpoint(projectId: string, checkpointId: string)
   if (!cp) throw new Error(`Checkpoint not found: ${checkpointId}`);
 
   // ── Orphaned files cleanup ──
-  // Delete any current project files that aren't in the checkpoint snapshot.
-  // This mirrors the desktop version's clearProjectFilesSync() behavior.
-  const currentFiles = await listProjectFiles(pid);
+  // Delete any current app files that aren't in the checkpoint snapshot.
+  // This mirrors the desktop version's clearAppFilesSync() behavior.
+  const currentFiles = await listAppFiles(pid);
   const snapshotPaths = new Set(Object.keys(cp.files));
   for (const file of currentFiles) {
     if (!file.isDirectory && !snapshotPaths.has(file.path)) {
       try {
-        await deleteProjectFile(pid, file.path);
+        await deleteAppFile(pid, file.path);
       } catch (e) {
         console.warn(`[checkpoint] Failed to clean up orphaned file: ${file.path}`, e);
       }
@@ -333,30 +365,30 @@ export async function restoreCheckpoint(projectId: string, checkpointId: string)
 
   // ── Restore files from checkpoint ──
   for (const [filePath, content] of Object.entries(cp.files)) {
-    await writeProjectFile(pid, filePath, content);
+    await writeAppFile(pid, filePath, content);
   }
 }
 
 /**
- * チェックポイント一覧を取得する（プロジェクトスコープ）。
+ * チェックポイント一覧を取得する（アプリスコープ）。
  */
-export async function listCheckpoints(projectId: string): Promise<Array<{ id: string; createdAt: Date }>> {
+export async function listCheckpoints(appId: string): Promise<Array<{ id: string; createdAt: Date }>> {
   const { getSetting } = await import("@/lib/storage");
   const checkpoints = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
   return Object.values(checkpoints)
-    .filter((cp): cp is CheckpointData => cp.projectId === projectId)
+    .filter((cp): cp is CheckpointData => cp.appId === appId)
     .map((cp) => ({ id: cp.id, createdAt: new Date(cp.createdAt) }))
     .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
 }
 
 /**
- * 指定したチェックポイントより後のものを削除する（プロジェクトスコープ）。
+ * 指定したチェックポイントより後のものを削除する（アプリスコープ）。
  */
-export async function deleteCheckpointsAfter(projectId: string, keepCheckpointId: string): Promise<void> {
+export async function deleteCheckpointsAfter(appId: string, keepCheckpointId: string): Promise<void> {
   const { getSetting, setSetting } = await import("@/lib/storage");
   const checkpoints = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
   const all = Object.entries(checkpoints)
-    .filter(([, cp]) => cp.projectId === projectId)
+    .filter(([, cp]) => cp.appId === appId)
     .sort(([, a], [, b]) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   const keepIdx = all.findIndex(([id]) => id === keepCheckpointId);
@@ -370,14 +402,14 @@ export async function deleteCheckpointsAfter(projectId: string, keepCheckpointId
 }
 
 /**
- * 指定したプロジェクトの全チェックポイントを削除する（プロジェクト削除時に呼ぶ）。
+ * 指定したアプリの全チェックポイントを削除する（アプリ削除時に呼ぶ）。
  */
-export async function deleteProjectCheckpoints(projectId: string): Promise<void> {
+export async function deleteAppCheckpoints(appId: string): Promise<void> {
   const { getSetting, setSetting } = await import("@/lib/storage");
   const checkpoints = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
   let changed = false;
   for (const [id, cp] of Object.entries(checkpoints)) {
-    if (cp.projectId === projectId) {
+    if (cp.appId === appId) {
       delete checkpoints[id];
       changed = true;
     }
@@ -938,16 +970,16 @@ function elementLabel(el: Element): string {
 /**
  * チャット履歴をIndexedDBに永続化する。
  */
-export async function persistChatHistory(projectId: string, messages: any[]): Promise<void> {
-  await saveChatToStorage(projectId, messages);
+export async function persistChatHistory(appId: string, messages: any[]): Promise<void> {
+  await saveChatToStorage(appId, messages);
 }
 
 /**
  * チャット履歴をIndexedDBから読み込む。
  */
-export async function loadChatHistory(projectId: string): Promise<any[]> {
+export async function loadChatHistory(appId: string): Promise<any[]> {
   const { getChatHistory } = await import("@/lib/storage");
-  return getChatHistory(projectId);
+  return getChatHistory(appId);
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────

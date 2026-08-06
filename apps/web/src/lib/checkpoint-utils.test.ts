@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 // ─── Mock @/engine/tool-executors ────────────────────────────────────────────
 
 const mockToolExecutors = {
-  getProjectId: vi.fn(),
+  getAppId: vi.fn(),
   restoreCheckpoint: vi.fn(),
   deleteCheckpointsAfter: vi.fn(),
 };
@@ -126,37 +126,37 @@ describe("getMessageCountForCheckpoint", () => {
 
 describe("restoreCheckpoint", () => {
   beforeEach(() => {
-    mockToolExecutors.getProjectId.mockReset();
+    mockToolExecutors.getAppId.mockReset();
     mockToolExecutors.restoreCheckpoint.mockReset();
     mockToolExecutors.deleteCheckpointsAfter.mockReset();
   });
 
   it("calls engine restore and deleteCheckpointsAfter", async () => {
-    mockToolExecutors.getProjectId.mockReturnValue("proj-123");
+    mockToolExecutors.getAppId.mockReturnValue("app-123");
 
     const { restoreCheckpoint } = await import("./checkpoint-utils");
     await restoreCheckpoint("cp-5");
 
-    expect(mockToolExecutors.restoreCheckpoint).toHaveBeenCalledWith("proj-123", "cp-5");
-    expect(mockToolExecutors.deleteCheckpointsAfter).toHaveBeenCalledWith("proj-123", "cp-5");
+    expect(mockToolExecutors.restoreCheckpoint).toHaveBeenCalledWith("app-123", "cp-5");
+    expect(mockToolExecutors.deleteCheckpointsAfter).toHaveBeenCalledWith("app-123", "cp-5");
   });
 
-  it("throws when no project is selected", async () => {
-    mockToolExecutors.getProjectId.mockReturnValue("");
+  it("throws when no app is selected", async () => {
+    mockToolExecutors.getAppId.mockReturnValue("");
 
     const { restoreCheckpoint } = await import("./checkpoint-utils");
-    await expect(restoreCheckpoint("cp-5")).rejects.toThrow("No project selected.");
+    await expect(restoreCheckpoint("cp-5")).rejects.toThrow("No app selected.");
   });
 
-  it("throws when getProjectId returns undefined", async () => {
-    mockToolExecutors.getProjectId.mockReturnValue(undefined as unknown as string);
+  it("throws when getAppId returns undefined", async () => {
+    mockToolExecutors.getAppId.mockReturnValue(undefined as unknown as string);
 
     const { restoreCheckpoint } = await import("./checkpoint-utils");
-    await expect(restoreCheckpoint("cp-5")).rejects.toThrow("No project selected.");
+    await expect(restoreCheckpoint("cp-5")).rejects.toThrow("No app selected.");
   });
 
   it("propagates errors from engine restore", async () => {
-    mockToolExecutors.getProjectId.mockReturnValue("proj-456");
+    mockToolExecutors.getAppId.mockReturnValue("app-456");
     mockToolExecutors.restoreCheckpoint.mockRejectedValue(new Error("Checkpoint data corrupted"));
 
     const { restoreCheckpoint } = await import("./checkpoint-utils");
@@ -167,7 +167,7 @@ describe("restoreCheckpoint", () => {
     // Actually, looking at the source code, the error from engineRestore
     // would prevent deleteCheckpointsAfter from being called since they're
     // sequential awaits.  This test documents that behavior.
-    mockToolExecutors.getProjectId.mockReturnValue("proj-456");
+    mockToolExecutors.getAppId.mockReturnValue("app-456");
     mockToolExecutors.restoreCheckpoint.mockRejectedValue(new Error("Fail"));
 
     const { restoreCheckpoint } = await import("./checkpoint-utils");

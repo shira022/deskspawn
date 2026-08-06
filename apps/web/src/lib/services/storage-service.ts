@@ -6,31 +6,31 @@
 
 import type {
   StorageService,
-  ProjectData,
+  AppData,
   AppSettings,
 } from "@deskspawn/ai-core";
 import {
-  saveProject as saveProjectToDB,
-  getProject as getProjectFromDB,
-  listProjects as listProjectsFromDB,
-  deleteProject as deleteProjectFromDB,
+  saveApp as saveAppToDB,
+  getApp as getAppFromDB,
+  listApps as listAppsFromDB,
+  deleteApp as deleteAppFromDB,
   getChatHistory,
 } from "../../lib/storage";
 import {
-  readProjectFile,
-  writeProjectFile,
-  listProjectFiles as listOPFSFiles,
+  readAppFile,
+  writeAppFile,
+  listAppFiles as listOPFSFiles,
 } from "../../lib/storage-opfs";
 
 const SETTINGS_KEY = "deskspawn_settings";
 
 export class WebStorageService implements StorageService {
-  async saveProject(project: ProjectData): Promise<void> {
-    await saveProjectToDB(project as any);
+  async saveApp(app: AppData): Promise<void> {
+    await saveAppToDB(app as any);
   }
 
-  async loadProject(id: string): Promise<ProjectData | null> {
-    const p = await getProjectFromDB(id);
+  async loadApp(id: string): Promise<AppData | null> {
+    const p = await getAppFromDB(id);
     if (!p) return null;
     const messages = await getChatHistory(id);
     return {
@@ -42,10 +42,10 @@ export class WebStorageService implements StorageService {
     };
   }
 
-  async listProjects(): Promise<ProjectData[]> {
-    const projects = await listProjectsFromDB();
-    const result: ProjectData[] = [];
-    for (const p of projects) {
+  async listApps(): Promise<AppData[]> {
+    const apps = await listAppsFromDB();
+    const result: AppData[] = [];
+    for (const p of apps) {
       const messages = await getChatHistory(p.id);
       result.push({
         id: p.id,
@@ -58,8 +58,8 @@ export class WebStorageService implements StorageService {
     return result;
   }
 
-  async deleteProject(id: string): Promise<void> {
-    return deleteProjectFromDB(id);
+  async deleteApp(id: string): Promise<void> {
+    return deleteAppFromDB(id);
   }
 
   async saveSettings(settings: AppSettings): Promise<void> {
@@ -90,16 +90,16 @@ export class WebStorageService implements StorageService {
     return delKey(provider);
   }
 
-  async writeFile(projectId: string, path: string, content: string): Promise<void> {
-    await writeProjectFile(projectId, path, content);
+  async writeFile(appId: string, path: string, content: string): Promise<void> {
+    await writeAppFile(appId, path, content);
   }
 
-  async readFile(projectId: string, path: string): Promise<string | null> {
-    return readProjectFile(projectId, path);
+  async readFile(appId: string, path: string): Promise<string | null> {
+    return readAppFile(appId, path);
   }
 
-  async listFiles(projectId: string): Promise<string[]> {
-    const files = await listOPFSFiles(projectId);
+  async listFiles(appId: string): Promise<string[]> {
+    const files = await listOPFSFiles(appId);
     return files.map((f) => f.path);
   }
 

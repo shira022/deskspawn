@@ -10,7 +10,7 @@
  *  - Custom /v1/models      → OpenAI-compatible endpoint
  */
 import type { ModelInfo, ModelCost } from "@/types";
-import { sidecarBase } from "@/lib/sidecar";
+import { sidecarBase, sidecarFetch } from "@/lib/sidecar";
 
 // ─── In-memory cache ───────────────────────────────────────────────────────────
 
@@ -220,13 +220,23 @@ async function fetchCustomModels(
   const headers: Record<string, string> = {
     Accept: "application/json",
   };
-  if (isDesktop) {
-    headers["x-upstream"] = endpoint.replace(/\/+$/, "");
-  }
   if (apiKey) {
     headers["Authorization"] = `Bearer ${apiKey}`;
   }
-  const res = await fetch(url, { headers });
+  let res: Response;
+  if (isDesktop) {
+    // H1: x-upstream 廃止の代替 — 上流エンドポイントをサイドカーに事前同期してから
+    // 認証トークン付きで /v1 プロキシを叩く（保存前のモデル一覧取得を可能にする）。
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("sync_sidecar_config", { endpoint });
+    } catch {
+      // サイドカー未起動などは無視（下のリクエストがエラーを返す）
+    }
+    res = await sidecarFetch("/v1/models", { headers });
+  } else {
+    res = await fetch(url, { headers });
+  }
   if (!res.ok) throw new Error(`Custom /models fetch failed: ${res.status}`);
   const data = (await res.json()) as CustomModelsResponse;
   return (data.data ?? []).map((m) => ({

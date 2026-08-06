@@ -90,7 +90,7 @@ fn default_file_mode() -> String { "file".to_string() }
 
 /// Start the security HTTP server on a random localhost port.
 /// Returns the port number.
-pub fn start(workspace_path: PathBuf) -> u16 {
+pub fn start(workspace_path: PathBuf, auth_token: String) -> u16 {
     let server = Server::http("127.0.0.1:0")
         .expect("Failed to start security HTTP server");
     let port = server.server_addr()
@@ -109,8 +109,9 @@ pub fn start(workspace_path: PathBuf) -> u16 {
     std::thread::spawn(move || {
         for request in server.incoming_requests() {
             let ws = ws.clone();
+            let token = auth_token.clone();
             std::thread::spawn(move || {
-                handle_request(request, &ws);
+                handle_request(request, &ws, &token);
             });
         }
     });
@@ -120,7 +121,24 @@ pub fn start(workspace_path: PathBuf) -> u16 {
 
 // ── Request routing ─────────────────────────────────────────────────────────────
 
-fn handle_request(mut request: tiny_http::Request, workspace: &Arc<Mutex<PathBuf>>) {
+fn handle_request(
+    mut request: tiny_http::Request,
+    workspace: &Arc<Mutex<PathBuf>>,
+    auth_token: &str,
+) {
+    // H1: 認証トークン検証 — ヘッダ X-DeskSpawn-Token が一致しない限り全て拒否。
+    // サイドカー（DESKSPAWN_AUTH_TOKEN 経由）と Rust 内部のみがトークンを持つ。
+    let supplied = request
+        .headers()
+        .iter()
+        .find(|h| h.field.equiv("X-DeskSpawn-Token"))
+        .map(|h| h.value.as_str())
+        .unwrap_or("");
+    if !auth_token.is_empty() && supplied != auth_token {
+        let _ = request.respond(error(StatusCode(401), "Unauthorized"));
+        return;
+    }
+
     // Read body first (requires mutable access)
     let mut body = String::new();
     let body_read_ok = request.as_reader().read_to_string(&mut body).is_ok();

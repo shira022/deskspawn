@@ -2,7 +2,7 @@
  * Storage abstraction layer for DeskSpawn Web.
  *
  * Provides:
- * - IndexedDB for structured data (settings, projects, chat history)
+ * - IndexedDB for structured data (settings, apps, chat history)
  * - OPFS for file data (source code), with IndexedDB fallback
  *
  * API keys are stored as plaintext in IndexedDB.
@@ -21,7 +21,7 @@ const DB_VERSION = 2;
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-export interface StoredProject {
+export interface StoredApp {
   id: string;
   name: string;
   createdAt: string;
@@ -49,11 +49,11 @@ function openDB(): Promise<IDBDatabase> {
       if (!db.objectStoreNames.contains("settings")) {
         db.createObjectStore("settings", { keyPath: "key" });
       }
-      if (!db.objectStoreNames.contains("projects")) {
-        db.createObjectStore("projects", { keyPath: "id" });
+      if (!db.objectStoreNames.contains("apps")) {
+        db.createObjectStore("apps", { keyPath: "id" });
       }
       if (!db.objectStoreNames.contains("chat_history")) {
-        db.createObjectStore("chat_history", { keyPath: "projectId" });
+        db.createObjectStore("chat_history", { keyPath: "appId" });
       }
       if (!db.objectStoreNames.contains("cdncache")) {
         // 過去互換性: 旧CDNキャッシュストア（現在は未使用）
@@ -99,23 +99,31 @@ function apiKeyStorageKey(provider: string): string {
   return `api_key_${provider}`;
 }
 
-export async function saveApiKey(provider: string, apiKey: string): Promise<void> {
+/**
+ * APIキー保存の実際の保存先（M2）。
+ * - Desktop: "keychain"（OSキーチェーン）| "file"（credentials.json 平文フォールバック）
+ * - Web: "browser"（IndexedDB 平文）
+ */
+export type ApiKeyStorageMethod = "keychain" | "file" | "browser" | "";
+
+export async function saveApiKey(provider: string, apiKey: string): Promise<ApiKeyStorageMethod> {
   // Try Tauri IPC (Desktop) first, fall back to IndexedDB (Web)
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    await invoke("save_api_key", { provider, apiKey });
-    return;
+    const result = await invoke<{ method: string }>("save_api_key", { provider, apiKey });
+    return (result?.method as ApiKeyStorageMethod) || "";
   } catch {
     // Not in Tauri environment, use IndexedDB
   }
   await setSetting(apiKeyStorageKey(provider), apiKey);
+  return "browser";
 }
 
 export async function loadApiKey(provider: string): Promise<string | null> {
   // Try Tauri IPC (Desktop) first
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke("load_api_key", { provider }) as string | null;
+    return (await invoke("load_api_key", { provider })) as string | null;
   } catch {
     // Not in Tauri environment
   }
@@ -202,7 +210,7 @@ export async function loadLastProvider(): Promise<string | null> {
   return p ?? null;
 }
 
-// ── Project Operations ────────────────────────────────────────────────────────
+// ── App Operations ────────────────────────────────────────────────────────
 
 /**
  * Desktop uses real files via Rust IPC (ADR-008); Web uses IndexedDB.
@@ -212,14 +220,14 @@ function isDesktopRuntime(): boolean {
   return typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__);
 }
 
-export async function listProjects(): Promise<StoredProject[]> {
+export async function listApps(): Promise<StoredApp[]> {
   if (isDesktopRuntime()) {
-    const { listProjectsDesktop } = await import("@/lib/storage-desktop");
-    return listProjectsDesktop();
+    const { listAppsDesktop } = await import("@/lib/storage-desktop");
+    return listAppsDesktop();
   }
   const db = await openDB();
-  const tx = db.transaction("projects", "readonly");
-  const store = tx.objectStore("projects");
+  const tx = db.transaction("apps", "readonly");
+  const store = tx.objectStore("apps");
   return new Promise((resolve, reject) => {
     const req = store.getAll();
     req.onsuccess = () => resolve(req.result || []);
@@ -227,14 +235,14 @@ export async function listProjects(): Promise<StoredProject[]> {
   });
 }
 
-export async function getProject(id: string): Promise<StoredProject | null> {
+export async function getApp(id: string): Promise<StoredApp | null> {
   if (isDesktopRuntime()) {
-    const { getProjectDesktop } = await import("@/lib/storage-desktop");
-    return getProjectDesktop(id);
+    const { getAppDesktop } = await import("@/lib/storage-desktop");
+    return getAppDesktop(id);
   }
   const db = await openDB();
-  const tx = db.transaction("projects", "readonly");
-  const store = tx.objectStore("projects");
+  const tx = db.transaction("apps", "readonly");
+  const store = tx.objectStore("apps");
   return new Promise((resolve, reject) => {
     const req = store.get(id);
     req.onsuccess = () => resolve(req.result || null);
@@ -242,30 +250,30 @@ export async function getProject(id: string): Promise<StoredProject | null> {
   });
 }
 
-export async function saveProject(project: StoredProject): Promise<string> {
+export async function saveApp(app: StoredApp): Promise<string> {
   if (isDesktopRuntime()) {
-    const { saveProjectDesktop } = await import("@/lib/storage-desktop");
-    return saveProjectDesktop(project);
+    const { saveAppDesktop } = await import("@/lib/storage-desktop");
+    return saveAppDesktop(app);
   }
   const db = await openDB();
-  const tx = db.transaction("projects", "readwrite");
-  const store = tx.objectStore("projects");
+  const tx = db.transaction("apps", "readwrite");
+  const store = tx.objectStore("apps");
   await new Promise<void>((resolve, reject) => {
-    const req = store.put(project);
+    const req = store.put(app);
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
-  return project.id;
+  return app.id;
 }
 
-export async function deleteProject(id: string): Promise<void> {
+export async function deleteApp(id: string): Promise<void> {
   if (isDesktopRuntime()) {
-    const { deleteProjectDesktop } = await import("@/lib/storage-desktop");
-    return deleteProjectDesktop(id);
+    const { deleteAppDesktop } = await import("@/lib/storage-desktop");
+    return deleteAppDesktop(id);
   }
   const db = await openDB();
-  const tx = db.transaction("projects", "readwrite");
-  const store = tx.objectStore("projects");
+  const tx = db.transaction("apps", "readwrite");
+  const store = tx.objectStore("apps");
   await new Promise<void>((resolve, reject) => {
     const req = store.delete(id);
     req.onsuccess = () => resolve();
@@ -277,11 +285,11 @@ export async function deleteProject(id: string): Promise<void> {
 }
 
 /**
- * Delete the generated app's IndexedDB database for a given project.
- * Each generated app stores its data in a database named `deskspawn_app_{projectId}`.
+ * Delete the generated app's IndexedDB database for a given app.
+ * Each generated app stores its data in a database named `deskspawn_app_{appId}`.
  */
-export async function deleteAppDatabase(projectId: string): Promise<void> {
-  const dbName = `deskspawn_app_${projectId}`;
+export async function deleteAppDatabase(appId: string): Promise<void> {
+  const dbName = `deskspawn_app_${appId}`;
   await new Promise<void>((resolve, reject) => {
     const req = indexedDB.deleteDatabase(dbName);
     req.onsuccess = () => resolve();
@@ -295,32 +303,32 @@ export async function deleteAppDatabase(projectId: string): Promise<void> {
 
 // ── Chat History Operations ───────────────────────────────────────────────────
 
-export async function getChatHistory(projectId: string): Promise<any[]> {
+export async function getChatHistory(appId: string): Promise<any[]> {
   if (isDesktopRuntime()) {
     const { getChatHistoryDesktop } = await import("@/lib/storage-desktop");
-    return getChatHistoryDesktop(projectId);
+    return getChatHistoryDesktop(appId);
   }
   const db = await openDB();
   const tx = db.transaction("chat_history", "readonly");
   const store = tx.objectStore("chat_history");
-  const result = await new Promise<{ projectId: string; messages: any[] } | undefined>((resolve, reject) => {
-    const req = store.get(projectId);
+  const result = await new Promise<{ appId: string; messages: any[] } | undefined>((resolve, reject) => {
+    const req = store.get(appId);
     req.onsuccess = () => resolve(req.result);
     req.onerror = () => reject(req.error);
   });
   return result?.messages || [];
 }
 
-export async function saveChatHistory(projectId: string, messages: any[]): Promise<void> {
+export async function saveChatHistory(appId: string, messages: any[]): Promise<void> {
   if (isDesktopRuntime()) {
     const { saveChatHistoryDesktop } = await import("@/lib/storage-desktop");
-    return saveChatHistoryDesktop(projectId, messages);
+    return saveChatHistoryDesktop(appId, messages);
   }
   const db = await openDB();
   const tx = db.transaction("chat_history", "readwrite");
   const store = tx.objectStore("chat_history");
   await new Promise<void>((resolve, reject) => {
-    const req = store.put({ projectId, messages });
+    const req = store.put({ appId, messages });
     req.onsuccess = () => resolve();
     req.onerror = () => reject(req.error);
   });
@@ -329,9 +337,9 @@ export async function saveChatHistory(projectId: string, messages: any[]): Promi
 // ── Storage Stats ──────────────────────────────────────────────────────────────
 
 export async function getStorageStats(): Promise<{
-  projects: number;
+  apps: number;
   chatMessages: number;
 }> {
-  const projects = (await listProjects()).length;
-  return { projects, chatMessages: 0 };
+  const apps = (await listApps()).length;
+  return { apps, chatMessages: 0 };
 }

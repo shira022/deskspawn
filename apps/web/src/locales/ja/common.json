@@ -80,7 +80,7 @@
       "regionRequired": "AWS Bedrock にはリージョンの指定が必要です（例: us-east-1）"
     },
     "apiKeyInstructions": {
-      "openai": "OpenAI API キー — sk-proj- または sk- で始まります（https://platform.openai.com/api-keys）",
+      "openai": "OpenAI API キー — sk-app- または sk- で始まります（https://platform.openai.com/api-keys）",
       "anthropic": "Anthropic API キー — sk-ant-api03- で始まります（https://console.anthropic.com）",
       "google": "Google AI / Gemini API キー — AIza で始まります（https://aistudio.google.com）",
       "amazonBedrock": "AWS Bedrock API キー — bedrock-api-key- で始まります（AWS Bedrock コンソール）",
@@ -106,7 +106,9 @@
     "costOutput": "出力",
     "costCached": "キャッシュ",
     "costReasoning": "推論",
-    "welcomeDescriptionDesktop": "使用する AI モデルを設定してください。API キーはアプリ内のローカルストレージに保存され、選択した AI プロバイダーへの送信はローカルサイドカー（プロキシ）経由で行われます。キーが直接外部サーバーへ送信されることはありません。"
+    "welcomeDescriptionDesktop": "使用する AI モデルを設定してください。API キーはアプリ内のローカルストレージに保存され、選択した AI プロバイダーへの送信はローカルサイドカー（プロキシ）経由で行われます。キーが直接外部サーバーへ送信されることはありません。",
+    "savedInKeychain": "OSキーチェーンに保存されています（Windows 資格情報マネージャー）",
+    "savedInFile": "設定ファイルに保存されています（平文・OSキーチェーンではありません）"
   },
   "env": {
     "title": "環境チェック",
@@ -181,7 +183,7 @@
     "editing": "編集中…",
     "goToCheckpoint": "このチェックポイントに戻る",
     "emptyStatePrompt": "「タスク管理アプリにして」「ダークモードを追加して」など、作りたいアプリを自由に指示してください。",
-    "emptyStateNoProject": "ツールバーの「新規アプリ」からプロジェクトを作成すると、チャットでアプリの構築を開始できます。",
+    "emptyStateNoApp": "ツールバーの「新規アプリ」からアプリを作成すると、チャットでアプリの構築を開始できます。",
     "suggestion": {
       "calendarApp": "カレンダーアプリを作成して",
       "todoApp": "ToDoアプリを作成して",
@@ -200,7 +202,7 @@
     "totalTokensAndCost": "合計トークン数と推定費用",
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI設定が行われていません。ツールバーの「{{notConfiguredLabel}}」ボタンから設定してください。",
-      "noProjectSelected": "⚠️ プロジェクトが選択されていません。ツールバーの「{{newAppLabel}}」からプロジェクトを作成するか、アプリ履歴から選択してください。",
+      "noAppSelected": "⚠️ アプリが選択されていません。ツールバーの「{{newAppLabel}}」からアプリを作成するか、アプリ履歴から選択してください。",
       "apiKeyRequiredDetailed": "⚠️ {{provider}} には API キーが必要です。\nツールバーの「{{modelLabel}}」→「APIキー設定」から設定してください。",
       "emptyResponse": "⚠️ AIが空のレスポンスを返しました。モデルの設定を確認するか、もう一度試してみてください。\n\nプロバイダー: {{provider}}\nモデル: {{model}}\n\nツールバーのモデル名をクリックして設定を確認してください。",
       "invalidApiKey": "APIキーが無効か未設定です。ツールバーの「APIキー設定」から確認してください。",
@@ -242,12 +244,12 @@
     "verifier": "エラーチェックと修正",
     "visual_qa": "画面確認"
   },
-  "project": {
-    "label": "プロジェクト",
-    "noneSelected": "プロジェクト未選択",
+  "app": {
+    "label": "アプリ",
+    "noneSelected": "アプリ未選択",
     "newApp": "新規アプリ",
-    "switching": "プロジェクトを切り替え中...",
-    "switchingDesc": "新しいプロジェクトの準備ができ次第、チャットを開始できます。",
+    "switching": "アプリを切り替え中...",
+    "switchingDesc": "新しいアプリの準備ができ次第、チャットを開始できます。",
     "preparingNewApp": "新しいアプリを準備しています",
     "preparingWithName": "「{{appName}}」のテンプレートを展開し、<br />開発サーバーを起動しています",
     "preparingGeneric": "テンプレートを展開し、開発サーバーを起動しています",
@@ -264,7 +266,7 @@
     "createFirst": "最初のアプリを作成",
     "export": "エクスポート",
     "delete": "削除",
-    "deleteDisabledActive": "現在開いているプロジェクトは削除できません。先に別のプロジェクトに切り替えてください。",
+    "deleteDisabledActive": "現在開いているアプリは削除できません。先に別のアプリに切り替えてください。",
     "deleteError": "削除に失敗しました",
     "exportError": "エクスポートに失敗しました",
     "deleteTitle": "アプリを削除",
@@ -298,50 +300,61 @@
     "analysisError": "分析エラーのためシングルモードで実行します"
   },
   "landing": {
-    "badge": "ベータ版",
+    "badge": "デスクトップアプリ",
     "hero": {
-      "title1": "AI で Web アプリを",
-      "title2": "作る",
-      "subtitle": "チャットで伝えるだけ。あなたの言葉が、AI によって動く Web アプリに変わります。ブラウザだけで完結。データはあなたの PC に留まります。",
-      "tryButton": "使ってみる",
-      "githubButton": "GitHub"
+      "title1": "AIでアプリを作る。",
+      "title2": "デスクトップで。",
+      "subtitle": "チャットで伝えるだけ。AIが実ファイルのアプリを生成し、ローカルプレビューで即確認できます。データはすべてあなたのPCに留まります。",
+      "downloadButton": "デスクトップアプリをダウンロード",
+      "tryButton": "ブラウザで試す",
+      "tryNote": "⚠️ ブラウザ版は体験用です。データはブラウザ内（IndexedDB）に保存されるため、デスクトップ版より安全性が劣ります。"
     },
     "demo": {
       "userMessage": "タスク管理アプリを作って",
       "assistantMessage": "わかりました！以下のファイルを作成します...",
-      "creatingFiles": "プロジェクトファイルを作成中..."
+      "creatingFiles": "アプリファイルを作成中..."
     },
     "features": {
       "title": "特徴",
-      "subtitle": "あなたのアイデアをかたちにするために",
-      "item1Title": "AI が自動生成",
-      "item1Desc": "作りたいアプリのイメージを伝えるだけで、AI が自動的にアプリを作成します。プログラミングの知識は必要ありません。",
-      "item2Title": "プライバシー重視",
-      "item2Desc": "あなたのデータはブラウザの中だけに保存されます。あなたが選んだAIサービス以外に送信されることはありません。",
-      "item3Title": "インストール不要",
-      "item3Desc": "ダウンロードや設定は一切不要。ブラウザを開くだけで、すぐに使い始められます。",
-      "item4Title": "リアルタイムプレビュー",
-      "item4Desc": "アプリができあがる様子をその場で確認。変更を加えると、リアルタイムに画面が更新されます。",
-      "item5Title": "品質も自動チェック",
-      "item5Desc": "AI が動作するコードを生成し、自動でエラーチェックも行います。はじめからバグの少ないアプリに。",
-      "item6Title": "AI はお好みで — 無料でも使える",
-      "item6Desc": "OpenAI、Anthropic、Google など、お持ちの API キーをそのままお使いいただけます。Ollama を使えば完全無料でご利用いただけます。"
+      "subtitle": "デスクトップだからできること",
+      "item1Title": "実ファイルで管理",
+      "item1Desc": "生成されたアプリは実ファイルとしてディスクに保存されます。エディタで開いて直接編集も可能。バックアップはフォルダをコピーするだけ。",
+      "item2Title": "完全ローカルプレビュー",
+      "item2Desc": "プレビューはすべてあなたのPC上で動作。インターネット接続がなくても、生成したアプリをすぐに確認できます。",
+      "item3Title": "OSキーチェーン保護",
+      "item3Desc": "APIキーはブラウザではなくOSのキーチェーンに保存。外部サービスに送信されることはありません。",
+      "item4Title": "フルスタック生成",
+      "item4Desc": "React + Hono + SQLite のフルスタックアプリも生成可能。データベースを使う本格的なアプリも作り放題。",
+      "item5Title": "自動テスト品質ループ",
+      "item5Desc": "生成したコードは自動テストで検証され、テストが通るまで修正を繰り返します。はじめからバグの少ないアプリに。",
+      "item6Title": "お好みのAIプロバイダ",
+      "item6Desc": "OpenAI、Anthropic、Googleなど、お持ちのAPIキーをそのまま使用。Ollamaを使えば完全無料でローカル完結。"
+    },
+    "browserSection": {
+      "title": "ブラウザでも体験できます",
+      "desc": "Web版はデスクトップアプリの主要機能をブラウザで手軽に体験できます。インストール不要ですぐに試せます。",
+      "warning": "⚠️ ブラウザ版は体験用です。APIキーやアプリのデータはブラウザ内（IndexedDB）に保存されるため、デスクトップ版（OSキーチェーン＋ローカル保存）より安全性が劣ります。本格的な利用はデスクトップアプリをご利用ください。",
+      "tryButton": "ブラウザで試す"
     },
     "requirements": {
       "title": "推奨環境",
-      "desc": "ある程度の性能を持つ LLM が必要です。GPT-5.4-nano レベル以上のモデルで正常動作を確認しています。性能が低いモデルでは、複雑なコード生成タスクを苦手とする場合があります。"
+      "desktopTitle": "デスクトップアプリ",
+      "desktopDesc": "Windows 10 / 11（WebView2 プリインストール）",
+      "webTitle": "Web版（体験用）",
+      "webDesc": "Chrome 105+ / Edge 105+ 推奨。プレビューなど一部機能は Chromium 系ブラウザ限定。"
     },
     "cta": {
       "title": "さっそく始めてみませんか？",
-      "subtitle": "APIキーを設定するだけ。数分で使い始められます。",
-      "button": "今すぐ始める"
+      "subtitle": "ダウンロードしてインストールするだけ。数分で使い始められます。",
+      "downloadButton": "デスクトップアプリをダウンロード",
+      "tryButton": "ブラウザで試す"
     },
-    "footer": "DeskSpawn — AI が Web アプリを作る。コードは不要です。"
+    "footer": "DeskSpawn — AI がアプリを作る。コードは不要です。"
   },
   "auth": {},
   "preview": {
     "title": "プレビュー",
-    "selectProject": "プロジェクトを選択または作成するとプレビューが表示されます",
+    "selectApp": "アプリを選択または作成するとプレビューが表示されます",
     "loading": "プレビュー準備中...",
     "rendering": "プレビュー描画中...",
     "loadingApp": "アプリを読み込み中...",
@@ -356,6 +369,15 @@
     "previewError": "プレビューエラー",
     "zoomIn": "ズームイン",
     "zoomOut": "ズームアウト",
-    "zoomReset": "ズームリセット"
+    "zoomReset": "ズームリセット",
+    "localBadge": "Local :{{port}}",
+    "openInBrowser": "ブラウザで開く"
+  },
+  "statusBar": {
+    "idle": "待機中",
+    "complete": "完了",
+    "error": "エラー",
+    "sidecarConnected": "Sidecar ✓",
+    "sidecarOffline": "Sidecar オフライン"
   }
 }

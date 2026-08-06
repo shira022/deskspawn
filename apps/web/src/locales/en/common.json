@@ -80,7 +80,7 @@
       "regionRequired": "AWS region is required for AWS Bedrock (e.g. us-east-1)"
     },
     "apiKeyInstructions": {
-      "openai": "OpenAI API Key — starts with sk-proj- or sk- (https://platform.openai.com/api-keys)",
+      "openai": "OpenAI API Key — starts with sk-app- or sk- (https://platform.openai.com/api-keys)",
       "anthropic": "Anthropic API Key — starts with sk-ant-api03- (https://console.anthropic.com)",
       "google": "Google AI / Gemini API Key — starts with AIza (https://aistudio.google.com)",
       "amazonBedrock": "AWS Bedrock API Key — starts with bedrock-api-key- (AWS Bedrock Console)",
@@ -106,7 +106,9 @@
     "costOutput": "Output",
     "costCached": "Cached",
     "costReasoning": "Reasoning",
-    "welcomeDescriptionDesktop": "Set up the AI model you want to use. Your API key is stored in local storage and sent to your chosen AI provider through the local sidecar proxy — the key is never sent directly to external servers."
+    "welcomeDescriptionDesktop": "Set up the AI model you want to use. Your API key is stored in local storage and sent to your chosen AI provider through the local sidecar proxy — the key is never sent directly to external servers.",
+    "savedInKeychain": "stored in your OS keychain (Windows Credential Manager)",
+    "savedInFile": "stored in a settings file (plain text, not in the OS keychain)"
   },
   "env": {
     "title": "Environment Check",
@@ -181,7 +183,7 @@
     "editing": "Editing...",
     "goToCheckpoint": "Go to this checkpoint",
     "emptyStatePrompt": "Tell me what you want to build, like \"Make it a task management app\" or \"Add dark mode\".",
-    "emptyStateNoProject": "Create a project from \"New App\" in the toolbar, then start building via chat.",
+    "emptyStateNoApp": "Create an app from \"New App\" in the toolbar, then start building via chat.",
     "suggestion": {
       "calendarApp": "Create a calendar app",
       "todoApp": "Create a Todo app",
@@ -200,7 +202,7 @@
     "totalTokensAndCost": "Total tokens and estimated cost",
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI is not configured. Please configure it from the \"{{notConfiguredLabel}}\" button in the toolbar.",
-      "noProjectSelected": "⚠️ No project is selected. Create a project from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
+      "noAppSelected": "⚠️ No app is selected. Create an app from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
       "apiKeyRequiredDetailed": "⚠️ {{provider}} requires an API key.\nConfigure it from \"{{modelLabel}}\" → \"API Key Settings\" in the toolbar.",
       "emptyResponse": "⚠️ AI returned an empty response. Please check your model settings and try again.\n\nProvider: {{provider}}\nModel: {{model}}\n\nClick the model name in the toolbar to check settings.",
       "invalidApiKey": "The API key is invalid or not configured. Check it from \"API Key Settings\" in the toolbar.",
@@ -242,12 +244,12 @@
     "verifier": "Error Check & Fix",
     "visual_qa": "Visual Review"
   },
-  "project": {
-    "label": "Project",
-    "noneSelected": "No project selected",
+  "app": {
+    "label": "App",
+    "noneSelected": "No app selected",
     "newApp": "New App",
-    "switching": "Switching project...",
-    "switchingDesc": "You can start chatting once the new project is ready.",
+    "switching": "Switching app...",
+    "switchingDesc": "You can start chatting once the new app is ready.",
     "preparingNewApp": "Preparing a new app",
     "preparingWithName": "Expanding the \"{{appName}}\" template and<br />starting the dev server",
     "preparingGeneric": "Expanding template and starting the dev server",
@@ -264,7 +266,7 @@
     "createFirst": "Create your first app",
     "export": "Export",
     "delete": "Delete",
-    "deleteDisabledActive": "Cannot delete the currently open project. Switch to another project first.",
+    "deleteDisabledActive": "Cannot delete the currently open app. Switch to another app first.",
     "deleteError": "Delete failed",
     "exportError": "Export failed",
     "deleteTitle": "Delete App",
@@ -298,50 +300,61 @@
     "analysisError": "Analysis error, running single mode"
   },
   "landing": {
-    "badge": "Beta",
+    "badge": "Desktop App",
     "hero": {
-      "title1": "Build Web Apps",
-      "title2": "with AI",
-      "subtitle": "Just describe what you want. AI turns your words into a working web app. Everything runs in your browser, and your data stays on your computer.",
-      "tryButton": "Try It Now",
-      "githubButton": "GitHub"
+      "title1": "Build Apps",
+      "title2": "with AI, on Desktop",
+      "subtitle": "Just describe what you want. AI generates your app as real files on disk and shows it in a local preview. Your data never leaves your computer.",
+      "downloadButton": "Download Desktop App",
+      "tryButton": "Try in Browser",
+      "tryNote": "⚠️ The browser version is for evaluation only. Data is stored in your browser (IndexedDB), which is less secure than the desktop app."
     },
     "demo": {
       "userMessage": "Create a task management app",
       "assistantMessage": "Got it! I'll create the following files...",
-      "creatingFiles": "Creating project files..."
+      "creatingFiles": "Creating app files..."
     },
     "features": {
       "title": "Features",
-      "subtitle": "Everything you need to bring your ideas to life",
-      "item1Title": "AI-Powered",
-      "item1Desc": "Just describe your idea, and AI builds it for you automatically. No coding knowledge needed.",
-      "item2Title": "Privacy First",
-      "item2Desc": "Your data stays in your browser. It's never sent to any server beyond the AI service you choose.",
-      "item3Title": "No Installation",
-      "item3Desc": "No downloads, no setup. Just open your browser and start creating right away.",
-      "item4Title": "Live Preview",
-      "item4Desc": "See your app come to life instantly. Make changes and watch it update in real time.",
-      "item5Title": "Built-in Quality",
-      "item5Desc": "AI generates clean, working code with automatic error checking. Fewer bugs from the start.",
-      "item6Title": "Choose Your AI — Or Go Free",
-      "item6Desc": "Bring your own API key for OpenAI, Anthropic, Google, and more. Or use Ollama — run everything locally for free, with zero API costs."
+      "subtitle": "Everything the desktop makes possible",
+      "item1Title": "Real Files on Disk",
+      "item1Desc": "Generated apps are saved as real files on your disk. Open them in any editor, or back up by copying the folder.",
+      "item2Title": "Fully Local Preview",
+      "item2Desc": "Preview runs entirely on your machine. See your generated app instantly, even without an internet connection.",
+      "item3Title": "OS Keychain Protection",
+      "item3Desc": "API keys are stored in your OS keychain, not in a browser. They are never sent to any server beyond the AI provider you choose.",
+      "item4Title": "Full-Stack Generation",
+      "item4Desc": "Generate full-stack apps with React + Hono + SQLite. Build real apps with databases, not just static pages.",
+      "item5Title": "Automated Quality Loop",
+      "item5Desc": "Generated code is verified with automated tests, and the AI keeps fixing until they pass. Fewer bugs from the start.",
+      "item6Title": "Choose Your AI",
+      "item6Desc": "Bring your own API key for OpenAI, Anthropic, Google, and more. Or use Ollama — run everything locally for free."
+    },
+    "browserSection": {
+      "title": "Also Available in Your Browser",
+      "desc": "The web version lets you try the core DeskSpawn experience in your browser. No installation required.",
+      "warning": "⚠️ The browser version is for evaluation only. API keys and app data are stored in your browser (IndexedDB), which is less secure than the desktop app (OS keychain + local storage). For serious work, use the desktop app.",
+      "tryButton": "Try in Browser"
     },
     "requirements": {
       "title": "Requirements",
-      "desc": "A reasonably capable LLM is recommended. DeskSpawn has been verified to work with models at the GPT-5.4-nano level or above. Lower-capability models may struggle with complex code generation tasks."
+      "desktopTitle": "Desktop App",
+      "desktopDesc": "Windows 10 / 11 (WebView2 preinstalled)",
+      "webTitle": "Web Version (Evaluation)",
+      "webDesc": "Chrome 105+ / Edge 105+ recommended. Preview and some features require a Chromium-based browser."
     },
     "cta": {
       "title": "Ready to build your first app?",
-      "subtitle": "Just add your API key and start creating. It only takes a few minutes.",
-      "button": "Get Started"
+      "subtitle": "Download and install, and you're ready in minutes.",
+      "downloadButton": "Download Desktop App",
+      "tryButton": "Try in Browser"
     },
-    "footer": "DeskSpawn — Build web apps with AI. No coding required."
+    "footer": "DeskSpawn — Build apps with AI. No coding required."
   },
   "auth": {},
   "preview": {
     "title": "Preview",
-    "selectProject": "Select or create a project to preview",
+    "selectApp": "Select or create an app to preview",
     "loading": "Preparing preview...",
     "rendering": "Rendering preview...",
     "loadingApp": "Loading app...",
@@ -356,6 +369,15 @@
     "previewError": "Preview Error",
     "zoomIn": "Zoom in",
     "zoomOut": "Zoom out",
-    "zoomReset": "Reset zoom"
+    "zoomReset": "Reset zoom",
+    "localBadge": "Local :{{port}}",
+    "openInBrowser": "Open in browser"
+  },
+  "statusBar": {
+    "idle": "Idle",
+    "complete": "Done",
+    "error": "Error",
+    "sidecarConnected": "Sidecar ✓",
+    "sidecarOffline": "Sidecar offline"
   }
 }
