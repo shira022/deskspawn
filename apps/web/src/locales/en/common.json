@@ -373,6 +373,9 @@
     "openInBrowser": "Open in browser"
   },
   "statusBar": {
+    "idle": "Idle",
+    "complete": "Done",
+    "error": "Error",
     "sidecarConnected": "Sidecar ✓",
     "sidecarOffline": "Sidecar offline"
   }

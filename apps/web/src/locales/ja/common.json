@@ -373,6 +373,9 @@
     "openInBrowser": "ブラウザで開く"
   },
   "statusBar": {
+    "idle": "待機中",
+    "complete": "完了",
+    "error": "エラー",
     "sidecarConnected": "Sidecar ✓",
     "sidecarOffline": "Sidecar オフライン"
   }
