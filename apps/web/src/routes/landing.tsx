@@ -1,8 +1,8 @@
 /**
- * ランディングページ — DeskSpawn Web
+ * ランディングページ — DeskSpawn
  *
- * i18n 対応の製品紹介ページ。
- * ユーザーの言語設定に応じて日本語/英語を表示する。
+ * デスクトップアプリメイン・Web版は体験用という位置づけの製品紹介ページ。
+ * i18n 対応（日本語/英語）。
  */
 
 import { useState, useEffect, useCallback } from "react";
@@ -17,14 +17,18 @@ import {
   Bot,
   Globe,
   Cpu,
-  Shield,
-  Info,
-  Terminal,
   Play,
   Monitor,
   Github,
   Sun,
   Moon,
+  Download,
+  FolderOpen,
+  MonitorPlay,
+  KeyRound,
+  Database,
+  FlaskConical,
+  AlertTriangle,
 } from "lucide-react";
 
 // ── 言語切替 ──────────────────────────────────────────────────────────────────
@@ -132,7 +136,8 @@ function ThemeToggle() {
 }
 
 // ── アプリUIを模したデモ ─────────────────────────────────────────────────────
-// 実際の DeskSpawn の2ペインレイアウトを再現し、生成プロセスを見せる。
+// デスクトップアプリのウィンドウ（タイトルバー＋メニューバー＋2ペイン）を再現し、
+// 生成プロセスを見せる。
 
 type AppDemoStage =
   | "init"
@@ -205,25 +210,34 @@ function AppDemo() {
     return () => clearInterval(iv);
   }, [stage, isJa]);
 
+  // デスクトップアプリ風メニュー
+  const menuItems = isJa
+    ? ["ファイル", "編集", "表示", "ヘルプ"]
+    : ["File", "Edit", "View", "Help"];
+
   return (
     <div className="rounded-xl border bg-card shadow-lg overflow-hidden">
-      {/* ── ツールバー ── */}
+      {/* ── デスクトップウィンドウ風タイトルバー ── */}
       <div className="flex items-center justify-between border-b bg-muted/30 px-3 py-1.5">
         <div className="flex items-center gap-2">
-          <div className="flex gap-1">
-            <div className="h-2.5 w-2.5 rounded-full bg-red-400" />
-            <div className="h-2.5 w-2.5 rounded-full bg-yellow-400" />
-            <div className="h-2.5 w-2.5 rounded-full bg-green-400" />
-          </div>
-          <span className="ml-1.5 text-xs font-semibold">DeskSpawn</span>
+          <span className="text-xs font-semibold">DeskSpawn</span>
           <span className="text-[10px] text-muted-foreground ml-1 hidden sm:inline">
             / {isJa ? "タスク管理" : "task-manager"}
           </span>
         </div>
-        <div className="flex items-center gap-1">
-          <div className="h-5 w-16 rounded bg-muted-foreground/10" />
-          <div className="h-5 w-5 rounded bg-muted-foreground/10" />
+        {/* ウィンドウコントロール（最小化/最大化/閉じるを模す） */}
+        <div className="flex items-center gap-0.5 text-[10px] text-muted-foreground/70">
+          <span className="flex h-4 w-6 items-center justify-center rounded-sm hover:bg-muted-foreground/10">—</span>
+          <span className="flex h-4 w-6 items-center justify-center rounded-sm hover:bg-muted-foreground/10">□</span>
+          <span className="flex h-4 w-6 items-center justify-center rounded-sm hover:bg-red-500/80 hover:text-white">✕</span>
         </div>
+      </div>
+
+      {/* ── メニューバー ── */}
+      <div className="flex items-center gap-3 border-b bg-background/60 px-3 py-0.5 text-[10px] text-muted-foreground">
+        {menuItems.map((m) => (
+          <span key={m} className="cursor-default hover:text-foreground">{m}</span>
+        ))}
       </div>
 
       {/* ── メインエリア: 2ペイン ── */}
@@ -414,7 +428,7 @@ function AppDemo() {
           </span>
         </div>
         <span className="text-[10px] text-muted-foreground/40">
-          {isJa ? "データはブラウザ内に留まります" : "Data stays in your browser"}
+          {isJa ? "すべてローカルで動作" : "Everything runs locally"}
         </span>
       </div>
     </div>
@@ -491,12 +505,25 @@ export function LandingPage() {
             <p className="text-muted-foreground text-lg leading-relaxed">
               {t("landing.hero.subtitle")}
             </p>
-            <div className="flex items-center justify-center pt-4">
-              <Button size="lg" onClick={handleGetStarted}>
+            <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
+              <Button size="lg" asChild>
+                <a
+                  href="https://github.com/shira022/deskspawn/releases"
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Download className="h-4 w-4 mr-2" />
+                  {t("landing.hero.downloadButton")}
+                </a>
+              </Button>
+              <Button size="lg" variant="outline" onClick={handleGetStarted}>
                 <Play className="h-4 w-4 mr-2" />
                 {t("landing.hero.tryButton")}
               </Button>
             </div>
+            <p className="text-[11px] text-amber-600/80 dark:text-amber-400/70 max-w-md mx-auto leading-relaxed">
+              {t("landing.hero.tryNote")}
+            </p>
           </div>
 
           {/* Demo */}
@@ -516,27 +543,27 @@ export function LandingPage() {
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           <FeatureCard
-            icon={<Sparkles className="h-5 w-5" />}
+            icon={<FolderOpen className="h-5 w-5" />}
             titleKey="landing.features.item1Title"
             descKey="landing.features.item1Desc"
           />
           <FeatureCard
-            icon={<Shield className="h-5 w-5" />}
+            icon={<MonitorPlay className="h-5 w-5" />}
             titleKey="landing.features.item2Title"
             descKey="landing.features.item2Desc"
           />
           <FeatureCard
-            icon={<Globe className="h-5 w-5" />}
+            icon={<KeyRound className="h-5 w-5" />}
             titleKey="landing.features.item3Title"
             descKey="landing.features.item3Desc"
           />
           <FeatureCard
-            icon={<Bot className="h-5 w-5" />}
+            icon={<Database className="h-5 w-5" />}
             titleKey="landing.features.item4Title"
             descKey="landing.features.item4Desc"
           />
           <FeatureCard
-            icon={<Terminal className="h-5 w-5" />}
+            icon={<FlaskConical className="h-5 w-5" />}
             titleKey="landing.features.item5Title"
             descKey="landing.features.item5Desc"
           />
@@ -548,18 +575,54 @@ export function LandingPage() {
         </div>
       </section>
 
-      {/* ── Requirements ─────────────────────────────────────────────────────── */}
-      <section className="max-w-2xl mx-auto px-6 py-10 text-center">
-        <div className="rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-900/30 dark:bg-amber-950/20 px-5 py-4">
-          <div className="flex items-center gap-2 mb-1.5">
-            <Info className="h-4 w-4 text-amber-600 dark:text-amber-400" />
-            <h3 className="text-sm font-semibold text-amber-800 dark:text-amber-300">
-              {t("landing.requirements.title")}
-            </h3>
-          </div>
-          <p className="text-xs text-amber-700/80 dark:text-amber-400/80 leading-relaxed">
-            {t("landing.requirements.desc")}
+      {/* ── Browser 体験版セクション ───────────────────────────────────────── */}
+      <section className="max-w-5xl mx-auto px-6 pb-20">
+        <div className="rounded-xl border bg-card p-8 text-center">
+          <Globe className="mx-auto h-8 w-8 text-primary/60 mb-3" />
+          <h2 className="text-2xl font-bold tracking-tight">{t("landing.browserSection.title")}</h2>
+          <p className="text-muted-foreground mt-2 max-w-xl mx-auto">
+            {t("landing.browserSection.desc")}
           </p>
+          <div className="mt-5 flex justify-center">
+            <Button variant="outline" size="lg" onClick={handleGetStarted}>
+              <Play className="h-4 w-4 mr-2" />
+              {t("landing.browserSection.tryButton")}
+            </Button>
+          </div>
+          {/* 体験版警告バナー */}
+          <div className="mt-6 max-w-2xl mx-auto flex gap-2 rounded-lg border border-amber-200 bg-amber-50/50 dark:border-amber-900/30 dark:bg-amber-950/20 px-5 py-4 text-left">
+            <AlertTriangle className="h-4 w-4 text-amber-600 dark:text-amber-400 shrink-0 mt-0.5" />
+            <p className="text-xs text-amber-700/80 dark:text-amber-400/80 leading-relaxed">
+              {t("landing.browserSection.warning")}
+            </p>
+          </div>
+        </div>
+      </section>
+
+      {/* ── Requirements ─────────────────────────────────────────────────────── */}
+      <section className="max-w-3xl mx-auto px-6 pb-10">
+        <h2 className="text-center text-2xl font-bold tracking-tight mb-8">
+          {t("landing.requirements.title")}
+        </h2>
+        <div className="grid gap-4 sm:grid-cols-2">
+          <div className="rounded-lg border bg-card p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Monitor className="h-4 w-4 text-primary" />
+              <h3 className="text-sm font-semibold">{t("landing.requirements.desktopTitle")}</h3>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {t("landing.requirements.desktopDesc")}
+            </p>
+          </div>
+          <div className="rounded-lg border bg-card p-5">
+            <div className="flex items-center gap-2 mb-2">
+              <Globe className="h-4 w-4 text-primary" />
+              <h3 className="text-sm font-semibold">{t("landing.requirements.webTitle")}</h3>
+            </div>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              {t("landing.requirements.webDesc")}
+            </p>
+          </div>
         </div>
       </section>
 
@@ -569,10 +632,22 @@ export function LandingPage() {
       <section className="max-w-5xl mx-auto px-6 py-20 text-center">
         <h2 className="text-2xl font-bold tracking-tight">{t("landing.cta.title")}</h2>
         <p className="text-muted-foreground mt-2 mb-6">{t("landing.cta.subtitle")}</p>
-        <Button size="lg" onClick={handleGetStarted}>
-          {t("landing.cta.button")}
-          <ArrowRight className="h-4 w-4 ml-2" />
-        </Button>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <Button size="lg" asChild>
+            <a
+              href="https://github.com/shira022/deskspawn/releases"
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Download className="h-4 w-4 mr-2" />
+              {t("landing.cta.downloadButton")}
+            </a>
+          </Button>
+          <Button size="lg" variant="outline" onClick={handleGetStarted}>
+            {t("landing.cta.tryButton")}
+            <ArrowRight className="h-4 w-4 ml-2" />
+          </Button>
+        </div>
       </section>
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
