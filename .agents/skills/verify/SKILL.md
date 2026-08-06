@@ -98,6 +98,34 @@ npm run tauri build -- --debug
 
 **Pass condition**: Tauri bundles without errors. Skip if no Tauri-backend changes.
 
+### Stage 7: Version Consistency Check (ALWAYS)
+
+**DeskSpawnは全パッケージ単一バージョン方針**（ADR: リリース時にGitHubタグ=アプリ内全箇所が一致）。リリース前・バージョン変更時は必ず実行する:
+
+```bash
+node scripts/check-versions.mjs            # 全箇所の一致を確認
+node scripts/check-versions.mjs 0.4.1      # 指定バージョンとの一致を確認
+```
+
+**バージョン定義箇所（すべて同一でなければならない）**:
+| ファイル | 役割 |
+|---------|------|
+| `package.json`（ルート） | モノレポ管理 |
+| `apps/web/package.json` | Web版（デモ/ブラウザ版） |
+| `apps/desktop/package.json` | デスクトップ版フロント |
+| `apps/desktop/sidecar/package.json` | AIサイドカー |
+| `apps/desktop/src-tauri/tauri.conf.json` | Tauriアプリ本体（インストーラ名に反映） |
+| `apps/desktop/src-tauri/Cargo.toml` | Rustバックエンド |
+| `apps/desktop/src-tauri/Cargo.lock` | Rustロック（cargo buildで自動更新されるが確認対象） |
+| `packages/*/package.json`（ai-core/config/ui） | 内部共有パッケージ（npm公開しないため単一バージョン） |
+
+**Pass condition**: 全箇所が同一バージョン（SemVer 3桁 `major.minor.patch`）。不一致は BLOCKER。
+**バージョン更新手順**: `python3 scripts/set-version.py <new-version>`（または各ファイルのversionフィールドを手動更新）→ `node scripts/check-versions.mjs <new-version>` で確認 → Cargo.lockのdeskspawn-desktopエントリも更新（`cargo build` が自動更新するが、コミット前に必ず一致させる）。
+
+**Pitfall**: 
+- GitHubタグ（v0.4.0等）とアプリ内バージョン（0.2.0等）の不一致を過去に発生させた実績あり。**タグ作成前に必ず本チェックを実行**すること
+- Cargo.lockのdeskspawn-desktopは手動で書き換えても次回cargo buildで上書きされる。必ずソース（Cargo.toml）と揃えること
+
 ## Error Handling
 
 ### Collection Strategy
