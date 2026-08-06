@@ -1,8 +1,8 @@
-//! Per-project chat history storage — SQLite via sqlx (ADR-009).
+//! Per-app chat history storage — SQLite via sqlx (ADR-009).
 //!
-//! Each project has its own DB at `~/deskspawn/projects/<id>/.deskspawn/chat.db`
+//! Each app has its own DB at `~/deskspawn/apps/<id>/.deskspawn/chat.db`
 //! managed by Rust (never the frontend). Messages are stored as a JSON blob per
-//! project for simplicity; the DB file lives next to checkpoints so a project
+//! app for simplicity; the DB file lives next to checkpoints so an app
 //! directory is fully self-contained.
 
 use crate::engine::workspace;
@@ -10,9 +10,9 @@ use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use std::str::FromStr;
 
-/// Open (create if missing) the chat DB for a project.
-pub async fn open_chat_db(project_id: &str) -> Result<SqlitePool, String> {
-    let path = workspace::project_chat_db_path(project_id)?;
+/// Open (create if missing) the chat DB for an app.
+pub async fn open_chat_db(app_id: &str) -> Result<SqlitePool, String> {
+    let path = workspace::app_chat_db_path(app_id)?;
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
             .map_err(|e| format!("Failed to create chat db dir: {}", e))?;
@@ -30,7 +30,7 @@ pub async fn open_chat_db(project_id: &str) -> Result<SqlitePool, String> {
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS chat_messages (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            project_id TEXT NOT NULL,
+            app_id TEXT NOT NULL,
             role TEXT NOT NULL,
             content TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
@@ -45,14 +45,14 @@ pub async fn open_chat_db(project_id: &str) -> Result<SqlitePool, String> {
 /// Append a single message.
 pub async fn append_message(
     pool: &SqlitePool,
-    project_id: &str,
+    app_id: &str,
     role: &str,
     content: &str,
 ) -> Result<i64, String> {
     let res = sqlx::query(
-        "INSERT INTO chat_messages (project_id, role, content) VALUES (?, ?, ?)",
+        "INSERT INTO chat_messages (app_id, role, content) VALUES (?, ?, ?)",
     )
-    .bind(project_id)
+    .bind(app_id)
     .bind(role)
     .bind(content)
     .execute(pool)
@@ -61,26 +61,26 @@ pub async fn append_message(
     Ok(res.last_insert_rowid())
 }
 
-/// Load all messages for a project (oldest first).
+/// Load all messages for an app (oldest first).
 pub async fn load_messages(
     pool: &SqlitePool,
-    project_id: &str,
+    app_id: &str,
 ) -> Result<Vec<(i64, String, String, String)>, String> {
     let rows = sqlx::query_as::<_, (i64, String, String, String)>(
         "SELECT id, role, content, created_at FROM chat_messages
-         WHERE project_id = ? ORDER BY id ASC",
+         WHERE app_id = ? ORDER BY id ASC",
     )
-    .bind(project_id)
+    .bind(app_id)
     .fetch_all(pool)
     .await
     .map_err(|e| format!("Failed to load messages: {}", e))?;
     Ok(rows)
 }
 
-/// Delete all messages for a project (used when a project is removed).
-pub async fn clear_messages(pool: &SqlitePool, project_id: &str) -> Result<(), String> {
-    sqlx::query("DELETE FROM chat_messages WHERE project_id = ?")
-        .bind(project_id)
+/// Delete all messages for an app (used when an app is removed).
+pub async fn clear_messages(pool: &SqlitePool, app_id: &str) -> Result<(), String> {
+    sqlx::query("DELETE FROM chat_messages WHERE app_id = ?")
+        .bind(app_id)
         .execute(pool)
         .await
         .map_err(|e| format!("Failed to clear messages: {}", e))?;
@@ -104,23 +104,23 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
 
-        let pool = open_chat_db("proj-test").await.unwrap();
-        append_message(&pool, "proj-test", "user", "hello").await.unwrap();
-        append_message(&pool, "proj-test", "assistant", "hi there").await.unwrap();
+        let pool = open_chat_db("app-test").await.unwrap();
+        append_message(&pool, "app-test", "user", "hello").await.unwrap();
+        append_message(&pool, "app-test", "assistant", "hi there").await.unwrap();
 
-        let msgs = load_messages(&pool, "proj-test").await.unwrap();
+        let msgs = load_messages(&pool, "app-test").await.unwrap();
         assert_eq!(msgs.len(), 2);
         assert_eq!(msgs[0].1, "user");
         assert_eq!(msgs[0].2, "hello");
         assert_eq!(msgs[1].1, "assistant");
         assert_eq!(msgs[1].2, "hi there");
 
-        // Isolation: other project has no messages.
-        let other = load_messages(&pool, "proj-other").await.unwrap();
+        // Isolation: other app has no messages.
+        let other = load_messages(&pool, "app-other").await.unwrap();
         assert!(other.is_empty());
 
-        clear_messages(&pool, "proj-test").await.unwrap();
-        assert!(load_messages(&pool, "proj-test").await.unwrap().is_empty());
+        clear_messages(&pool, "app-test").await.unwrap();
+        assert!(load_messages(&pool, "app-test").await.unwrap().is_empty());
 
         close(pool).await;
         std::env::remove_var("DESKSPAWN_ROOT");
@@ -134,10 +134,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
 
-        let pool = open_chat_db("proj-x").await.unwrap();
+        let pool = open_chat_db("app-x").await.unwrap();
         close(pool).await;
 
-        let db_path = workspace::project_chat_db_path("proj-x").unwrap();
+        let db_path = workspace::app_chat_db_path("app-x").unwrap();
         assert!(db_path.exists(), "chat.db must exist on disk");
 
         std::env::remove_var("DESKSPAWN_ROOT");

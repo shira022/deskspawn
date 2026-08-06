@@ -32,7 +32,7 @@ pub fn run() {
                 .map_err(|e| Box::new(std::io::Error::other(e)) as Box<dyn std::error::Error>)?;
             log::info!("Workspace path: {:?}", workspace_path);
 
-            // Ensure the full ~/deskspawn tree exists (projects/templates/config/...)
+            // Ensure the full ~/deskspawn tree exists (apps/templates/config/...)
             if let Err(e) = engine::workspace::ensure_deskspawn_tree() {
                 log::error!("Failed to ensure deskspawn tree: {}", e);
             }
@@ -140,16 +140,16 @@ pub fn run() {
             commands::harness::get_workspace_path,
             commands::harness::initialize_workspace,
             commands::harness::open_in_vscode,
-            // Project management commands (real files under ~/deskspawn/projects)
-            commands::projects::list_projects,
-            commands::projects::create_project,
-            commands::projects::delete_project,
-            commands::projects::list_project_files,
-            commands::projects::read_project_file,
-            commands::projects::write_project_file,
-            commands::projects::write_project_files,
-            commands::projects::get_chat_history,
-            commands::projects::append_chat_message,
+            // App management commands (real files under ~/deskspawn/apps)
+            commands::apps::list_apps,
+            commands::apps::create_app,
+            commands::apps::delete_app,
+            commands::apps::list_app_files,
+            commands::apps::read_app_file,
+            commands::apps::write_app_file,
+            commands::apps::write_app_files,
+            commands::apps::get_chat_history,
+            commands::apps::append_chat_message,
             // Environment check commands
             commands::env_check::check_environment,
             commands::env_check::check_winget,

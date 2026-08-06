@@ -80,7 +80,7 @@
       "regionRequired": "AWS region is required for AWS Bedrock (e.g. us-east-1)"
     },
     "apiKeyInstructions": {
-      "openai": "OpenAI API Key — starts with sk-proj- or sk- (https://platform.openai.com/api-keys)",
+      "openai": "OpenAI API Key — starts with sk-app- or sk- (https://platform.openai.com/api-keys)",
       "anthropic": "Anthropic API Key — starts with sk-ant-api03- (https://console.anthropic.com)",
       "google": "Google AI / Gemini API Key — starts with AIza (https://aistudio.google.com)",
       "amazonBedrock": "AWS Bedrock API Key — starts with bedrock-api-key- (AWS Bedrock Console)",
@@ -182,7 +182,7 @@
     "editing": "Editing...",
     "goToCheckpoint": "Go to this checkpoint",
     "emptyStatePrompt": "Tell me what you want to build, like \"Make it a task management app\" or \"Add dark mode\".",
-    "emptyStateNoProject": "Create a project from \"New App\" in the toolbar, then start building via chat.",
+    "emptyStateNoApp": "Create an app from \"New App\" in the toolbar, then start building via chat.",
     "suggestion": {
       "calendarApp": "Create a calendar app",
       "todoApp": "Create a Todo app",
@@ -201,7 +201,7 @@
     "totalTokensAndCost": "Total tokens and estimated cost",
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI is not configured. Please configure it from the \"{{notConfiguredLabel}}\" button in the toolbar.",
-      "noProjectSelected": "⚠️ No project is selected. Create a project from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
+      "noAppSelected": "⚠️ No app is selected. Create an app from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
       "apiKeyRequiredDetailed": "⚠️ {{provider}} requires an API key.\nConfigure it from \"{{modelLabel}}\" → \"API Key Settings\" in the toolbar.",
       "emptyResponse": "⚠️ AI returned an empty response. Please check your model settings and try again.\n\nProvider: {{provider}}\nModel: {{model}}\n\nClick the model name in the toolbar to check settings.",
       "invalidApiKey": "The API key is invalid or not configured. Check it from \"API Key Settings\" in the toolbar.",
@@ -243,12 +243,12 @@
     "verifier": "Error Check & Fix",
     "visual_qa": "Visual Review"
   },
-  "project": {
-    "label": "Project",
-    "noneSelected": "No project selected",
+  "app": {
+    "label": "App",
+    "noneSelected": "No app selected",
     "newApp": "New App",
-    "switching": "Switching project...",
-    "switchingDesc": "You can start chatting once the new project is ready.",
+    "switching": "Switching app...",
+    "switchingDesc": "You can start chatting once the new app is ready.",
     "preparingNewApp": "Preparing a new app",
     "preparingWithName": "Expanding the \"{{appName}}\" template and<br />starting the dev server",
     "preparingGeneric": "Expanding template and starting the dev server",
@@ -265,7 +265,7 @@
     "createFirst": "Create your first app",
     "export": "Export",
     "delete": "Delete",
-    "deleteDisabledActive": "Cannot delete the currently open project. Switch to another project first.",
+    "deleteDisabledActive": "Cannot delete the currently open app. Switch to another app first.",
     "deleteError": "Delete failed",
     "exportError": "Export failed",
     "deleteTitle": "Delete App",
@@ -311,7 +311,7 @@
     "demo": {
       "userMessage": "Create a task management app",
       "assistantMessage": "Got it! I'll create the following files...",
-      "creatingFiles": "Creating project files..."
+      "creatingFiles": "Creating app files..."
     },
     "features": {
       "title": "Features",
@@ -353,7 +353,7 @@
   "auth": {},
   "preview": {
     "title": "Preview",
-    "selectProject": "Select or create a project to preview",
+    "selectApp": "Select or create an app to preview",
     "loading": "Preparing preview...",
     "rendering": "Rendering preview...",
     "loadingApp": "Loading app...",

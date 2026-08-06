@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ─── Mock JSZip ──────────────────────────────────────────────────────────────
-// JSZip is used with `new JSZip()` in project-export.ts and also as
+// JSZip is used with `new JSZip()` in app-export.ts and also as
 // `JSZip.loadAsync()`. The factory stores a ref to the loadAsync mock
 // on a shared object so tests can configure it.
 //
@@ -46,15 +46,15 @@ vi.mock("jszip", () => {
 // ─── Mock storage-opfs ───────────────────────────────────────────────────────
 
 vi.mock("@/lib/storage-opfs", () => ({
-  listProjectFiles: vi.fn(),
-  readProjectFile: vi.fn(),
-  writeProjectFiles: vi.fn(),
+  listAppFiles: vi.fn(),
+  readAppFile: vi.fn(),
+  writeAppFiles: vi.fn(),
 }));
 
 // ─── Mock storage ────────────────────────────────────────────────────────────
 
 vi.mock("@/lib/storage", () => ({
-  getProject: vi.fn(),
+  getApp: vi.fn(),
 }));
 
 // ─── Import mocks for use in tests ───────────────────────────────────────────
@@ -62,7 +62,7 @@ vi.mock("@/lib/storage", () => ({
 import * as storageOpfs from "@/lib/storage-opfs";
 import * as storage from "@/lib/storage";
 
-describe("exportProjectAsZip", () => {
+describe("exportAppAsZip", () => {
   const mockAnchor = {
     href: "",
     download: "",
@@ -71,9 +71,9 @@ describe("exportProjectAsZip", () => {
   let setTimeoutSpy: ReturnType<typeof vi.spyOn>;
 
   beforeEach(() => {
-    vi.mocked(storageOpfs.listProjectFiles).mockReset();
-    vi.mocked(storageOpfs.readProjectFile).mockReset();
-    vi.mocked(storage.getProject).mockReset();
+    vi.mocked(storageOpfs.listAppFiles).mockReset();
+    vi.mocked(storageOpfs.readAppFile).mockReset();
+    vi.mocked(storage.getApp).mockReset();
 
     vi.stubGlobal("document", {
       createElement: vi.fn(() => mockAnchor),
@@ -99,89 +99,89 @@ describe("exportProjectAsZip", () => {
     setTimeoutSpy.mockRestore();
   });
 
-  it("reads project, creates zip, and triggers download", async () => {
-    const projectId = "proj-123";
-    const projectName = "My Project";
+  it("reads app, creates zip, and triggers download", async () => {
+    const appId = "app-123";
+    const appName = "My App";
 
-    vi.mocked(storage.getProject).mockResolvedValue({
-      id: projectId,
-      name: projectName,
+    vi.mocked(storage.getApp).mockResolvedValue({
+      id: appId,
+      name: appName,
       createdAt: "2024-01-01T00:00:00Z",
       updatedAt: "2024-01-02T00:00:00Z",
     });
-    vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+    vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
       { path: "src/index.html", size: 100, lastModified: "2024-01-01", isDirectory: false },
       { path: "src/app.ts", size: 200, lastModified: "2024-01-01", isDirectory: false },
     ]);
-    vi.mocked(storageOpfs.readProjectFile).mockImplementation(async (_pid: string, path: string) => {
+    vi.mocked(storageOpfs.readAppFile).mockImplementation(async (_pid: string, path: string) => {
       if (path === "src/index.html") return "<h1>Hello</h1>";
       if (path === "src/app.ts") return "console.log('hi')";
       return null;
     });
 
-    const { exportProjectAsZip } = await import("./project-export");
-    await exportProjectAsZip(projectId, projectName);
+    const { exportAppAsZip } = await import("./app-export");
+    await exportAppAsZip(appId, appName);
 
     expect(mockState.filePaths).toContain("deskspawn.json");
     expect(mockState.filePaths).toContain("src/index.html");
     expect(mockState.filePaths).toContain("src/app.ts");
     expect((mockZipInstance as any).generateAsync).toHaveBeenCalledWith({ type: "blob" });
     expect(mockAnchor.click).toHaveBeenCalled();
-    expect(mockAnchor.download).toBe("My_Project.deskspawn.zip");
+    expect(mockAnchor.download).toBe("My_App.deskspawn.zip");
     expect(URL.revokeObjectURL).toHaveBeenCalledWith("blob:mock-download-url");
   });
 
-  it("uses project name from storage when available", async () => {
-    const projectId = "proj-456";
-    vi.mocked(storage.getProject).mockResolvedValue({
-      id: projectId,
-      name: "Stored Project Name",
+  it("uses app name from storage when available", async () => {
+    const appId = "app-456";
+    vi.mocked(storage.getApp).mockResolvedValue({
+      id: appId,
+      name: "Stored App Name",
       createdAt: "2024-01-01T00:00:00Z",
       updatedAt: "2024-01-02T00:00:00Z",
     });
-    vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+    vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
       { path: "src/main.ts", size: 50, lastModified: "2024-01-01", isDirectory: false },
     ]);
-    vi.mocked(storageOpfs.readProjectFile).mockResolvedValue("content");
+    vi.mocked(storageOpfs.readAppFile).mockResolvedValue("content");
 
-    const { exportProjectAsZip } = await import("./project-export");
-    await exportProjectAsZip(projectId, "Fallback Name");
+    const { exportAppAsZip } = await import("./app-export");
+    await exportAppAsZip(appId, "Fallback Name");
 
-    // Filename is always based on the projectName parameter, not metadata
+    // Filename is always based on the appName parameter, not metadata
     expect(mockAnchor.download).toBe("Fallback_Name.deskspawn.zip");
     // Storage name is used in metadata inside the zip
     expect(mockState.filePaths).toContain("deskspawn.json");
   });
 
   it("throws when no source files are found", async () => {
-    const projectId = "proj-empty";
-    vi.mocked(storage.getProject).mockResolvedValue(null);
-    vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([]);
+    const appId = "app-empty";
+    vi.mocked(storage.getApp).mockResolvedValue(null);
+    vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([]);
 
-    const { exportProjectAsZip } = await import("./project-export");
-    await expect(exportProjectAsZip(projectId, "Empty")).rejects.toThrow(
+    const { exportAppAsZip } = await import("./app-export");
+    await expect(exportAppAsZip(appId, "Empty")).rejects.toThrow(
       "No source files found to export",
     );
   });
 
   it("skips excluded patterns (node_modules, .git, dist, etc.)", async () => {
-    const projectId = "proj-excluded";
-    vi.mocked(storage.getProject).mockResolvedValue(null);
-    vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+    const appId = "app-excluded";
+    vi.mocked(storage.getApp).mockResolvedValue(null);
+    vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
       { path: "src/index.html", size: 100, lastModified: "2024-01-01", isDirectory: false },
       { path: "node_modules/express/index.js", size: 5000, lastModified: "2024-01-01", isDirectory: false },
       { path: ".git/config", size: 200, lastModified: "2024-01-01", isDirectory: false },
       { path: "dist/bundle.js", size: 1000, lastModified: "2024-01-01", isDirectory: false },
       { path: ".deskspawn/settings.json", size: 50, lastModified: "2024-01-01", isDirectory: false },
     ]);
-    vi.mocked(storageOpfs.readProjectFile).mockImplementation(async (_pid: string, path: string) => {
+    vi.mocked(storageOpfs.readAppFile).mockImplementation(async (_pid: string, path: string) => {
       if (path === "src/index.html") return "<h1>Hello</h1>";
       if (path === "node_modules/express/index.js") return "// express";
       return "ignored";
     });
 
-    const { exportProjectAsZip } = await import("./project-export");
-    await exportProjectAsZip(projectId, "Excluded");
+    const { exportAppAsZip } = await import("./app-export");
+    await exportAppAsZip(appId, "Excluded");
 
     expect(mockState.filePaths).toContain("src/index.html");
     expect(mockState.filePaths).not.toContain("node_modules/express/index.js");
@@ -191,25 +191,25 @@ describe("exportProjectAsZip", () => {
   });
 
   it("skips directories", async () => {
-    const projectId = "proj-dirs";
-    vi.mocked(storage.getProject).mockResolvedValue(null);
-    vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+    const appId = "app-dirs";
+    vi.mocked(storage.getApp).mockResolvedValue(null);
+    vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
       { path: "src", size: 0, lastModified: "2024-01-01", isDirectory: true },
       { path: "src/main.ts", size: 100, lastModified: "2024-01-01", isDirectory: false },
     ]);
-    vi.mocked(storageOpfs.readProjectFile).mockResolvedValue("content");
+    vi.mocked(storageOpfs.readAppFile).mockResolvedValue("content");
 
-    const { exportProjectAsZip } = await import("./project-export");
-    await exportProjectAsZip(projectId, "Dirs");
+    const { exportAppAsZip } = await import("./app-export");
+    await exportAppAsZip(appId, "Dirs");
 
     expect(mockState.filePaths).not.toContain("src");
     expect(mockState.filePaths).toContain("src/main.ts");
   });
 });
 
-describe("importProjectFromZip", () => {
+describe("importAppFromZip", () => {
   beforeEach(() => {
-    vi.mocked(storageOpfs.writeProjectFiles).mockReset().mockResolvedValue(undefined);
+    vi.mocked(storageOpfs.writeAppFiles).mockReset().mockResolvedValue(undefined);
     mockState.loadAsync.mockReset();
   });
 
@@ -225,7 +225,7 @@ describe("importProjectFromZip", () => {
   }
 
   it("reads zip metadata and writes files to OPFS", async () => {
-    const newProjectId = "new-proj-abc";
+    const newAppId = "new-app-abc";
     const file = createMockFile("MyApp.deskspawn.zip");
 
     const mockZipLoaded = {
@@ -252,22 +252,22 @@ describe("importProjectFromZip", () => {
 
     mockState.loadAsync.mockResolvedValue(mockZipLoaded);
 
-    const { importProjectFromZip } = await import("./project-export");
-    const result = await importProjectFromZip(file, newProjectId);
+    const { importAppFromZip } = await import("./app-export");
+    const result = await importAppFromZip(file, newAppId);
 
-    expect(result.projectId).toBe(newProjectId);
-    expect(result.projectName).toBe("MyApp");
+    expect(result.appId).toBe(newAppId);
+    expect(result.appName).toBe("MyApp");
     expect(result.filesImported).toBe(2);
 
-    expect(storageOpfs.writeProjectFiles).toHaveBeenCalledWith(newProjectId, [
+    expect(storageOpfs.writeAppFiles).toHaveBeenCalledWith(newAppId, [
       { path: "src/index.html", content: "file content" },
       { path: "src/style.css", content: "file content" },
     ]);
   });
 
   it("uses filename-derived name when deskspawn.json is missing", async () => {
-    const newProjectId = "new-proj-xyz";
-    const file = createMockFile("MyProject.deskspawn.zip");
+    const newAppId = "new-app-xyz";
+    const file = createMockFile("MyApp.deskspawn.zip");
 
     const mockZipLoaded = {
       file: vi.fn(() => null),
@@ -280,15 +280,15 @@ describe("importProjectFromZip", () => {
 
     mockState.loadAsync.mockResolvedValue(mockZipLoaded);
 
-    const { importProjectFromZip } = await import("./project-export");
-    const result = await importProjectFromZip(file, newProjectId);
+    const { importAppFromZip } = await import("./app-export");
+    const result = await importAppFromZip(file, newAppId);
 
-    expect(result.projectName).toBe("MyProject");
+    expect(result.appName).toBe("MyApp");
     expect(result.filesImported).toBe(1);
   });
 
   it("throws when no source files are in the archive", async () => {
-    const newProjectId = "new-empty";
+    const newAppId = "new-empty";
     const file = createMockFile("Empty.deskspawn.zip");
 
     const mockZipLoaded = {
@@ -298,14 +298,14 @@ describe("importProjectFromZip", () => {
 
     mockState.loadAsync.mockResolvedValue(mockZipLoaded);
 
-    const { importProjectFromZip } = await import("./project-export");
-    await expect(importProjectFromZip(file, newProjectId)).rejects.toThrow(
+    const { importAppFromZip } = await import("./app-export");
+    await expect(importAppFromZip(file, newAppId)).rejects.toThrow(
       "No source files found in the archive",
     );
   });
 
   it("skips deskspawn.json and excluded patterns during import", async () => {
-    const newProjectId = "new-skip";
+    const newAppId = "new-skip";
     const file = createMockFile("SkipTest.deskspawn.zip");
 
     const mockZipLoaded = {
@@ -331,11 +331,11 @@ describe("importProjectFromZip", () => {
 
     mockState.loadAsync.mockResolvedValue(mockZipLoaded);
 
-    const { importProjectFromZip } = await import("./project-export");
-    const result = await importProjectFromZip(file, newProjectId);
+    const { importAppFromZip } = await import("./app-export");
+    const result = await importAppFromZip(file, newAppId);
 
     expect(result.filesImported).toBe(1);
-    expect(storageOpfs.writeProjectFiles).toHaveBeenCalledWith(newProjectId, [
+    expect(storageOpfs.writeAppFiles).toHaveBeenCalledWith(newAppId, [
       { path: "src/app.ts", content: "console.log('app')" },
     ]);
   });

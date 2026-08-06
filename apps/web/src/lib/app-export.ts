@@ -1,17 +1,17 @@
 /**
- * Project export/import — zip-based backup and restore.
+ * App export/import — zip-based backup and restore.
  *
- * Exports all project source files from OPFS into a downloadable .zip file,
+ * Exports all app source files from OPFS into a downloadable .zip file,
  * and imports a .zip file back into OPFS + IndexedDB.
  */
 
 import JSZip from "jszip";
 import {
-  listProjectFiles,
-  readProjectFile,
-  writeProjectFiles,
+  listAppFiles,
+  readAppFile,
+  writeAppFiles,
 } from "@/lib/storage-opfs";
-import { getProject } from "@/lib/storage";
+import { getApp } from "@/lib/storage";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -35,29 +35,29 @@ const EXCLUDED_PATTERNS = [
 // ── Export ─────────────────────────────────────────────────────────────────────
 
 /**
- * Export a project as a .zip file and trigger a browser download.
+ * Export an app as a .zip file and trigger a browser download.
  *
- * @param projectId - The project ID to export.
- * @param projectName - Human-readable name for the filename and metadata.
+ * @param appId - The app ID to export.
+ * @param appName - Human-readable name for the filename and metadata.
  * @returns The blob URL for the generated zip, or null on failure.
  */
-export async function exportProjectAsZip(
-  projectId: string,
-  projectName: string,
+export async function exportAppAsZip(
+  appId: string,
+  appName: string,
 ): Promise<void> {
   const zip = new JSZip();
 
-  // 1. Read project metadata from IndexedDB
-  const project = await getProject(projectId);
+  // 1. Read app metadata from IndexedDB
+  const app = await getApp(appId);
   const meta: ExportMetadata = {
-    name: project?.name ?? projectName,
+    name: app?.name ?? appName,
     version: EXPORT_VERSION,
     exportedAt: new Date().toISOString(),
   };
   zip.file("deskspawn.json", JSON.stringify(meta, null, 2));
 
   // 2. Read all source files from OPFS and add to zip
-  const files = await listProjectFiles(projectId);
+  const files = await listAppFiles(appId);
   let fileCount = 0;
 
   for (const file of files) {
@@ -66,7 +66,7 @@ export async function exportProjectAsZip(
     // Skip excluded patterns
     if (EXCLUDED_PATTERNS.some((p) => p.test(file.path))) continue;
 
-    const content = await readProjectFile(projectId, file.path);
+    const content = await readAppFile(appId, file.path);
     if (content !== null) {
       zip.file(file.path, content);
       fileCount++;
@@ -79,7 +79,7 @@ export async function exportProjectAsZip(
 
   // 3. Generate zip blob and trigger download
   const blob = await zip.generateAsync({ type: "blob" });
-  const safeName = projectName.replace(/[^a-zA-Z0-9_\-]/g, "_");
+  const safeName = appName.replace(/[^a-zA-Z0-9_\-]/g, "_");
   const filename = `${safeName}.deskspawn.zip`;
 
   triggerDownload(blob, filename);
@@ -103,31 +103,31 @@ function triggerDownload(blob: Blob, filename: string): void {
 // ── Import ─────────────────────────────────────────────────────────────────────
 
 export interface ImportResult {
-  projectId: string;
-  projectName: string;
+  appId: string;
+  appName: string;
   filesImported: number;
 }
 
 /**
- * Import a project from a .zip file.
+ * Import an app from a .zip file.
  *
  * Parses the zip, reads metadata, writes all source files to OPFS,
- * and registers the project in IndexedDB.
+ * and registers the app in IndexedDB.
  *
  * @param file - The .zip file to import (from a file input).
- * @param newProjectId - A freshly generated UUID for this project.
- * @returns ImportResult with the new project ID and name.
+ * @param newAppId - A freshly generated UUID for this app.
+ * @returns ImportResult with the new app ID and name.
  */
-export async function importProjectFromZip(
+export async function importAppFromZip(
   file: File,
-  newProjectId: string,
+  newAppId: string,
 ): Promise<ImportResult> {
   const arrayBuffer = await file.arrayBuffer();
   const zip = await JSZip.loadAsync(arrayBuffer);
 
   // 1. Read metadata
   const metaFile = zip.file("deskspawn.json");
-  let projectName = file.name
+  let appName = file.name
     .replace(/\.deskspawn\.zip$/i, "")
     .replace(/\.zip$/i, "")
     .trim();
@@ -135,7 +135,7 @@ export async function importProjectFromZip(
     try {
       const metaText = await metaFile.async("string");
       const meta: ExportMetadata = JSON.parse(metaText);
-      if (meta.name) projectName = meta.name;
+      if (meta.name) appName = meta.name;
     } catch {
       // Use filename-derived name as fallback
     }
@@ -161,11 +161,11 @@ export async function importProjectFromZip(
   }
 
   // 3. Write all files to OPFS
-  await writeProjectFiles(newProjectId, entries);
+  await writeAppFiles(newAppId, entries);
 
   return {
-    projectId: newProjectId,
-    projectName,
+    appId: newAppId,
+    appName,
     filesImported: entries.length,
   };
 }

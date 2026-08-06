@@ -2,7 +2,7 @@
  * Tests for the desktop storage adapter (storage-desktop.ts).
  *
  * The adapter wraps Rust IPC; here we mock @tauri-apps/api/core's invoke and
- * verify the mapping / fallback logic (project meta snake_case → camelCase,
+ * verify the mapping / fallback logic (app meta snake_case → camelCase,
  * missing-file → null, batch reads).
  */
 
@@ -19,15 +19,15 @@ const windowShim = {} as { __DESKSPAWN_DESKTOP__?: boolean };
 (globalThis as unknown as { window?: unknown }).window = windowShim;
 
 import {
-  listProjectsDesktop,
-  getProjectDesktop,
-  saveProjectDesktop,
-  deleteProjectDesktop,
-  listProjectFilesDesktop,
-  readProjectFileDesktop,
-  readProjectFilesDesktop,
-  writeProjectFileDesktop,
-  writeProjectFilesDesktop,
+  listAppsDesktop,
+  getAppDesktop,
+  saveAppDesktop,
+  deleteAppDesktop,
+  listAppFilesDesktop,
+  readAppFileDesktop,
+  readAppFilesDesktop,
+  writeAppFileDesktop,
+  writeAppFilesDesktop,
   isDesktopStorageActive,
 } from "./storage-desktop";
 
@@ -38,114 +38,114 @@ beforeEach(() => {
 });
 
 describe("storage-desktop", () => {
-  it("maps Rust ProjectMeta (snake_case) to StoredProject (camelCase)", async () => {
+  it("maps Rust AppMeta (snake_case) to StoredApp (camelCase)", async () => {
     invokeMock.mockResolvedValue([
       {
-        id: "proj-1",
+        id: "app-1",
         name: "My App",
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-02T00:00:00Z",
       },
     ]);
-    const projects = await listProjectsDesktop();
-    expect(projects).toEqual([
+    const apps = await listAppsDesktop();
+    expect(apps).toEqual([
       {
-        id: "proj-1",
+        id: "app-1",
         name: "My App",
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T00:00:00Z",
       },
     ]);
-    expect(invokeMock).toHaveBeenCalledWith("list_projects", undefined);
+    expect(invokeMock).toHaveBeenCalledWith("list_apps", undefined);
   });
 
-  it("getProjectDesktop finds by id", async () => {
+  it("getAppDesktop finds by id", async () => {
     invokeMock.mockResolvedValue([
       { id: "a", name: "A", created_at: "t", updated_at: "t" },
       { id: "b", name: "B", created_at: "t", updated_at: "t" },
     ]);
-    const b = await getProjectDesktop("b");
+    const b = await getAppDesktop("b");
     expect(b?.id).toBe("b");
     expect(b?.name).toBe("B");
 
-    const missing = await getProjectDesktop("zzz");
+    const missing = await getAppDesktop("zzz");
     expect(missing).toBeNull();
   });
 
-  it("saveProjectDesktop returns the backend-assigned id", async () => {
-    // First call: list_projects → empty (missing)
+  it("saveAppDesktop returns the backend-assigned id", async () => {
+    // First call: list_apps → empty (missing)
     invokeMock.mockResolvedValueOnce([]);
-    // Second call: create_project → returns created meta with backend id
+    // Second call: create_app → returns created meta with backend id
     invokeMock.mockResolvedValueOnce({
-      id: "proj-backend-1",
+      id: "app-backend-1",
       name: "New App",
       created_at: "t",
       updated_at: "t",
     });
 
-    const id = await saveProjectDesktop({ id: "caller-id", name: "New App", createdAt: "t", updatedAt: "t" });
+    const id = await saveAppDesktop({ id: "caller-id", name: "New App", createdAt: "t", updatedAt: "t" });
 
-    expect(id).toBe("proj-backend-1");
-    expect(invokeMock).toHaveBeenNthCalledWith(1, "list_projects", undefined);
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "create_project", { name: "New App" });
+    expect(id).toBe("app-backend-1");
+    expect(invokeMock).toHaveBeenNthCalledWith(1, "list_apps", undefined);
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "create_app", { name: "New App" });
   });
 
-  it("saveProjectDesktop returns existing project id without creating", async () => {
+  it("saveAppDesktop returns existing app id without creating", async () => {
     invokeMock.mockResolvedValueOnce([
-      { id: "proj-exists", name: "Existing", created_at: "t", updated_at: "t" },
+      { id: "app-exists", name: "Existing", created_at: "t", updated_at: "t" },
     ]);
-    const id = await saveProjectDesktop({ id: "proj-exists", name: "Existing", createdAt: "t", updatedAt: "t" });
-    expect(id).toBe("proj-exists");
+    const id = await saveAppDesktop({ id: "app-exists", name: "Existing", createdAt: "t", updatedAt: "t" });
+    expect(id).toBe("app-exists");
     expect(invokeMock).toHaveBeenCalledTimes(1);
   });
 
-  it("deleteProjectDesktop invokes Rust delete", async () => {
+  it("deleteAppDesktop invokes Rust delete", async () => {
     invokeMock.mockResolvedValue(undefined);
-    await deleteProjectDesktop("proj-1");
-    expect(invokeMock).toHaveBeenCalledWith("delete_project", { projectId: "proj-1" });
+    await deleteAppDesktop("app-1");
+    expect(invokeMock).toHaveBeenCalledWith("delete_app", { appId: "app-1" });
   });
 
-  it("listProjectFilesDesktop returns relative paths", async () => {
+  it("listAppFilesDesktop returns relative paths", async () => {
     invokeMock.mockResolvedValue(["package.json", "src/App.tsx"]);
-    const files = await listProjectFilesDesktop("proj-1");
+    const files = await listAppFilesDesktop("app-1");
     expect(files).toEqual(["package.json", "src/App.tsx"]);
-    expect(invokeMock).toHaveBeenCalledWith("list_project_files", { projectId: "proj-1" });
+    expect(invokeMock).toHaveBeenCalledWith("list_app_files", { appId: "app-1" });
   });
 
-  it("readProjectFileDesktop returns null on missing file", async () => {
+  it("readAppFileDesktop returns null on missing file", async () => {
     invokeMock.mockRejectedValue(new Error("File not found"));
-    const content = await readProjectFileDesktop("proj-1", "nope.ts");
+    const content = await readAppFileDesktop("app-1", "nope.ts");
     expect(content).toBeNull();
   });
 
-  it("readProjectFilesDesktop batch reads with nulls for missing", async () => {
+  it("readAppFilesDesktop batch reads with nulls for missing", async () => {
     invokeMock.mockImplementation(async (_cmd: string, args: { path: string }) => {
       if (args.path === "exists.ts") return "hello";
       throw new Error("File not found");
     });
-    const result = await readProjectFilesDesktop("proj-1", ["exists.ts", "missing.ts"]);
+    const result = await readAppFilesDesktop("app-1", ["exists.ts", "missing.ts"]);
     expect(result).toEqual({ "exists.ts": "hello", "missing.ts": null });
   });
 
-  it("writeProjectFileDesktop passes through", async () => {
+  it("writeAppFileDesktop passes through", async () => {
     invokeMock.mockResolvedValue(undefined);
-    await writeProjectFileDesktop("proj-1", "src/a.ts", "code");
-    expect(invokeMock).toHaveBeenCalledWith("write_project_file", {
-      projectId: "proj-1",
+    await writeAppFileDesktop("app-1", "src/a.ts", "code");
+    expect(invokeMock).toHaveBeenCalledWith("write_app_file", {
+      appId: "app-1",
       path: "src/a.ts",
       content: "code",
     });
   });
 
-  it("writeProjectFilesDesktop converts record to entries array", async () => {
+  it("writeAppFilesDesktop converts record to entries array", async () => {
     invokeMock.mockResolvedValue(2);
-    const n = await writeProjectFilesDesktop("proj-1", {
+    const n = await writeAppFilesDesktop("app-1", {
       "a.ts": "1",
       "b.ts": "2",
     });
     expect(n).toBe(2);
-    expect(invokeMock).toHaveBeenCalledWith("write_project_files", {
-      projectId: "proj-1",
+    expect(invokeMock).toHaveBeenCalledWith("write_app_files", {
+      appId: "app-1",
       files: [
         ["a.ts", "1"],
         ["b.ts", "2"],
@@ -165,30 +165,30 @@ describe("storage-desktop", () => {
       { id: 2, role: "assistant", content: "hi", created_at: "2026-08-05T00:00:01Z" },
     ]);
     const { getChatHistoryDesktop } = await import("./storage-desktop");
-    const history = await getChatHistoryDesktop("proj-1");
+    const history = await getChatHistoryDesktop("app-1");
     expect(history).toEqual([
       { role: "user", content: "hello" },
       { role: "assistant", content: "hi" },
     ]);
-    expect(invokeMock).toHaveBeenCalledWith("get_chat_history", { projectId: "proj-1" });
+    expect(invokeMock).toHaveBeenCalledWith("get_chat_history", { appId: "app-1" });
   });
 
   it("getChatHistoryDesktop returns [] on failure", async () => {
     invokeMock.mockRejectedValue(new Error("db closed"));
     const { getChatHistoryDesktop } = await import("./storage-desktop");
-    const history = await getChatHistoryDesktop("proj-1");
+    const history = await getChatHistoryDesktop("app-1");
     expect(history).toEqual([]);
   });
 
   it("saveChatHistoryDesktop appends only the last message", async () => {
     invokeMock.mockResolvedValue(42);
     const { saveChatHistoryDesktop } = await import("./storage-desktop");
-    await saveChatHistoryDesktop("proj-1", [
+    await saveChatHistoryDesktop("app-1", [
       { role: "user", content: "old" },
       { role: "assistant", content: "new" },
     ]);
     expect(invokeMock).toHaveBeenCalledWith("append_chat_message", {
-      projectId: "proj-1",
+      appId: "app-1",
       role: "assistant",
       content: "new",
     });

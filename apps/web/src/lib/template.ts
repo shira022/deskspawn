@@ -3,9 +3,9 @@ import type { LanguageCode } from "./languages";
 import { templateLocale, type TemplateLocale } from "./template-locale";
 
 // ============================================================
-// Default Project Template (React + Vite + Tailwind CSS v4)
+// Default App Template (React + Vite + Tailwind CSS v4)
 //
-// Copied into every new project created in the browser version.
+// Copied into every new app created in the browser version.
 // The language parameter selects locale-aware file content.
 // ============================================================
 
@@ -152,7 +152,7 @@ export default defineConfig({
 /**
  * Desktop vite.config.ts — full-stack generated app (ADR-010).
  * API proxy: /api → Hono backend (default 4174, auto-fallback +10).
- * The actual backend port is patched by DeskSpawn at project creation.
+ * The actual backend port is patched by DeskSpawn at app creation.
  */
 function getViteConfigDesktop(apiPort: number): string {
   return `import path from "path";
@@ -347,7 +347,7 @@ const STORAGE_TS = `// =========================================================
 //
 // ============================================================
 
-import { PROJECT_ID } from './project-id';
+import { APP_ID } from './app-id';
 
 export interface StorageAdapter {
   getAll<T extends { id: string }>(collection: string): Promise<T[]>;
@@ -367,7 +367,7 @@ export function getStorage(): StorageAdapter {
   if (!_initPromise) {
     _initPromise = (async () => {
       const { IndexedDBAdapter } = await import('./storage-idb');
-      _instance = await IndexedDBAdapter.create(PROJECT_ID);
+      _instance = await IndexedDBAdapter.create(APP_ID);
       return _instance!;
     })();
   }
@@ -379,7 +379,7 @@ export async function initStorage(): Promise<StorageAdapter> {
   if (_instance) return _instance;
   if (!_initPromise) {
     const { IndexedDBAdapter } = await import('./storage-idb');
-    _instance = await IndexedDBAdapter.create(PROJECT_ID);
+    _instance = await IndexedDBAdapter.create(APP_ID);
   } else {
     _instance = await _initPromise;
   }
@@ -529,14 +529,14 @@ async function ensureCollectionInternal(db: IDBDatabase, collection: string): Pr
 }
 `;
 
-const PROJECT_ID_TS_PREFIX = `// ============================================================
-// Project ID \\u2014 injected by DeskSpawn at project creation time.
-// DO NOT MODIFY: Uniquely identifies this project's IndexedDB.
+const APP_ID_TS_PREFIX = `// ============================================================
+// App ID \\u2014 injected by DeskSpawn at app creation time.
+// DO NOT MODIFY: Uniquely identifies this app's IndexedDB.
 // ============================================================
 
-export const PROJECT_ID = "`;
+export const APP_ID = "`;
 
-const PROJECT_ID_TS_SUFFIX = `";
+const APP_ID_TS_SUFFIX = `";
 `;
 
 const MAIN_TSX = `import React from 'react';
@@ -644,7 +644,7 @@ function getAppTsx(locale: TemplateLocale): string {
 //  DeskSpawn Generated App \u2014 Root Component
 // ============================================================
 //
-//  \uD83D\uDCC1 Project Structure:
+//  \uD83D\uDCC1 App Structure:
 //
 //    src/
 //      types/          \u2192 TypeScript type definitions
@@ -804,7 +804,7 @@ function getTypesIndex(locale: TemplateLocale): string {
 export const DESKTOP_API_PORT = 4174;
 
 /**
- * Returns the default project template files with content localized
+ * Returns the default app template files with content localized
  * for the given language.
  *
  * @param language - Language code (e.g. "ja", "en"). Falls back to "ja".
@@ -833,7 +833,7 @@ export function getTemplateFiles(
     { path: "src/vite-env.d.ts", content: VITE_ENV_DTS },
     { path: "src/lib/storage.ts", content: STORAGE_TS },
     { path: "src/lib/storage-idb.ts", content: STORAGE_IDB_TS },
-    { path: "src/lib/project-id.ts", content: PROJECT_ID_TS_PREFIX + "__DESKSPAWN_PROJECT_ID__" + PROJECT_ID_TS_SUFFIX },
+    { path: "src/lib/app-id.ts", content: APP_ID_TS_PREFIX + "__DESKSPAWN_APP_ID__" + APP_ID_TS_SUFFIX },
     { path: "src/main.tsx", content: MAIN_TSX },
     { path: "src/index.css", content: INDEX_CSS },
     { path: "src/App.tsx", content: getAppTsx(locale) },

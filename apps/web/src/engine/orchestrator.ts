@@ -236,7 +236,7 @@ export async function runPhase(
         roundMessages.push({
           role: "user" as const,
           content:
-            "[Auto-continuation] The previous code generation reached the step limit, so the next round has started. Review the current project state and continue with unfinished implementation.",
+            "[Auto-continuation] The previous code generation reached the step limit, so the next round has started. Review the current app state and continue with unfinished implementation.",
         });
         continue;
       }
@@ -310,7 +310,7 @@ async function triageRequest(
 
 Respond with one of:
 - "single" + reason: For simple changes (fix one file, add one component, minor style change, single feature addition)
-- "multi" + reason: For complex requests (multi-file changes, new features with planning, new project creation, refactoring)
+- "multi" + reason: For complex requests (multi-file changes, new features with planning, new app creation, refactoring)
 
 Only respond with "mode: single" or "mode: multi" followed by a brief reason.`;
 

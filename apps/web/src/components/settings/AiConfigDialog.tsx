@@ -28,7 +28,7 @@ interface AiConfigDialogProps {
 const providerNeedsApiKey = (p: ProviderKind) => p !== "ollama";
 
 const apiKeyPlaceholder: Record<ProviderKind, string> = {
-  openai: "sk-proj-...",
+  openai: "sk-app-...",
   anthropic: "sk-ant-api03-...",
   google: "AIzaSy...",
   "amazon-bedrock": "bedrock-api-key-...",

@@ -4,8 +4,8 @@ import { useAppStore } from "@/store/useAppStore";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { PreviewPanel } from "@/components/preview/PreviewPanel";
 import { FileTreePanel } from "@/components/file-tree/FileTreePanel";
-import { NewAppDialog } from "@/components/project/NewAppDialog";
-import { ProjectSwitcher } from "@/components/project/ProjectSwitcher";
+import { NewAppDialog } from "@/components/app/NewAppDialog";
+import { AppSwitcher } from "@/components/app/AppSwitcher";
 import { StatusBar } from "@/components/layout/StatusBar";
 import {
   ResizablePanelGroup,
@@ -67,9 +67,9 @@ export function MainLayout() {
     aiConfig,
     setAiConfig,
     initialized,
-    currentProjectId,
-    projects,
-    projectSwitching,
+    currentAppId,
+    apps,
+    appSwitching,
     appLoading,
     previewMaximized,
     workspaceReady,
@@ -93,11 +93,11 @@ export function MainLayout() {
     "3-pane": t('layout.threePane'),
   };
 
-  const currentAppName = currentProjectId
-    ? projects.find((p) => p.id === currentProjectId)?.name
+  const currentAppName = currentAppId
+    ? apps.find((p) => p.id === currentAppId)?.name
     : null;
   const [showModelSettings, setShowModelSettings] = useState(false);
-  const [showProjectSwitcher, setShowProjectSwitcher] = useState(false);
+  const [showAppSwitcher, setShowAppSwitcher] = useState(false);
   const [showNewApp, setShowNewApp] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [showAiConfig, setShowAiConfig] = useState(false);
@@ -201,30 +201,30 @@ export function MainLayout() {
 
           <Separator orientation="vertical" className="h-4" />
 
-          {/* Project selector */}
+          {/* App selector */}
           <div className="relative">
             <Button
               variant="ghost"
               size="sm"
               className="h-7 gap-1 px-2"
-              onClick={() => setShowProjectSwitcher(!showProjectSwitcher)}
+              onClick={() => setShowAppSwitcher(!showAppSwitcher)}
             >
               <FolderKanban className="h-3.5 w-3.5 text-muted-foreground" />
               <span className="text-xs max-w-[100px] truncate">
-                {currentProjectId
-                  ? projects.find((p) => p.id === currentProjectId)?.name || t('project.label')
-                  : t('project.noneSelected')}
+                {currentAppId
+                  ? apps.find((p) => p.id === currentAppId)?.name || t('app.label')
+                  : t('app.noneSelected')}
               </span>
-              {projectSwitching ? (
+              {appSwitching ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <ChevronDown className="h-3 w-3 text-muted-foreground" />
               )}
             </Button>
 
-            <ProjectSwitcher
-              open={showProjectSwitcher}
-              onOpenChange={setShowProjectSwitcher}
+            <AppSwitcher
+              open={showAppSwitcher}
+              onOpenChange={setShowAppSwitcher}
               onNewApp={() => setShowNewApp(true)}
             />
           </div>
@@ -237,7 +237,7 @@ export function MainLayout() {
             onClick={() => setShowNewApp(true)}
           >
             <Plus className="h-3.5 w-3.5" />
-            <span className="text-xs">{t('project.newApp')}</span>
+            <span className="text-xs">{t('app.newApp')}</span>
           </Button>
         </div>
 
@@ -528,16 +528,16 @@ export function MainLayout() {
                 </div>
               </div>
               <div>
-                <p className="text-base font-semibold">{t('project.preparingNewApp')}</p>
+                <p className="text-base font-semibold">{t('app.preparingNewApp')}</p>
                 <p className="text-sm text-muted-foreground mt-2 leading-relaxed">
                   {currentAppName ? (
-                    <Trans i18nKey="project.preparingWithName" values={{ appName: currentAppName }} />
+                    <Trans i18nKey="app.preparingWithName" values={{ appName: currentAppName }} />
                   ) : (
-                    <>{t('project.preparingGeneric')}</>
+                    <>{t('app.preparingGeneric')}</>
                   )}
                 </p>
                 <p className="text-xs text-muted-foreground/60 mt-3">
-                  {t('project.autoDismiss')}
+                  {t('app.autoDismiss')}
                 </p>
               </div>
               <div className="flex items-center gap-1.5 text-xs text-muted-foreground/50">

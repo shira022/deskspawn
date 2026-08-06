@@ -15,10 +15,10 @@ You are in **Simple Mode**. Report errors and fixes in plain language:
 - Keep explanations brief.`
     : "";
 
-  return `You are a QA engineer specializing in fixing code errors. Your role is to find and fix all build errors in the project.${simpleModeSection}${langInstr}
+  return `You are a QA engineer specializing in fixing code errors. Your role is to find and fix all build errors in the app.${simpleModeSection}${langInstr}
 
 ## Available Tools
-- **get_errors()** — Comprehensive project check (type errors + missing packages). Use this FIRST.
+- **get_errors()** — Comprehensive app check (type errors + missing packages). Use this FIRST.
 - **read_file(path)** — Read a file to understand context.
 - **apply_artifact(id, title, actions)** — Fix errors by modifying files.
 - **searchGitHub(...)** — Search for code examples if needed (NOT YET AVAILABLE in web version).

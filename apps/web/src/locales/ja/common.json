@@ -80,7 +80,7 @@
       "regionRequired": "AWS Bedrock にはリージョンの指定が必要です（例: us-east-1）"
     },
     "apiKeyInstructions": {
-      "openai": "OpenAI API キー — sk-proj- または sk- で始まります（https://platform.openai.com/api-keys）",
+      "openai": "OpenAI API キー — sk-app- または sk- で始まります（https://platform.openai.com/api-keys）",
       "anthropic": "Anthropic API キー — sk-ant-api03- で始まります（https://console.anthropic.com）",
       "google": "Google AI / Gemini API キー — AIza で始まります（https://aistudio.google.com）",
       "amazonBedrock": "AWS Bedrock API キー — bedrock-api-key- で始まります（AWS Bedrock コンソール）",
@@ -182,7 +182,7 @@
     "editing": "編集中…",
     "goToCheckpoint": "このチェックポイントに戻る",
     "emptyStatePrompt": "「タスク管理アプリにして」「ダークモードを追加して」など、作りたいアプリを自由に指示してください。",
-    "emptyStateNoProject": "ツールバーの「新規アプリ」からプロジェクトを作成すると、チャットでアプリの構築を開始できます。",
+    "emptyStateNoApp": "ツールバーの「新規アプリ」からアプリを作成すると、チャットでアプリの構築を開始できます。",
     "suggestion": {
       "calendarApp": "カレンダーアプリを作成して",
       "todoApp": "ToDoアプリを作成して",
@@ -201,7 +201,7 @@
     "totalTokensAndCost": "合計トークン数と推定費用",
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI設定が行われていません。ツールバーの「{{notConfiguredLabel}}」ボタンから設定してください。",
-      "noProjectSelected": "⚠️ プロジェクトが選択されていません。ツールバーの「{{newAppLabel}}」からプロジェクトを作成するか、アプリ履歴から選択してください。",
+      "noAppSelected": "⚠️ アプリが選択されていません。ツールバーの「{{newAppLabel}}」からアプリを作成するか、アプリ履歴から選択してください。",
       "apiKeyRequiredDetailed": "⚠️ {{provider}} には API キーが必要です。\nツールバーの「{{modelLabel}}」→「APIキー設定」から設定してください。",
       "emptyResponse": "⚠️ AIが空のレスポンスを返しました。モデルの設定を確認するか、もう一度試してみてください。\n\nプロバイダー: {{provider}}\nモデル: {{model}}\n\nツールバーのモデル名をクリックして設定を確認してください。",
       "invalidApiKey": "APIキーが無効か未設定です。ツールバーの「APIキー設定」から確認してください。",
@@ -243,12 +243,12 @@
     "verifier": "エラーチェックと修正",
     "visual_qa": "画面確認"
   },
-  "project": {
-    "label": "プロジェクト",
-    "noneSelected": "プロジェクト未選択",
+  "app": {
+    "label": "アプリ",
+    "noneSelected": "アプリ未選択",
     "newApp": "新規アプリ",
-    "switching": "プロジェクトを切り替え中...",
-    "switchingDesc": "新しいプロジェクトの準備ができ次第、チャットを開始できます。",
+    "switching": "アプリを切り替え中...",
+    "switchingDesc": "新しいアプリの準備ができ次第、チャットを開始できます。",
     "preparingNewApp": "新しいアプリを準備しています",
     "preparingWithName": "「{{appName}}」のテンプレートを展開し、<br />開発サーバーを起動しています",
     "preparingGeneric": "テンプレートを展開し、開発サーバーを起動しています",
@@ -265,7 +265,7 @@
     "createFirst": "最初のアプリを作成",
     "export": "エクスポート",
     "delete": "削除",
-    "deleteDisabledActive": "現在開いているプロジェクトは削除できません。先に別のプロジェクトに切り替えてください。",
+    "deleteDisabledActive": "現在開いているアプリは削除できません。先に別のアプリに切り替えてください。",
     "deleteError": "削除に失敗しました",
     "exportError": "エクスポートに失敗しました",
     "deleteTitle": "アプリを削除",
@@ -311,7 +311,7 @@
     "demo": {
       "userMessage": "タスク管理アプリを作って",
       "assistantMessage": "わかりました！以下のファイルを作成します...",
-      "creatingFiles": "プロジェクトファイルを作成中..."
+      "creatingFiles": "アプリファイルを作成中..."
     },
     "features": {
       "title": "特徴",
@@ -353,7 +353,7 @@
   "auth": {},
   "preview": {
     "title": "プレビュー",
-    "selectProject": "プロジェクトを選択または作成するとプレビューが表示されます",
+    "selectApp": "アプリを選択または作成するとプレビューが表示されます",
     "loading": "プレビュー準備中...",
     "rendering": "プレビュー描画中...",
     "loadingApp": "アプリを読み込み中...",

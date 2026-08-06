@@ -8,7 +8,7 @@ vi.mock("react-i18next", () => ({
     t: (key: string, opts?: { port?: string }) => {
       const translations: Record<string, string> = {
         "preview.title": "Preview",
-        "preview.selectProject": "Select or create a project to preview",
+        "preview.selectApp": "Select or create an app to preview",
         "preview.localBadge": "Local :{{port}}",
         "preview.openInBrowser": "Open in browser",
         "common.refresh": "Refresh",
@@ -25,7 +25,7 @@ vi.mock("react-i18next", () => ({
 
 // Mock Zustand store
 const mockStore = {
-  currentProjectId: "app-1",
+  currentAppId: "app-1",
   initialized: true,
   reloadCounter: 0,
   previewMaximized: false,

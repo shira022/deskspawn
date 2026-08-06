@@ -196,8 +196,8 @@ function AppDemo() {
   // ── コード生成ステップ進行 ──────────────────────────────
   const [genStep, setGenStep] = useState(0);
   const genSteps = isJa
-    ? ["要件を分析中...", "プロジェクトを作成中...", "コードを生成中...", "エラーをチェック中...", "アプリを起動中..."]
-    : ["Analyzing requirements...", "Creating project...", "Generating code...", "Checking for errors...", "Starting app..."];
+    ? ["要件を分析中...", "アプリを作成中...", "コードを生成中...", "エラーをチェック中...", "アプリを起動中..."]
+    : ["Analyzing requirements...", "Creating app...", "Generating code...", "Checking for errors...", "Starting app..."];
   useEffect(() => {
     if (stage !== "generating") return;
     setGenStep(0);

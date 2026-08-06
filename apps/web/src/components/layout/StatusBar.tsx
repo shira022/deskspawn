@@ -125,7 +125,7 @@ export function StatusBar() {
   );
 }
 
-/** Project-level token usage and cost display */
+/** App-level token usage and cost display */
 function CostDisplay() {
   const { t } = useTranslation();
   const messages = useAppStore((s) => s.messages);

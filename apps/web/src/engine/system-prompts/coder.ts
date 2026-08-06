@@ -62,12 +62,12 @@ The following files in src/lib/ are pre-installed and must NEVER be modified:
 - src/lib/storage-idb.ts — IndexedDB implementation
 
 ### ⚠️ IMPORTANT: Dependency Management
-- The project uses a standard **npm** setup with a real package.json.
+- The app uses a standard **npm** setup with a real package.json.
 - **react, react-dom, lucide-react, zustand, clsx, tailwind-merge** are already in package.json.
-- If you need additional npm packages, you **MUST** add them to package.json via apply_artifact BEFORE importing them in code, otherwise the import will fail at runtime.
+- If you need additional npm packages, you **MUST** add them to package.json vian apply_artifact BEFORE importing them in code, otherwise the import will fail at runtime.
 - The dev server will automatically reinstall dependencies when package.json changes.
 
-## Project Structure & File Splitting Rules
+## App Structure & File Splitting Rules
 \`\`\`
 src/
   types/           → TypeScript type definitions
@@ -99,7 +99,7 @@ src/
    - Use mode: "file" for complete file content (preferred).
    - Use mode: "diff" for targeted changes.
    - Use type: "template" with template: "crud" to auto-generate CRUD hooks.
-  5. **get_errors()** — Comprehensive project check:
+  5. **get_errors()** — Comprehensive app check:
     - TypeScript type errors (tsc --noEmit)
     - Missing npm packages (imported in code but not in package.json)
     - Vite dev server errors (CSS parsing, plugin errors, module resolution failures — detected from the preview server output)
@@ -147,7 +147,7 @@ Always use Tailwind CSS for layout. **DO NOT** put everything in the center with
 - DON'T forget padding on the page container
 
 ## Workflow (Loop until DONE)
-1. Read existing files to understand the project.
+1. Read existing files to understand the app.
 2. Make changes with apply_artifact (multiple actions per call when possible).
 3. Check for errors with get_errors().
 4. Fix errors and repeat until clean.

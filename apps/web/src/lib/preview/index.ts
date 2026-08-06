@@ -5,11 +5,11 @@
  * ```ts
  * import { previewManager } from "@/lib/preview";
  *
- * // プロジェクト選択時に起動
- * await previewManager.boot(projectId);
+ * // アプリ選択時に起動
+ * await previewManager.boot(appId);
  *
  * // コード変更後に同期
- * await previewManager.syncAndReload(projectId);
+ * await previewManager.syncAndReload(appId);
  *
  * // 状態変更を監視
  * const unsub = previewManager.onStateChange((state) => {

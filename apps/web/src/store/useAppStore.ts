@@ -30,18 +30,18 @@ import type {
   ChatMessage,
   AgentStatus,
   FileNode,
-  ProjectMeta,
+  AppMeta,
   CheckpointInfo,
   AppSettings,
   Toast,
 } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
-import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, listProjects } from "@/lib/storage";
-import { setProjectId, listCheckpoints as engineListCheckpoints, persistChatHistory, loadChatHistory } from "@/engine/tool-executors";
+import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, listApps } from "@/lib/storage";
+import { setAppId, listCheckpoints as engineListCheckpoints, persistChatHistory, loadChatHistory } from "@/engine/tool-executors";
 import { SETTINGS_KEY } from "@/lib/constants";
 import { setModelCostCache, clearModelCostCache } from "@/lib/cost";
 import { getModelsForProvider } from "@/lib/models-fetcher";
-import { seedProjectFromFilesystem, seedProjectFromWorkspace, hasProjectFiles } from "@/lib/seed-project";
+import { seedAppFromFilesystem, seedAppFromWorkspace, hasAppFiles } from "@/lib/seed-app";
 import i18n from "@/lib/i18n";
 
 // ── Store Types ─────────────────────────────────────────────────────────────
@@ -94,15 +94,15 @@ interface Store {
   workspaceReady: boolean;
   setWorkspaceReady: (ready: boolean) => void;
 
-  // Projects
-  currentProjectId: string | null;
-  setCurrentProjectId: (id: string | null) => void;
-  projects: ProjectMeta[];
-  setProjects: (projects: ProjectMeta[]) => void;
-  addProject: (project: ProjectMeta) => void;
-  removeProject: (id: string) => void;
-  projectSwitching: boolean;
-  setProjectSwitching: (switching: boolean) => void;
+  // Apps
+  currentAppId: string | null;
+  setCurrentAppId: (id: string | null) => void;
+  apps: AppMeta[];
+  setApps: (apps: AppMeta[]) => void;
+  addApp: (app: AppMeta) => void;
+  removeApp: (id: string) => void;
+  appSwitching: boolean;
+  setAppSwitching: (switching: boolean) => void;
   appLoading: boolean;
   setAppLoading: (loading: boolean) => void;
 
@@ -187,19 +187,19 @@ export const useAppStore = create<Store>((set, get) => ({
           }
         }
 
-        // Load projects from IndexedDB
-        const storedProjects = await listProjects();
-        if (storedProjects.length > 0) {
-          set({ projects: storedProjects });
+        // Load apps from IndexedDB
+        const storedApps = await listApps();
+        if (storedApps.length > 0) {
+          set({ apps: storedApps });
         }
 
-        // Load current project
+        // Load current app
         try {
-          const stored = localStorage.getItem("deskspawn_current_project");
+          const stored = localStorage.getItem("deskspawn_current_app");
           if (stored) {
             const pid = JSON.parse(stored);
-            set({ currentProjectId: pid });
-            setProjectId(pid);
+            set({ currentAppId: pid });
+            setAppId(pid);
             // Load checkpoints
             await get().fetchCheckpoints();
           }
@@ -282,7 +282,7 @@ export const useAppStore = create<Store>((set, get) => ({
   addMessage: (message) => {
     set((state) => ({ messages: [...state.messages, message] }));
     // Persist to IndexedDB
-    const pid = get().currentProjectId;
+    const pid = get().currentAppId;
     if (pid) {
       persistChatHistory(pid, get().messages).catch(() => {});
     }
@@ -293,7 +293,7 @@ export const useAppStore = create<Store>((set, get) => ({
         m.id === id ? { ...m, ...updates } : m
       ),
     }));
-    const pid = get().currentProjectId;
+    const pid = get().currentAppId;
     if (pid) {
       persistChatHistory(pid, get().messages).catch(() => {});
     }
@@ -302,14 +302,14 @@ export const useAppStore = create<Store>((set, get) => ({
     set((state) => ({
       messages: state.messages.slice(0, fromIndex),
     }));
-    const pid = get().currentProjectId;
+    const pid = get().currentAppId;
     if (pid) {
       persistChatHistory(pid, get().messages).catch(() => {});
     }
   },
   clearMessages: () => set({ messages: [] }),
   fetchChatHistory: async () => {
-    const pid = get().currentProjectId;
+    const pid = get().currentAppId;
     if (!pid) return;
     try {
       const messages = await loadChatHistory(pid);
@@ -344,27 +344,27 @@ export const useAppStore = create<Store>((set, get) => ({
   workspaceReady: false,
   setWorkspaceReady: (workspaceReady) => set({ workspaceReady }),
 
-  // ── Projects ───────────────────────────────────────────────────────
-  currentProjectId: null,
-  setCurrentProjectId: (id) => {
-    set({ currentProjectId: id });
+  // ── Apps ───────────────────────────────────────────────────────
+  currentAppId: null,
+  setCurrentAppId: (id) => {
+    set({ currentAppId: id });
     if (id) {
-      setProjectId(id);
-      localStorage.setItem("deskspawn_current_project", JSON.stringify(id));
-      // Load checkpoints for this project
+      setAppId(id);
+      localStorage.setItem("deskspawn_current_app", JSON.stringify(id));
+      // Load checkpoints for this app
       get().fetchCheckpoints();
-      // Auto-seed: if the project has no source files in OPFS, try to
-      // sync them from the filesystem (for projects created by the
+      // Auto-seed: if the app has no source files in OPFS, try to
+      // sync them from the filesystem (for apps created by the
       // desktop/Tauri version).
       setTimeout(async () => {
         try {
-          const hasFiles = await hasProjectFiles(id);
+          const hasFiles = await hasAppFiles(id);
           if (!hasFiles) {
             // First try workspace (most recent generated code, simpler stack)
-            let { seeded } = await seedProjectFromWorkspace(id);
+            let { seeded } = await seedAppFromWorkspace(id);
             if (seeded === 0) {
-              // Fall back to project-specific files from projects/{id}/
-              seeded = (await seedProjectFromFilesystem(id)).seeded;
+              // Fall back to app-specific files from apps/{id}/
+              seeded = (await seedAppFromFilesystem(id)).seeded;
             }
             if (seeded > 0) {
               // Trigger a preview reload so the newly seeded files show up
@@ -376,17 +376,17 @@ export const useAppStore = create<Store>((set, get) => ({
         }
       }, 500);
     } else {
-      localStorage.removeItem("deskspawn_current_project");
+      localStorage.removeItem("deskspawn_current_app");
     }
   },
-  projects: [],
-  setProjects: (projects) => set({ projects }),
-  addProject: (project) =>
-    set((state) => ({ projects: [...state.projects, project] })),
-  removeProject: (id) =>
-    set((state) => ({ projects: state.projects.filter((p) => p.id !== id) })),
-  projectSwitching: false,
-  setProjectSwitching: (projectSwitching) => set({ projectSwitching }),
+  apps: [],
+  setApps: (apps) => set({ apps }),
+  addApp: (app) =>
+    set((state) => ({ apps: [...state.apps, app] })),
+  removeApp: (id) =>
+    set((state) => ({ apps: state.apps.filter((p) => p.id !== id) })),
+  appSwitching: false,
+  setAppSwitching: (appSwitching) => set({ appSwitching }),
   appLoading: false,
   setAppLoading: (appLoading) => set({ appLoading }),
 
@@ -396,7 +396,7 @@ export const useAppStore = create<Store>((set, get) => ({
   currentCheckpointIndex: -1,
   setCurrentCheckpointIndex: (currentCheckpointIndex) => set({ currentCheckpointIndex }),
   fetchCheckpoints: async () => {
-    const pid = get().currentProjectId;
+    const pid = get().currentAppId;
     if (!pid) return;
     try {
       const cps = await engineListCheckpoints(pid);

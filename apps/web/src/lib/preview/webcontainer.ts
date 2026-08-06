@@ -9,7 +9,7 @@
 import { WebContainer } from "@webcontainer/api";
 import type { PreviewState, PreviewStatus, StateListener } from "./types";
 import { mountAllFiles, syncChangedFiles, detectPackageJsonChange } from "./file-sync";
-import { readProjectFile, listProjectFiles } from "@/lib/storage-opfs";
+import { readAppFile, listAppFiles } from "@/lib/storage-opfs";
 
 // ── 定数 ─────────────────────────────────────────────────────────────────────
 
@@ -23,7 +23,7 @@ const SERVER_READY_TIMEOUT = 30_000;
 
 export class PreviewManager {
   private container: WebContainer | null = null;
-  private currentProjectId: string | null = null;
+  private currentAppId: string | null = null;
   private devServerProcess: Awaited<ReturnType<WebContainer["spawn"]>> | null = null;
   private unsubServerReady: (() => void) | null = null;
   private unsubPort: (() => void) | null = null;
@@ -112,9 +112,9 @@ export class PreviewManager {
     return this.container !== null && this._status !== "idle";
   }
 
-  /** 現在のプロジェクトID */
-  get projectId(): string | null {
-    return this.currentProjectId;
+  /** 現在のアプリID */
+  get appId(): string | null {
+    return this.currentAppId;
   }
 
   /** プレビューURL */
@@ -123,16 +123,16 @@ export class PreviewManager {
   }
 
   /** コンテナを起動し、ファイルをマウント、npm install、devサーバー起動まで行う。 */
-  async boot(projectId: string): Promise<void> {
-    // 同じプロジェクトかつ既に起動済みならスキップ
-    if (this.currentProjectId === projectId && this.container && this._status === "ready") {
+  async boot(appId: string): Promise<void> {
+    // 同じアプリかつ既に起動済みならスキップ
+    if (this.currentAppId === appId && this.container && this._status === "ready") {
       return;
     }
 
     // 並行起動を防止
     if (this.bootPromise) {
-      if (this.currentProjectId !== projectId) {
-        // 別のプロジェクトが起動中 → 強制終了して新しいプロジェクトを起動
+      if (this.currentAppId !== appId) {
+        // 別のアプリが起動中 → 強制終了して新しいアプリを起動
         this.teardown();
         this.bootPromise = null;
       } else {
@@ -140,7 +140,7 @@ export class PreviewManager {
       }
     }
 
-    this.bootPromise = this._boot(projectId);
+    this.bootPromise = this._boot(appId);
     try {
       await this.bootPromise;
     } finally {
@@ -148,21 +148,21 @@ export class PreviewManager {
     }
   }
 
-  /** プロジェクト切り替わり検出 — currentProjectIdが期待値と異なる場合はtrue */
-  private _isOvertaken(projectId: string): boolean {
-    return this.currentProjectId !== projectId;
+  /** アプリ切り替わり検出 — currentAppIdが期待値と異なる場合はtrue */
+  private _isOvertaken(appId: string): boolean {
+    return this.currentAppId !== appId;
   }
 
   /**
    * WebContainer.boot() をリトライ + タイムアウト付きで実行する。
    * タブがバックグラウンドのときに boot が失敗することがあるため、
    * リトライ間隔を空けて最大3回試行する。
-   * プロジェクトが切り替わった場合は速やかに中断する。
+   * アプリが切り替わった場合は速やかに中断する。
    *
    * boot が沈黙してハングした場合に備えてタイムアウトを設定し、
    * タイムアウト時にはブラウザの診断情報を収集してエラーログに出力する。
    */
-  private async _bootWebContainer(projectId: string): Promise<WebContainer> {
+  private async _bootWebContainer(appId: string): Promise<WebContainer> {
     const BOOT_TIMEOUT_MS = 20_000;
     const MAX_RETRIES = 3;
 
@@ -206,14 +206,14 @@ export class PreviewManager {
         this.addLog(`Boot attempt ${attempt} failed (${errMsg})`);
 
         if (attempt === MAX_RETRIES) throw e;
-        // プロジェクト切り替わり時はリトライせず中断
-        if (this._isOvertaken(projectId)) {
+        // アプリ切り替わり時はリトライせず中断
+        if (this._isOvertaken(appId)) {
           throw e;
         }
         await new Promise((r) => setTimeout(r, 500 * attempt));
-        // 待機中にプロジェクトが変わった場合も中断
-        if (this._isOvertaken(projectId)) {
-          throw new Error("Boot aborted: project switched during retry delay");
+        // 待機中にアプリが変わった場合も中断
+        if (this._isOvertaken(appId)) {
+          throw new Error("Boot aborted: app switched during retry delay");
         }
       }
     }
@@ -256,15 +256,15 @@ export class PreviewManager {
     return lines.join("\n");
   }
 
-  private async _boot(projectId: string): Promise<void> {
+  private async _boot(appId: string): Promise<void> {
     // 既存のコンテナを必ず破棄してから新しく起動する（リソースリーク防止）
     if (this.container) {
       this.teardown();
     }
     this.clearLogs();
 
-    this.currentProjectId = projectId;
-    this.addLog(`Starting preview for project: ${projectId}`);
+    this.currentAppId = appId;
+    this.addLog(`Starting preview for app: ${appId}`);
     this.setState({ status: "booting", error: null });
 
     // CSP 違反をキャプチャ（boot 中に発生したブロックを検出するため）
@@ -280,25 +280,25 @@ export class PreviewManager {
 
     try {
       // Boot — リトライ付き
-      const newContainer = await this._bootWebContainer(projectId);
-      if (this._isOvertaken(projectId)) {
-        this.addLog(`Boot aborted: project switched during WebContainer.boot()`);
+      const newContainer = await this._bootWebContainer(appId);
+      if (this._isOvertaken(appId)) {
+        this.addLog(`Boot aborted: app switched during WebContainer.boot()`);
         newContainer.teardown();
         return;
       }
       this.container = newContainer;
       this.addLog("WebContainer booted successfully");
 
-      // サーバー準備完了イベント（リスナー内でもプロジェクト一致を確認）
+      // サーバー準備完了イベント（リスナー内でもアプリ一致を確認）
       this.unsubServerReady = this.container.on("server-ready", (_port, url) => {
-        if (this._isOvertaken(projectId)) return;
+        if (this._isOvertaken(appId)) return;
         this.addLog(`Dev server ready at ${url}`);
         this.setState({ url, status: "ready" });
       });
 
       // ポートオープン/クローズ
       this.unsubPort = this.container.on("port", (_port, type, url) => {
-        if (this._isOvertaken(projectId)) return;
+        if (this._isOvertaken(appId)) return;
         if (type === "open") {
           this.setState({ url });
         }
@@ -306,19 +306,19 @@ export class PreviewManager {
 
       // ファイルマウント
       this.setState({ status: "booting" });
-      this.addLog("Mounting project files...");
-      await mountAllFiles(this.container, projectId);
-      if (this._isOvertaken(projectId)) {
-        this.addLog(`Boot aborted: project switched during file mount`);
+      this.addLog("Mounting app files...");
+      await mountAllFiles(this.container, appId);
+      if (this._isOvertaken(appId)) {
+        this.addLog(`Boot aborted: app switched during file mount`);
         return;
       }
-      this.addLog("Project files mounted");
+      this.addLog("App files mounted");
 
       // npm install
       this.addLog("Installing dependencies (npm install)...");
       await this._runNpmInstall();
-      if (this._isOvertaken(projectId)) {
-        this.addLog(`Boot aborted: project switched during npm install`);
+      if (this._isOvertaken(appId)) {
+        this.addLog(`Boot aborted: app switched during npm install`);
         return;
       }
       this.addLog("Dependencies installed");
@@ -326,13 +326,13 @@ export class PreviewManager {
       // Dev server 起動
       this.addLog("Starting dev server...");
       await this._startDevServer();
-      if (this._isOvertaken(projectId)) {
-        this.addLog(`Boot aborted: project switched during dev server start`);
+      if (this._isOvertaken(appId)) {
+        this.addLog(`Boot aborted: app switched during dev server start`);
         return;
       }
     } catch (e: any) {
-      // プロジェクト切り替わり後に旧 boot がエラーを出しても無視する
-      if (this._isOvertaken(projectId)) {
+      // アプリ切り替わり後に旧 boot がエラーを出しても無視する
+      if (this._isOvertaken(appId)) {
         return;
       }
       this.addLog(`Error: ${e.message || String(e)}`);
@@ -357,30 +357,30 @@ export class PreviewManager {
    * これにより「新しいパッケージをimportするコードが、未インストールのまま
    * Vite に読み込まれる」というタイミング問題を防ぐ。
    */
-  async syncAndReload(projectId: string): Promise<void> {
+  async syncAndReload(appId: string): Promise<void> {
     if (!this.container) {
-      await this.boot(projectId);
+      await this.boot(appId);
       return;
     }
 
-    // プロジェクトが変わっていたら再起動
-    if (this.currentProjectId !== projectId) {
-      await this.boot(projectId);
+    // アプリが変わっていたら再起動
+    if (this.currentAppId !== appId) {
+      await this.boot(appId);
       return;
     }
 
     this.setState({ status: "syncing", error: null });
-    this.addLog("Syncing project files...");
+    this.addLog("Syncing app files...");
 
     try {
       // Phase 1: package.json の変更検出と先行同期
       this.addLog("Checking for package.json changes...");
-      const pkgChanged = await detectPackageJsonChange(this.container, projectId);
+      const pkgChanged = await detectPackageJsonChange(this.container, appId);
 
       if (pkgChanged) {
         this.addLog("package.json changed, updating dependencies...");
         // package.json を先に書き込む
-        const pkgContent = await readProjectFile(projectId, "package.json");
+        const pkgContent = await readAppFile(appId, "package.json");
         if (pkgContent !== null) {
           await this.container.fs.writeFile("/package.json", pkgContent);
         }
@@ -391,7 +391,7 @@ export class PreviewManager {
       }
 
       // Phase 2: 残りのソースファイルを同期
-      const result = await syncChangedFiles(this.container, projectId);
+      const result = await syncChangedFiles(this.container, appId);
       if (result.filesSynced > 0) {
         this.addLog(`Synced ${result.filesSynced} file(s) to container`);
       }
@@ -504,11 +504,11 @@ export class PreviewManager {
    * ここで同期してしまうと、後続の syncAndReload が変更を検出できず
    * npm install がスキップされる。
    */
-  async syncFiles(projectId: string): Promise<{ filesSynced: number; errors: string[] }> {
+  async syncFiles(appId: string): Promise<{ filesSynced: number; errors: string[] }> {
     if (!this.container) return { filesSynced: 0, errors: ['Container not booted'] };
     try {
       // OPFS から全ファイル一覧を取得
-      const allFiles = await listProjectFiles(projectId);
+      const allFiles = await listAppFiles(appId);
       let filesSynced = 0;
       const errors: string[] = [];
 
@@ -519,7 +519,7 @@ export class PreviewManager {
         if (file.path.startsWith("node_modules/")) continue;
 
         try {
-          const content = await readProjectFile(projectId, file.path);
+          const content = await readAppFile(appId, file.path);
           if (content === null) continue;
 
           // コンテナ上の既存ファイルと比較（差分があれば書込み）
@@ -567,27 +567,27 @@ export class PreviewManager {
    * これにより、get_errors() 実行時に Container の状態が最新であることが保証され、
    * Vite dev server 出力からのエラー検出（_getViteErrors）が正確になる。
    */
-  async syncForErrors(projectId: string): Promise<void> {
+  async syncForErrors(appId: string): Promise<void> {
     if (!this.container) {
-      await this.boot(projectId);
+      await this.boot(appId);
       return;
     }
 
-    if (this.currentProjectId !== projectId) {
-      await this.boot(projectId);
+    if (this.currentAppId !== appId) {
+      await this.boot(appId);
       return;
     }
 
     // package.json の変更を検出（OPFS vs Container）
-    const pkgChanged = await detectPackageJsonChange(this.container, projectId);
+    const pkgChanged = await detectPackageJsonChange(this.container, appId);
 
     if (pkgChanged) {
       // パッケージ変更あり → npm install + dev server 再起動（Vite 出力キャプチャも再開）
       this.addLog("Package.json changed — running full sync + npm install + reload...");
-      await this.syncAndReload(projectId);
+      await this.syncAndReload(appId);
     } else {
       // ソースファイルのみの変更 → 高速同期（Vite HMR が差分を適用）
-      const result = await this.syncFiles(projectId);
+      const result = await this.syncFiles(appId);
       if (result.filesSynced > 0) {
         this.addLog(`Synced ${result.filesSynced} file(s) before error check`);
       }
@@ -606,7 +606,7 @@ export class PreviewManager {
    * - "missing-package": コード内で import されているが package.json にないパッケージ
    * - "vite": Vite dev server の出力から検出されたエラー（CSS パース、プラグイン、モジュール解決失敗など）
    */
-  async checkProject(projectId: string): Promise<import("./types").ErrorEntry[]> {
+  async checkApp(appId: string): Promise<import("./types").ErrorEntry[]> {
     if (!this.container) return [];
     const errors: import("./types").ErrorEntry[] = [];
     this.addLog("Running type check (tsc --noEmit)...");
@@ -621,7 +621,7 @@ export class PreviewManager {
 
     // 2. 不足パッケージ検出
     try {
-      const missingErrors = await this._detectMissingPackages(projectId);
+      const missingErrors = await this._detectMissingPackages(appId);
       if (missingErrors.length > 0) {
         this.addLog(`Found ${missingErrors.length} missing package(s)`);
       }
@@ -681,7 +681,7 @@ export class PreviewManager {
    * 全ソースファイルの import 文を解析し、package.json に宣言されていない
    * パッケージを検出する。
    */
-  private async _detectMissingPackages(projectId: string): Promise<import("./types").ErrorEntry[]> {
+  private async _detectMissingPackages(appId: string): Promise<import("./types").ErrorEntry[]> {
     if (!this.container) return [];
 
     // package.json を OPFS から読み込む（AI が apply_artifact で書き込んだ最新版）
@@ -690,7 +690,7 @@ export class PreviewManager {
     // OPFS の最新版と比較することで、正しく不足パッケージを検出できる。
     let pkgJson: string | null;
     try {
-      pkgJson = await readProjectFile(projectId, "package.json");
+      pkgJson = await readAppFile(appId, "package.json");
     } catch {
       pkgJson = null;
     }
@@ -709,7 +709,7 @@ export class PreviewManager {
     };
 
     // ソースファイル一覧を OPFS から取得（同期直後なのでコンテナと一致する）
-    const files = await listProjectFiles(projectId);
+    const files = await listAppFiles(appId);
     const missingPackages = new Map<string, Set<string>>();
 
     // import 文を抽出する正規表現
@@ -736,7 +736,7 @@ export class PreviewManager {
       while ((match = importRegex.exec(content)) !== null) {
         const importPath = match[1];
 
-        // 相対パス、絶対パス、プロジェクトエイリアスはスキップ
+        // 相対パス、絶対パス、アプリエイリアスはスキップ
         if (importPath.startsWith(".") || importPath.startsWith("/")) continue;
         if (importPath.startsWith("@/")) continue;
 
@@ -920,7 +920,7 @@ export class PreviewManager {
     // Vite 出力キャプチャのクリーンアップ
     this._stopViteOutputCapture();
 
-    this.currentProjectId = null;
+    this.currentAppId = null;
     this._url = null;
     this._error = null;
     this._status = "idle";
