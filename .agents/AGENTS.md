@@ -162,6 +162,7 @@ Hierarchical  feature/*   local      separate    separate │
 ## Repository Context
 
 - DeskSpawn is an OSS project
+- **Versioning (MANDATORY)**: 全パッケージ単一バージョン方針。ルート / apps/web / apps/desktop / apps/desktop/sidecar / packages/* / tauri.conf.json / Cargo.toml のversionは常に同一（SemVer 3桁 `major.minor.patch`）。リリース時はGitHubタグ `v<version>` とも一致させること。検証: `node scripts/check-versions.mjs`。バージョン更新: `python3 scripts/set-version.py <version>`。詳細は verify スキル Stage 7 / merge スキル Version Bump を参照。
 - Primary languages: Rust (backend) + TypeScript (frontend)
 - Package manager: npm (frontend), cargo (backend)
 - Build system: Vite (frontend), Cargo (backend)

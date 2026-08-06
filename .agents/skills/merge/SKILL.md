@@ -97,7 +97,27 @@ The Orchestrator handles verification and PR creation. The human reviews and cli
 ✅ All feature PRs in the batch have review: approved
 ✅ Full integration verify passes on develop HEAD (run verify skill on develop)
 ✅ No open review reports with changes_requested against any included feature
+✅ Version consistency check passes on develop HEAD: `node scripts/check-versions.mjs`
+   (全パッケージ単一バージョン方針 — タグvX.Y.Zとアプリ内全箇所の一致を確認)
 ```
+
+#### Version Bump (MUST run before tagging)
+
+DeskSpawnは**全パッケージ単一バージョン方針**（SemVer 3桁 + ビルドメタデータ `+build.YYYYMMDD` はタグ/ファイル名に含めない）。リリース時:
+
+```bash
+# 1. 新しいバージョンを全箇所に適用
+python3 scripts/set-version.py <new-version>   # 例: 0.4.1
+node scripts/check-versions.mjs <new-version>  # 全箇所一致を確認（FAILなら中止）
+
+# 2. バージョン変更をコミットして develop に含める
+git add package.json apps/*/package.json packages/*/package.json \
+        apps/desktop/src-tauri/tauri.conf.json apps/desktop/src-tauri/Cargo.toml \
+        apps/desktop/src-tauri/Cargo.lock
+git commit -m "chore: bump version to <new-version>"
+```
+
+**⚠️ バージョン整合性はタグ作成の必須条件**。過去にGitHubタグ(v0.4.0)とアプリ内バージョン(0.2.0)の不一致を発生させた実績がある。`check-versions.mjs` がFAILの状態でタグを作成してはならない。
 
 #### Orchestrator Execution
 

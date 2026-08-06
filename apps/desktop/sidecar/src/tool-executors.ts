@@ -1,15 +1,14 @@
 import fs from 'fs/promises';
 import fsSync from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
+import os from 'os';
 import crypto from 'crypto';
 import type { Artifact, Action, TemplateAction } from './types.js';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-// sidecar/src/tool-executors.ts → project root
-const PROJECT_ROOT = path.resolve(__dirname, '..', '..');
-const DEFAULT_WORKSPACE = path.resolve(PROJECT_ROOT, 'workspace');
+// bun --compile exe では __dirname/import.meta.url が実行時cwdに解決されるため、
+// データディレクトリを __dirname から導出すると存在しないパス（例: B:\workspace）になる。
+// ワークスペースの既定値も os.homedir() 基準で固定する（server.ts の PROJECTS_DIR と同じ方針）。
+const DEFAULT_WORKSPACE = path.join(os.homedir(), 'deskspawn', 'workspace');
 
 // Security server (Rust) endpoint for all file/shell operations
 const SECURITY_SERVER_PORT = process.env.DESKSPAWN_SECURITY_PORT;

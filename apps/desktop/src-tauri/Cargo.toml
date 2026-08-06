@@ -1,6 +1,6 @@
 [package]
 name = "deskspawn-desktop"
-version = "0.2.0"
+version = "0.4.1"
 description = "AI-powered Windows native app development platform"
 authors = ["DeskSpawn Team"]
 edition = "2021"

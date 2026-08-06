@@ -1,6 +1,6 @@
 {
   "name": "deskspawn-monorepo",
-  "version": "1.0.0",
+  "version": "0.4.1",
   "description": "AI-powered web app generation platform (browser edition)",
   "private": true,
   "scripts": {
