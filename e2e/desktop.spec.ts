@@ -121,7 +121,7 @@ test('01: 起動画面 — タイトルと主要UIが表示される', async () 
   await expect(page.getByRole('button', { name: '新規アプリ' })).toBeVisible();
   // AI設定ボタン (未設定時「AI未設定」/設定済み時はモデル名) — ツールバー4番目のボタン
   await expect(page.locator('div.flex.h-10 button').nth(3)).toBeVisible();
-  // プロジェクトボタン (未選択時「プロジェクト未選択」/選択済み時プロジェクト名) — ツールバー2番目
+  // アプリボタン (未選択時「アプリ未選択」/選択済み時アプリ名) — ツールバー2番目
   await expect(page.locator('div.flex.h-10 button').nth(1)).toBeVisible();
   await expect(page.getByPlaceholder(/作りたいアプリを指示/)).toBeVisible();
 });
@@ -167,16 +167,16 @@ test('02: AI設定フロー — Customプロバイダーで保存しツールバ
   await expect(page.locator('div.flex.h-10').getByText(MODEL)).toHaveCount(1);
 });
 
-test('03: チャット送信 — プロジェクト作成後にAI応答が表示される', async () => {
-  // チャットはプロジェクト必須のため先に作成する (ユーザーの実フロー)
-  const projectName = `E2E-${Date.now().toString().slice(-6)}`;
+test('03: チャット送信 — アプリ作成後にAI応答が表示される', async () => {
+  // チャットはアプリ必須のため先に作成する (ユーザーの実フロー)
+  const appName = `E2E-${Date.now().toString().slice(-6)}`;
   await page.getByRole('button', { name: '新規アプリ' }).click();
-  await page.getByPlaceholder(/例: タスク管理アプリ/).fill(projectName);
+  await page.getByPlaceholder(/例: タスク管理アプリ/).fill(appName);
   await page.getByRole('button', { name: '作成' }).click();
-  await expect(page.getByRole('button', { name: 'プロジェクト未選択' })).toBeHidden({
+  await expect(page.getByRole('button', { name: 'アプリ未選択' })).toBeHidden({
     timeout: 10_000,
   });
-  await expect(page.locator('div.flex.h-10').getByText(projectName)).toBeVisible();
+  await expect(page.locator('div.flex.h-10').getByText(appName)).toBeVisible();
 
   // 再実行時も重複しないようユニークなプロンプト (メッセージはアプリ内に蓄積されるため)
   const token = `HELLO_OK_${Date.now().toString().slice(-6)}`;

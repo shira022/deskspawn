@@ -1,74 +1,85 @@
 # Getting Started with DeskSpawn
 
-DeskSpawn is an **AI-powered web app generation platform that runs entirely in your browser.**
-Describe what you want to build, and DeskSpawn generates the code, creates the project,
-and shows you a live preview — all without leaving your browser.
+DeskSpawn is an **AI-powered app development platform**. Describe what you
+want to build, and DeskSpawn generates the code, saves it as real files on
+disk, and shows you a live preview — all locally on your machine.
 
-> **Current status:** DeskSpawn is in early development. Feedback and contributions
-> are welcome on [GitHub](https://github.com/shira022/deskspawn).
+The **desktop app** is the main product. A **browser demo** is available for
+evaluation.
 
 ---
 
-## Quick Start
+## Quick Start — Desktop App (recommended)
 
-No installation is required. Everything runs in your browser.
+### 1. Install
 
-### 1. Open DeskSpawn
-
-Visit **[deskspawn.pages.dev](https://deskspawn.pages.dev)** (once deployed) or run
-locally with `npm run dev`.
+Download the latest installer from
+[GitHub Releases](https://github.com/shira022/deskspawn/releases) and run it.
+See [Installation](./installation.md) for requirements.
 
 ### 2. Configure Your AI Provider
 
-DeskSpawn uses your own API keys to power its AI features.
+On first launch you'll be prompted to configure an AI provider:
 
-1. On first launch, you'll be prompted to configure an AI provider
-2. Enter your API key for one of the supported providers:
-   - **OpenAI** — `https://api.openai.com` (requires a paid OpenAI account)
-   - **Anthropic** — `https://api.anthropic.com` (Claude API)
+1. Select your language.
+2. Enter an API key for one of the supported providers:
+   - **OpenAI** — `https://api.openai.com`
+   - **Anthropic** — `https://api.anthropic.com`
    - **Google Gemini** — via Google AI Studio API key
    - **Ollama** — local, no API key needed (runs on your machine)
    - **AWS Bedrock, Azure OpenAI, GCP Vertex AI** — enterprise options
-3. Your API key stays in your browser's IndexedDB — it is never sent to any
-   server other than your chosen AI provider
+3. Your API key is stored in the **OS keychain** — it is never sent to any
+   server other than the AI provider you choose (requests go through the
+   local sidecar proxy).
 
-> For a fully local setup, install [Ollama](https://ollama.ai) and configure
-> DeskSpawn to use it as the provider.
+> For a fully offline setup, install [Ollama](https://ollama.ai) and select it
+> as the provider.
 
 ### 3. Build Your First App
 
-1. In the chat panel, describe the app you want to build
-   - Example: _"A todo list app with a dark theme, add/delete tasks, and localStorage persistence"_
-2. DeskSpawn's AI pipeline will:
+1. Click **+ New App** in the toolbar and give your app a name.
+2. In the chat panel, describe the app you want to build:
+   - Example: _"A todo list app with a dark theme, add/delete tasks, and
+     SQLite persistence"_
+3. DeskSpawn's AI pipeline will:
    - **Plan** the architecture and file structure
-   - **Write** all the code files
-   - **Verify** the code compiles and runs
-3. Once ready, a **live preview** will appear showing your app running in a
-   sandboxed environment
-4. Keep chatting to refine, add features, or fix issues
+   - **Write** all the code files (real files under `~/deskspawn/apps/`)
+   - **Verify** the code compiles and its tests pass
+4. A **live preview** appears — a local dev server running your app.
+   Use the **open-in-browser** button to view it in your system browser.
+5. Keep chatting to refine, add features, or fix issues.
 
-### 4. Export Your Project
+### 4. Find Your Files
 
-Once you're happy with your app, you can:
-
-- **Download ZIP** — get a complete Vite + React + TypeScript + Tailwind CSS project
-- **Copy files** — manually copy individual files from the file tree panel
+Your generated apps are real files at `~/deskspawn/apps/<app-id>/`. Open them
+in any editor, or back them up by copying the folder.
 
 ---
 
-## Browser Compatibility
+## Quick Start — Web Version (evaluation)
+
+1. Open the hosted web version in a Chromium-based browser (Chrome/Edge 105+).
+2. Configure an AI provider (your key stays in the browser's IndexedDB).
+3. Describe an app and watch it being generated in the sandboxed preview.
+
+> ⚠️ **The web version is for evaluation only.** Data is stored in the browser
+> (IndexedDB), which is less secure than the desktop app. For real work, use
+> the desktop app.
+
+---
+
+## Browser Compatibility (web version)
 
 | Browser | Preview Support |
 |---------|----------------|
 | **Chrome 105+** | Full support (recommended) |
 | **Edge 105+** | Full support |
-| **Firefox** | Limited — preview (WebContainer) not available |
-| **Safari** | Limited — preview (WebContainer) not available |
+| **Firefox / Safari** | Limited — preview (WebContainer) not available |
 
 ---
 
 ## Next Steps
 
-- [Managing Projects](./usage/projects.md) — save, switch, and organise projects
+- [Managing Apps](./usage/apps.md) — create, switch, and organise apps
 - [AI Features](./usage/ai-features.md) — configure providers and use the AI assistant
 - [Changelog](./changelog.md) — release history and updates

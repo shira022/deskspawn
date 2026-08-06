@@ -15,7 +15,7 @@ import {
 import { useState, useEffect, useCallback, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import type { FileNode } from "@/types";
-import { listProjectFiles, readProjectFile } from "@/lib/storage-opfs";
+import { listAppFiles, readAppFile } from "@/lib/storage-opfs";
 
 interface TreeNode {
   name: string;
@@ -119,17 +119,17 @@ function TreeItem({ node, depth, selectedFile, onSelect }: {
 
 function FilePreview({ filePath }: { filePath: string }) {
   const { t } = useTranslation();
-  const currentProjectId = useAppStore((s) => s.currentProjectId);
+  const currentAppId = useAppStore((s) => s.currentAppId);
   const [content, setContent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   const fetchContent = useCallback(async () => {
-    if (!currentProjectId) return;
+    if (!currentAppId) return;
     setLoading(true);
     setError("");
     try {
-      const data = await readProjectFile(currentProjectId, filePath);
+      const data = await readAppFile(currentAppId, filePath);
       if (data === null) throw new Error("File not found");
       setContent(data);
     } catch (e: any) {
@@ -137,7 +137,7 @@ function FilePreview({ filePath }: { filePath: string }) {
     } finally {
       setLoading(false);
     }
-  }, [filePath, currentProjectId]);
+  }, [filePath, currentAppId]);
 
   useEffect(() => { fetchContent(); }, [fetchContent]);
 
@@ -176,7 +176,7 @@ function FilePreview({ filePath }: { filePath: string }) {
 }
 
 export function FileTreePanel() {
-  const currentProjectId = useAppStore((s) => s.currentProjectId);
+  const currentAppId = useAppStore((s) => s.currentAppId);
   const { selectedFile, setSelectedFile, setFileTree, workspaceReady } = useAppStore();
   const [tree, setTree] = useState<TreeNode[]>([]);
   const [loading, setLoading] = useState(true);
@@ -185,9 +185,9 @@ export function FileTreePanel() {
   const { t } = useTranslation();
 
   const fetchTree = useCallback(async () => {
-    if (!currentProjectId) return;
+    if (!currentAppId) return;
     try {
-      const files = await listProjectFiles(currentProjectId);
+      const files = await listAppFiles(currentAppId);
       // Filter out directory entries: buildTreeFromPaths creates directory
       // nodes from file-path segments, so explicit directory entries cause
       // duplicate/incorrect tree nodes.
@@ -208,7 +208,7 @@ export function FileTreePanel() {
     } finally {
       setLoading(false);
     }
-  }, [currentProjectId, setFileTree]);
+  }, [currentAppId, setFileTree]);
 
   useEffect(() => { fetchTree(); }, [fetchTree]);
   useEffect(() => { if (workspaceReady) fetchTree(); }, [workspaceReady, fetchTree]);

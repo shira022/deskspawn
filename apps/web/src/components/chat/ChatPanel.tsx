@@ -24,9 +24,9 @@ export function ChatPanel() {
   const agentStepCount = useAppStore((s) => s.agentStepCount);
   const agentMaxSteps = useAppStore((s) => s.agentMaxSteps);
   const aiConfig = useAppStore((s) => s.aiConfig);
-  const currentProjectId = useAppStore((s) => s.currentProjectId);
-  const projects = useAppStore((s) => s.projects);
-  const projectSwitching = useAppStore((s) => s.projectSwitching);
+  const currentAppId = useAppStore((s) => s.currentAppId);
+  const apps = useAppStore((s) => s.apps);
+  const appSwitching = useAppStore((s) => s.appSwitching);
   const fetchChatHistory = useAppStore((s) => s.fetchChatHistory);
   const initialized = useAppStore((s) => s.initialized);
   const { t } = useTranslation();
@@ -57,12 +57,12 @@ export function ChatPanel() {
   const [showSearch, setShowSearch] = useState(false);
   const [currentMatchIndex, setCurrentMatchIndex] = useState(0);
 
-  // ── Load chat history when project is confirmed ─────────────
+  // ── Load chat history when app is confirmed ─────────────
   useEffect(() => {
-    if (initialized && currentProjectId) {
+    if (initialized && currentAppId) {
       fetchChatHistory();
     }
-  }, [initialized, currentProjectId, fetchChatHistory]);
+  }, [initialized, currentAppId, fetchChatHistory]);
 
   // When the preview slider has navigated back, only show the messages that
   // existed at that checkpoint. visibleMessageCount = -1 means "show all".
@@ -270,7 +270,7 @@ export function ChatPanel() {
         if (cpIdx >= 0 && cpIdx < checkpoints.length) {
           try {
             const { deleteCheckpointsAfter } = await import("@/engine/tool-executors");
-            const pid = useAppStore.getState().currentProjectId;
+            const pid = useAppStore.getState().currentAppId;
             if (pid) await deleteCheckpointsAfter(pid, checkpoints[cpIdx].id);
           } catch (e) {
             console.warn("[chat] Failed to cleanup checkpoints after navigate-back:", e);
@@ -314,7 +314,7 @@ export function ChatPanel() {
 
     try {
       const { restoreCheckpoint } = await import("@/engine/tool-executors");
-      const pid = useAppStore.getState().currentProjectId;
+      const pid = useAppStore.getState().currentAppId;
       if (pid) await restoreCheckpoint(pid, cp.id);
       // プレビューを復元後のファイル状態に同期する
       setWorkspaceReady(true);
@@ -360,7 +360,7 @@ export function ChatPanel() {
         <MessageSquare className="h-4 w-4 text-muted-foreground" />
         <span className="text-sm font-medium">{t('chat.title')}</span>
 
-        {currentProjectId && !projectSwitching && (
+        {currentAppId && !appSwitching && (
           <div className="flex items-center gap-1 border-l border-border/40 pl-2">
             {checkpoints.length > 0 ? (
               <>
@@ -539,15 +539,15 @@ export function ChatPanel() {
               <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted mb-4">
                 <Bot className="h-6 w-6 text-muted-foreground" />
               </div>
-              {projectSwitching ? (
+              {appSwitching ? (
                 <>
-                  <h3 className="text-sm font-medium mb-1">{t('project.switching')}</h3>
-                  <p className="text-xs text-muted-foreground">{t('project.switchingDesc')}</p>
+                  <h3 className="text-sm font-medium mb-1">{t('app.switching')}</h3>
+                  <p className="text-xs text-muted-foreground">{t('app.switchingDesc')}</p>
                 </>
-              ) : currentProjectId ? (
+              ) : currentAppId ? (
                 <>
                   <h3 className="text-sm font-medium mb-1">
-                    {projects.find((p) => p.id === currentProjectId)?.name || t('project.label')} — {t('chat.deskspawnChat')}
+                    {apps.find((p) => p.id === currentAppId)?.name || t('app.label')} — {t('chat.deskspawnChat')}
                   </h3>
                   <p className="text-xs text-muted-foreground max-w-xs">
                     {t('chat.emptyStatePrompt')}
@@ -557,7 +557,7 @@ export function ChatPanel() {
                 <>
                   <h3 className="text-sm font-medium mb-1">{t('chat.deskspawnChat')}</h3>
                   <p className="text-xs text-muted-foreground max-w-xs">
-                    {t('chat.emptyStateNoProject')}
+                    {t('chat.emptyStateNoApp')}
                   </p>
                 </>
               )}
@@ -566,7 +566,7 @@ export function ChatPanel() {
                   ? `${aiConfig.provider} ${aiConfig.model} ${t('chat.inUse')}`
                   : t('chat.aiNotConfigured')}
               </p>
-              {currentProjectId && (
+              {currentAppId && (
                 <div className="mt-4 flex flex-wrap gap-1.5 justify-center">
                   {[t('chat.suggestion.calendarApp'), t('chat.suggestion.todoApp'), t('chat.suggestion.darkMode'), t('chat.suggestion.timerFeature')].map((s) => (
                     <button

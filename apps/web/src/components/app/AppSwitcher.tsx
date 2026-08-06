@@ -22,34 +22,35 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import type { ProjectMeta } from "@/types";
-import { listProjects, deleteProject as deleteStoredProject, saveProject } from "@/lib/storage";
-import { deleteProjectDir as deleteOpfsDir } from "@/lib/storage-opfs";
-import { setProjectId, deleteProjectCheckpoints } from "@/engine/tool-executors";
-import { exportProjectAsZip, importProjectFromZip } from "@/lib/project-export";
+import type { AppMeta } from "@/types";
+import { listApps, deleteApp as deleteStoredApp, saveApp } from "@/lib/storage";
+import { deleteAppDir as deleteOpfsDir } from "@/lib/storage-opfs";
+import { setAppId, deleteAppCheckpoints } from "@/engine/tool-executors";
+import { exportAppAsZip, importAppFromZip } from "@/lib/app-export";
+import { isDesktopEnv } from "@/lib/platform";
 
-interface ProjectSwitcherProps {
+interface AppSwitcherProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onNewApp: () => void;
 }
 
-export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitcherProps) {
+export function AppSwitcher({ open, onOpenChange, onNewApp }: AppSwitcherProps) {
   const ref = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [deleteTarget, setDeleteTarget] = useState<ProjectMeta | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<AppMeta | null>(null);
   const [deleteError, setDeleteError] = useState("");
   const [exportingId, setExportingId] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const { t } = useTranslation();
 
   const {
-    currentProjectId,
-    setCurrentProjectId,
-    projects,
-    setProjects,
-    removeProject,
+    currentAppId,
+    setCurrentAppId,
+    apps,
+    setApps,
+    removeApp,
     clearMessages,
     setWorkspaceReady,
     setAgentStatus,
@@ -59,16 +60,16 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     setCheckpoints,
     setCurrentCheckpointIndex,
     setVisibleMessageCount,
-    projectSwitching,
-    setProjectSwitching,
+    appSwitching,
+    setAppSwitching,
   } = useAppStore();
 
-  // Fetch projects from IndexedDB on open
+  // Fetch apps from IndexedDB on open
   useEffect(() => {
     if (open) {
-      listProjects().then(setProjects).catch(console.error);
+      listApps().then(setApps).catch(console.error);
     }
-  }, [open, setProjects]);
+  }, [open, setApps]);
 
   // Reset delete target when popover closes
   useEffect(() => {
@@ -88,24 +89,24 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
     return () => document.removeEventListener("mousedown", handler);
   }, [open, onOpenChange]);
 
-  const handleSelect = async (project: ProjectMeta) => {
-    if (project.id === currentProjectId) {
+  const handleSelect = async (app: AppMeta) => {
+    if (app.id === currentAppId) {
       onOpenChange(false);
       return;
     }
 
-    setProjectSwitching(true);
+    setAppSwitching(true);
     onOpenChange(false);
 
     try {
       // Update timestamp
       const now = new Date().toISOString();
-      const { saveProject } = await import("@/lib/storage");
-      await saveProject({ ...project, updatedAt: now });
+      const { saveApp } = await import("@/lib/storage");
+      await saveApp({ ...app, updatedAt: now });
 
-      // Set current project in engine
-      setProjectId(project.id);
-      setCurrentProjectId(project.id);
+      // Set current app in engine
+      setAppId(app.id);
+      setCurrentAppId(app.id);
 
       // Reset session state
       clearMessages();
@@ -118,50 +119,56 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
       setCurrentCheckpointIndex(-1);
       setVisibleMessageCount(-1);
 
-      // Refresh project list
-      const updatedProjects = await listProjects();
-      setProjects(updatedProjects);
-      setProjectSwitching(false);
+      // Refresh app list
+      const updatedApps = await listApps();
+      setApps(updatedApps);
+      setAppSwitching(false);
     } catch (e: any) {
-      console.error("Project switch failed:", e);
-      setProjectSwitching(false);
+      console.error("App switch failed:", e);
+      setAppSwitching(false);
     }
   };
 
-  const handleDelete = async (project: ProjectMeta) => {
-    if (project.id === currentProjectId) {
-      setDeleteError(t('project.deleteDisabledActive'));
+  const handleDelete = async (app: AppMeta) => {
+    if (app.id === currentAppId) {
+      setDeleteError(t('app.deleteDisabledActive'));
       return;
     }
     setDeleteError("");
     try {
-      await deleteStoredProject(project.id);
-      // Delete OPFS project files
-      deleteOpfsDir(project.id).catch(() => {});
-      // Delete checkpoints for this project
-      await deleteProjectCheckpoints(project.id);
+      await deleteStoredApp(app.id);
+      // Delete OPFS app files
+      deleteOpfsDir(app.id).catch(() => {});
+      // Delete checkpoints for this app
+      await deleteAppCheckpoints(app.id);
 
-      if (project.id === currentProjectId) {
-        setCurrentProjectId(null);
+      if (app.id === currentAppId) {
+        setCurrentAppId(null);
       }
-      removeProject(project.id);
+      removeApp(app.id);
       setDeleteTarget(null);
     } catch (e: any) {
-      setDeleteError(e.message || t('project.deleteError'));
+      setDeleteError(e.message || t('app.deleteError'));
     }
   };
 
   // ── Export ──────────────────────────────────────────────────────────────────
 
-  const handleExport = async (project: ProjectMeta) => {
-    setExportingId(project.id);
+  const handleExport = async (app: AppMeta) => {
+    setExportingId(app.id);
     try {
-      await exportProjectAsZip(project.id, project.name);
+      if (isDesktopEnv()) {
+        // M1-B: デスクトップは実ファイルを Rust 側で zip 化して保存ダイアログを出す
+        const { invoke } = await import("@tauri-apps/api/core");
+        await invoke("export_app_zip", { appId: app.id });
+      } else {
+        await exportAppAsZip(app.id, app.name);
+      }
       const { addToast } = useAppStore.getState();
-      addToast({ message: t('project.exportSuccess', { name: project.name }), variant: "success" });
+      addToast({ message: t('app.exportSuccess', { name: app.name }), variant: "success" });
     } catch (e: any) {
       const { addToast } = useAppStore.getState();
-      addToast({ message: e.message || t('project.exportError'), variant: "error" });
+      addToast({ message: e.message || t('app.exportError'), variant: "error" });
     } finally {
       setExportingId(null);
     }
@@ -175,25 +182,35 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
 
     setImporting(true);
     try {
-      const projectId = crypto.randomUUID();
-      const result = await importProjectFromZip(file, projectId);
+      const { setApps, addToast } = useAppStore.getState();
+      if (isDesktopEnv()) {
+        // M1-B: デスクトップは Rust が zip 展開（zip slip 対策込み）して
+        // 実ディレクトリ + レジストリへ登録する。ファイル選択ダイアログも Rust 側。
+        const { invoke } = await import("@tauri-apps/api/core");
+        const meta = await invoke<{ id: string; name: string }>("import_app_zip");
+        const updatedApps = await listApps();
+        setApps(updatedApps);
+        addToast({ message: t('app.importSuccess', { name: meta.name }), variant: "success" });
+      } else {
+        const appId = crypto.randomUUID();
+        const result = await importAppFromZip(file, appId);
 
-      const now = new Date().toISOString();
-      await saveProject({
-        id: projectId,
-        name: result.projectName,
-        createdAt: now,
-        updatedAt: now,
-      });
+        const now = new Date().toISOString();
+        await saveApp({
+          id: appId,
+          name: result.appName,
+          createdAt: now,
+          updatedAt: now,
+        });
 
-      // Refresh project list
-      const updatedProjects = await listProjects();
-      const { setProjects, addToast } = useAppStore.getState();
-      setProjects(updatedProjects);
-      addToast({ message: t('project.importSuccess', { name: result.projectName }), variant: "success" });
+        // Refresh app list
+        const updatedApps = await listApps();
+        setApps(updatedApps);
+        addToast({ message: t('app.importSuccess', { name: result.appName }), variant: "success" });
+      }
     } catch (e: any) {
       const { addToast } = useAppStore.getState();
-      addToast({ message: e.message || t('project.importError'), variant: "error" });
+      addToast({ message: e.message || t('app.importError'), variant: "error" });
     } finally {
       setImporting(false);
       // Reset file input so the same file can be selected again
@@ -233,7 +250,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
           <div className="flex items-center gap-1 px-2 py-1.5">
             <span className="text-xs font-medium text-muted-foreground flex items-center gap-1.5 mr-auto shrink-0">
               <Clock className="h-3 w-3" />
-              {t('project.history')}
+              {t('app.history')}
             </span>
             <Button
               variant="ghost"
@@ -241,14 +258,14 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
               className="h-6 px-1.5 text-xs shrink-0"
               onClick={handleImportClick}
               disabled={importing}
-              title={t('project.import')}
+              title={t('app.import')}
             >
               {importing ? (
                 <Loader2 className="h-3 w-3 animate-spin" />
               ) : (
                 <Upload className="h-3 w-3" />
               )}
-              <span className="hidden sm:inline ml-1">{t('project.import')}</span>
+              <span className="hidden sm:inline ml-1">{t('app.import')}</span>
             </Button>
             <Button
               variant="ghost"
@@ -257,53 +274,53 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
               onClick={() => { onOpenChange(false); onNewApp(); }}
             >
               <Plus className="h-3 w-3" />
-              <span className="hidden sm:inline ml-1">{t('project.createNew')}</span>
+              <span className="hidden sm:inline ml-1">{t('app.createNew')}</span>
             </Button>
           </div>
 
           <Separator className="my-1.5" />
 
-          {projects.length === 0 ? (
+          {apps.length === 0 ? (
             <div className="flex flex-col items-center py-6 text-center text-muted-foreground">
               <FolderKanban className="h-8 w-8 mb-2 opacity-30" />
-              <p className="text-xs">{t('project.noHistory')}</p>
+              <p className="text-xs">{t('app.noHistory')}</p>
               <Button variant="outline" size="sm" className="mt-3 h-7 text-xs"
                 onClick={() => { onOpenChange(false); onNewApp(); }}>
                 <Plus className="h-3 w-3 mr-1" />
-                {t('project.createFirst')}
+                {t('app.createFirst')}
               </Button>
             </div>
           ) : (
             <ScrollArea className="max-h-64" viewportClassName="max-h-64 space-y-0.5">
-              {projects.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map((project) => {
-                const isActive = project.id === currentProjectId;
+              {apps.slice().sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).map((app) => {
+                const isActive = app.id === currentAppId;
                 return (
-                  <div key={project.id}
-                    className={`w-full flex items-center gap-2 px-2 py-2 rounded-md text-left text-sm transition-colors hover:bg-muted cursor-pointer ${isActive ? "bg-muted" : ""} ${projectSwitching ? "pointer-events-none opacity-50" : ""}`}
-                    onClick={() => !projectSwitching && handleSelect(project)}
-                    role="button" tabIndex={projectSwitching ? -1 : 0}>
+                  <div key={app.id}
+                    className={`w-full flex items-center gap-2 px-2 py-2 rounded-md text-left text-sm transition-colors hover:bg-muted cursor-pointer ${isActive ? "bg-muted" : ""} ${appSwitching ? "pointer-events-none opacity-50" : ""}`}
+                    onClick={() => !appSwitching && handleSelect(app)}
+                    role="button" tabIndex={appSwitching ? -1 : 0}>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-medium truncate text-sm">{project.name}</span>
+                        <span className="font-medium truncate text-sm">{app.name}</span>
                         {isActive && <Check className="h-3 w-3 text-primary shrink-0" />}
                       </div>
-                      <span className="text-[10px] text-muted-foreground">{formatDate(project.updatedAt)}</span>
+                      <span className="text-[10px] text-muted-foreground">{formatDate(app.updatedAt)}</span>
                     </div>
                     <button
                       className="shrink-0 p-1 rounded transition-colors text-muted-foreground hover:text-foreground hover:bg-muted disabled:opacity-30 disabled:cursor-not-allowed"
-                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleExport(project); }}
-                      disabled={exportingId === project.id}
-                      title={t('project.export')}
+                      onClick={(e) => { e.stopPropagation(); e.preventDefault(); handleExport(app); }}
+                      disabled={exportingId === app.id}
+                      title={t('app.export')}
                     >
-                      {exportingId === project.id ? (
+                      {exportingId === app.id ? (
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
                       ) : (
                         <Download className="h-3.5 w-3.5" />
                       )}
                     </button>
                     <button className={`shrink-0 p-1 rounded transition-colors ${isActive ? 'text-muted-foreground/30 cursor-not-allowed' : 'hover:bg-destructive/10 text-muted-foreground hover:text-destructive'}`}
-                      onClick={(e) => { if (isActive) return; e.stopPropagation(); e.preventDefault(); setDeleteTarget(project); }}
-                      title={isActive ? t('project.deleteDisabledActive') : t('project.delete')}
+                      onClick={(e) => { if (isActive) return; e.stopPropagation(); e.preventDefault(); setDeleteTarget(app); }}
+                      title={isActive ? t('app.deleteDisabledActive') : t('app.delete')}
                       disabled={isActive}>
                       <Trash2 className="h-3.5 w-3.5" />
                     </button>
@@ -320,8 +337,8 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
           <Dialog open={!!deleteTarget} onOpenChange={(open) => { if (!open) { setDeleteTarget(null); setDeleteError(""); } }}>
             <DialogContent>
               <DialogHeader>
-                <DialogTitle>{t('project.deleteTitle')}</DialogTitle>
-                <DialogDescription>{t('project.deleteConfirm', { name: deleteTarget?.name || '' })}</DialogDescription>
+                <DialogTitle>{t('app.deleteTitle')}</DialogTitle>
+                <DialogDescription>{t('app.deleteConfirm', { name: deleteTarget?.name || '' })}</DialogDescription>
               </DialogHeader>
               {deleteError && <div className="px-6"><p className="text-sm text-destructive">{deleteError}</p></div>}
               <DialogFooter>
@@ -329,7 +346,7 @@ export function ProjectSwitcher({ open, onOpenChange, onNewApp }: ProjectSwitche
                   {t('common.cancel')}
                 </Button>
                 <Button variant="destructive" size="sm" onClick={() => { if (deleteTarget) handleDelete(deleteTarget); }}>
-                  {t('project.deleteConfirmButton')}
+                  {t('app.deleteConfirmButton')}
                 </Button>
               </DialogFooter>
             </DialogContent>

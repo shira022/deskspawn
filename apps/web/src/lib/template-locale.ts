@@ -1,5 +1,5 @@
 // ============================================================
-// Template Locale — localized strings for the default project template
+// Template Locale — localized strings for the default app template
 // ============================================================
 //
 // When adding a new language:
@@ -10,7 +10,7 @@
 // ============================================================
 
 /**
- * Locale-specific strings injected into the default project template.
+ * Locale-specific strings injected into the default app template.
  * Only the user-facing text and developer guide comments are here;
  * the example code and structural parts live in template.ts.
  */

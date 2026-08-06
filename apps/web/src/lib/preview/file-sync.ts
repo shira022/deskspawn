@@ -1,12 +1,12 @@
 /**
  * ファイル同期 — OPFS/IndexedDB → WebContainer
  *
- * プロジェクトファイルの変更を検出し、WebContainerのファイルシステムに
+ * アプリファイルの変更を検出し、WebContainerのファイルシステムに
  * 同期する。package.json の変更も検出し、npm install が必要か判断する。
  */
 
 import type { WebContainer } from "@webcontainer/api";
-import { listProjectFiles, readProjectFile } from "@/lib/storage-opfs";
+import { listAppFiles, readAppFile } from "@/lib/storage-opfs";
 import type { SyncResult } from "./types";
 
 // ── ファイルフィルター ────────────────────────────────────────────────────────
@@ -30,14 +30,14 @@ function shouldSync(filePath: string): boolean {
 // ── ファイル同期 ──────────────────────────────────────────────────────────────
 
 /**
- * OPFSから全プロジェクトファイルを読み込み、WebContainerにマウントする。
+ * OPFSから全アプリファイルを読み込み、WebContainerにマウントする。
  * 初回マウント用。
  */
 export async function mountAllFiles(
   container: WebContainer,
-  projectId: string,
+  appId: string,
 ): Promise<void> {
-  const allFiles = await listProjectFiles(projectId);
+  const allFiles = await listAppFiles(appId);
 
   // FileSystemTree 形式に変換
   const tree: Record<string, any> = {};
@@ -45,7 +45,7 @@ export async function mountAllFiles(
   for (const file of allFiles) {
     if (file.isDirectory || !shouldSync(file.path)) continue;
 
-    const content = await readProjectFile(projectId, file.path);
+    const content = await readAppFile(appId, file.path);
     if (content === null) continue;
 
     setTreePath(tree, file.path, content);
@@ -102,10 +102,10 @@ async function readContainerPackageJson(
  */
 export async function detectPackageJsonChange(
   container: WebContainer,
-  projectId: string,
+  appId: string,
 ): Promise<boolean> {
   const prev = await readContainerPackageJson(container);
-  const current = await readProjectFile(projectId, "package.json");
+  const current = await readAppFile(appId, "package.json");
 
   if (current === null && prev === null) {
     console.log(`[preview] detectPackageJsonChange: both null → no change`);
@@ -165,9 +165,9 @@ export async function detectPackageJsonChange(
  */
 export async function syncChangedFiles(
   container: WebContainer,
-  projectId: string,
+  appId: string,
 ): Promise<SyncResult> {
-  const allFiles = await listProjectFiles(projectId);
+  const allFiles = await listAppFiles(appId);
   let filesSynced = 0;
   const errors: string[] = [];
   let pkgChanged = false;
@@ -176,7 +176,7 @@ export async function syncChangedFiles(
     if (file.isDirectory || !shouldSync(file.path)) continue;
 
     try {
-      const content = await readProjectFile(projectId, file.path);
+      const content = await readAppFile(appId, file.path);
       if (content === null) continue;
 
       // コンテナ上の既存ファイルと比較

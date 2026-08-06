@@ -28,7 +28,7 @@ Your ONLY job is to determine whether a user's request needs a simple single-ste
 Respond with "single" when:
 - Fixing typos, errors, or small bugs
 - Simple 1-2 file modifications (e.g., "change button color", "add an input field")
-- Reading files or checking project structure
+- Reading files or checking app structure
 - Small UI adjustments (text changes, spacing, layout tweaks)
 - Adding a simple utility function
 - Renaming or refactoring a single file

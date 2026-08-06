@@ -509,7 +509,7 @@ pub fn initialize_workspace(
             "Template directory {:?} not found. Creating empty workspace.",
             template_dir
         );
-        // Create minimal structure for React + TypeScript projects
+        // Create minimal structure for React + TypeScript apps
         std::fs::create_dir_all(workspace.join("src"))
             .map_err(|e| format!("Failed to create src directory: {}", e))?;
     }

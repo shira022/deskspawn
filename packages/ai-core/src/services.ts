@@ -62,7 +62,7 @@ export interface AiService {
 
 // ── Storage Service ───────────────────────────────────────────────────────
 
-export interface ProjectData {
+export interface AppData {
   id: string;
   name: string;
   createdAt: string;
@@ -82,11 +82,11 @@ export interface AppSettings {
 }
 
 export interface StorageService {
-  // Project CRUD
-  saveProject(project: ProjectData): Promise<void>;
-  loadProject(id: string): Promise<ProjectData | null>;
-  listProjects(): Promise<ProjectData[]>;
-  deleteProject(id: string): Promise<void>;
+  // App CRUD
+  saveApp(app: AppData): Promise<void>;
+  loadApp(id: string): Promise<AppData | null>;
+  listApps(): Promise<AppData[]>;
+  deleteApp(id: string): Promise<void>;
 
   // App settings
   saveSettings(settings: AppSettings): Promise<void>;
@@ -97,10 +97,10 @@ export interface StorageService {
   loadApiKey(provider: string): Promise<string | null>;
   deleteApiKey(provider: string): Promise<void>;
 
-  // Project file operations
-  writeFile(projectId: string, path: string, content: string): Promise<void>;
-  readFile(projectId: string, path: string): Promise<string | null>;
-  listFiles(projectId: string): Promise<string[]>;
+  // App file operations
+  writeFile(appId: string, path: string, content: string): Promise<void>;
+  readFile(appId: string, path: string): Promise<string | null>;
+  listFiles(appId: string): Promise<string[]>;
 
   /** Check if the service is available */
   isAvailable(): Promise<boolean>;
@@ -109,8 +109,8 @@ export interface StorageService {
 // ── Preview Service ───────────────────────────────────────────────────────
 
 export interface PreviewService {
-  /** Start preview server for generated project files */
-  startPreview(projectId: string, files: Record<string, string>): Promise<{ url: string }>;
+  /** Start preview server for generated app files */
+  startPreview(appId: string, files: Record<string, string>): Promise<{ url: string }>;
 
   /** Stop the currently running preview */
   stopPreview(): Promise<void>;

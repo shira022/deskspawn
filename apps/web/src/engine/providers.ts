@@ -91,7 +91,6 @@ export function getModel(config: ProviderConfig): LanguageModel {
         name: 'custom-provider',
         baseURL: isDesktop ? `${sidecarBase()}/v1` : customEndpoint,
         apiKey,
-        headers: isDesktop ? { 'x-upstream': customEndpoint } : undefined,
       });
       return client.chatModel(model) as unknown as LanguageModel;
     }

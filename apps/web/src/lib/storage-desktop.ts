@@ -2,8 +2,8 @@
  * Desktop storage adapter — real files on disk via Rust IPC.
  *
  * Desktop-only (see ADR-008). The web version keeps IndexedDB/OPFS.
- * All project data lives under `~/deskspawn/projects/<projectId>/` and the
- * registry lives in `~/deskspawn/projects/projects.json`.
+ * All app data lives under `~/deskspawn/apps/<appId>/` and the
+ * registry lives in `~/deskspawn/apps/apps.json`.
  *
  * API shape mirrors apps/web/src/lib/storage.ts so the shared engine and
  * UI can swap adapters transparently via isDesktopEnv().
@@ -14,7 +14,7 @@
 
 // ── Types (mirror of storage.ts) ──────────────────────────────────────────────
 
-export interface StoredProject {
+export interface StoredApp {
   id: string;
   name: string;
   createdAt: string;
@@ -33,15 +33,15 @@ function isDesktopRuntime(): boolean {
   return typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__);
 }
 
-// ── Project Operations (Rust IPC) ─────────────────────────────────────────────
+// ── App Operations (Rust IPC) ─────────────────────────────────────────────
 
-/** Map Rust ProjectMeta (snake_case) to the shared StoredProject shape. */
-function mapProjectMeta(meta: {
+/** Map Rust AppMeta (snake_case) to the shared StoredApp shape. */
+function mapAppMeta(meta: {
   id: string;
   name: string;
   created_at: string;
   updated_at: string;
-}): StoredProject {
+}): StoredApp {
   return {
     id: meta.id,
     name: meta.name,
@@ -50,29 +50,29 @@ function mapProjectMeta(meta: {
   };
 }
 
-export async function listProjectsDesktop(): Promise<StoredProject[]> {
+export async function listAppsDesktop(): Promise<StoredApp[]> {
   const metas = await tauriInvoke<Array<{
     id: string;
     name: string;
     created_at: string;
     updated_at: string;
-  }>>("list_projects");
-  return metas.map(mapProjectMeta);
+  }>>("list_apps");
+  return metas.map(mapAppMeta);
 }
 
-export async function getProjectDesktop(id: string): Promise<StoredProject | null> {
-  const projects = await listProjectsDesktop();
-  return projects.find((p) => p.id === id) ?? null;
+export async function getAppDesktop(id: string): Promise<StoredApp | null> {
+  const apps = await listAppsDesktop();
+  return apps.find((p) => p.id === id) ?? null;
 }
 
 /**
- * Persist a project. On desktop the Rust backend owns the registry and
- * assigns its own id (`proj-...`); that id is returned so callers use the
+ * Persist an app. On desktop the Rust backend owns the registry and
+ * assigns its own id (`app-...`); that id is returned so callers use the
  * REAL directory id (the caller's temporary UUID would not match any
- * on-disk project dir).
+ * on-disk app dir).
  */
-export async function saveProjectDesktop(project: StoredProject): Promise<string> {
-  const existing = await getProjectDesktop(project.id);
+export async function saveAppDesktop(app: StoredApp): Promise<string> {
+  const existing = await getAppDesktop(app.id);
   if (existing) {
     return existing.id;
   }
@@ -81,62 +81,62 @@ export async function saveProjectDesktop(project: StoredProject): Promise<string
     name: string;
     created_at: string;
     updated_at: string;
-  }>("create_project", { name: project.name });
+  }>("create_app", { name: app.name });
   return created.id;
 }
 
-export async function deleteProjectDesktop(id: string): Promise<void> {
-  await tauriInvoke("delete_project", { projectId: id });
+export async function deleteAppDesktop(id: string): Promise<void> {
+  await tauriInvoke("delete_app", { appId: id });
 }
 
-// ── Project File Operations (real files on disk) ──────────────────────────────
+// ── App File Operations (real files on disk) ──────────────────────────────
 
-/** List project source files (relative paths, excludes node_modules/.git). */
-export async function listProjectFilesDesktop(projectId: string): Promise<string[]> {
-  return tauriInvoke<string[]>("list_project_files", { projectId });
+/** List app source files (relative paths, excludes node_modules/.git). */
+export async function listAppFilesDesktop(appId: string): Promise<string[]> {
+  return tauriInvoke<string[]>("list_app_files", { appId });
 }
 
-/** Read a single project file. Returns null if missing. */
-export async function readProjectFileDesktop(
-  projectId: string,
+/** Read a single app file. Returns null if missing. */
+export async function readAppFileDesktop(
+  appId: string,
   path: string,
 ): Promise<string | null> {
   try {
-    return await tauriInvoke<string>("read_project_file", { projectId, path });
+    return await tauriInvoke<string>("read_app_file", { appId, path });
   } catch {
     return null;
   }
 }
 
 /** Read multiple files; null entries for missing files. */
-export async function readProjectFilesDesktop(
-  projectId: string,
+export async function readAppFilesDesktop(
+  appId: string,
   paths: string[],
 ): Promise<Record<string, string | null>> {
   const out: Record<string, string | null> = {};
   for (const p of paths) {
-    out[p] = await readProjectFileDesktop(projectId, p);
+    out[p] = await readAppFileDesktop(appId, p);
   }
   return out;
 }
 
-/** Write a single project file (creates parent dirs). */
-export async function writeProjectFileDesktop(
-  projectId: string,
+/** Write a single app file (creates parent dirs). */
+export async function writeAppFileDesktop(
+  appId: string,
   path: string,
   content: string,
 ): Promise<void> {
-  await tauriInvoke("write_project_file", { projectId, path, content });
+  await tauriInvoke("write_app_file", { appId, path, content });
 }
 
 /** Write multiple files in one IPC round trip. Returns count written. */
-export async function writeProjectFilesDesktop(
-  projectId: string,
+export async function writeAppFilesDesktop(
+  appId: string,
   files: Record<string, string>,
 ): Promise<number> {
   const entries = Object.entries(files);
-  return tauriInvoke<number>("write_project_files", {
-    projectId,
+  return tauriInvoke<number>("write_app_files", {
+    appId,
     files: entries,
   });
 }
@@ -146,7 +146,7 @@ export function isDesktopStorageActive(): boolean {
   return isDesktopRuntime();
 }
 
-// ── Chat History (persisted per-project in SQLite via Rust IPC, ADR-009) ──────
+// ── Chat History (persisted per-app in SQLite via Rust IPC, ADR-009) ──────
 
 /** Chat message shape returned by the Rust backend. */
 export interface ChatMessage {
@@ -156,10 +156,10 @@ export interface ChatMessage {
   created_at: string;
 }
 
-/** Load chat history from the project's SQLite DB (Rust side). */
-export async function getChatHistoryDesktop(projectId: string): Promise<any[]> {
+/** Load chat history from the app's SQLite DB (Rust side). */
+export async function getChatHistoryDesktop(appId: string): Promise<any[]> {
   try {
-    const msgs = await tauriInvoke<ChatMessage[]>("get_chat_history", { projectId });
+    const msgs = await tauriInvoke<ChatMessage[]>("get_chat_history", { appId });
     return msgs.map((m) => ({ role: m.role, content: m.content }));
   } catch (e) {
     console.warn("[storage-desktop] get_chat_history failed:", e);
@@ -167,9 +167,9 @@ export async function getChatHistoryDesktop(projectId: string): Promise<any[]> {
   }
 }
 
-/** Append the latest chat message to the project's SQLite DB (Rust side). */
+/** Append the latest chat message to the app's SQLite DB (Rust side). */
 export async function saveChatHistoryDesktop(
-  projectId: string,
+  appId: string,
   messages: any[],
 ): Promise<void> {
   try {
@@ -177,7 +177,7 @@ export async function saveChatHistoryDesktop(
     const last = messages[messages.length - 1];
     if (last && typeof last.role === "string" && typeof last.content === "string") {
       await tauriInvoke("append_chat_message", {
-        projectId,
+        appId,
         role: last.role,
         content: last.content,
       });

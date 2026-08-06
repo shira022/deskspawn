@@ -46,7 +46,7 @@ export type {
   GenerateTextParams,
   StreamTextParams,
   AiService,
-  ProjectData,
+  AppData,
   AppSettings,
   StorageService,
   PreviewService,

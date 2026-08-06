@@ -9,10 +9,10 @@ natural language conversations with an AI model.
 
 | Feature                | Description                                          |
 |------------------------|------------------------------------------------------|
-| **App Generation**     | Describe an app and get a working project instantly  |
+| **App Generation**     | Describe an app and get a working app instantly  |
 | **Iterative Refinement** | Keep chatting to add features or fix issues        |
 | **Code Editing**       | Ask for specific changes to generated files          |
-| **Multi-file Aware**   | The AI understands the full project context          |
+| **Multi-file Aware**   | The AI understands the full app context          |
 | **Local Models**       | Works with Ollama for fully offline use              |
 
 ---
@@ -63,8 +63,8 @@ DeskSpawn can run entirely offline using [Ollama](https://ollama.ai).
 
 ### Starting a Conversation
 
-1. Create or open a project.
-2. The chat panel opens on the right side of the project view.
+1. Create or open an app.
+2. The chat panel opens on the right side of the app view.
 3. Type your request — be as specific as possible for best results.
 
 ### Example Prompts
@@ -104,5 +104,5 @@ a title, due date, and a checkbox. Use Tailwind CSS for styling."
 
 ## See Also
 
-- [Managing Projects](./projects.md) — creating and organising projects
+- [Managing Apps](./apps.md) — creating and organising apps
 - [Getting Started](../getting-started.md) — how to get started with DeskSpawn

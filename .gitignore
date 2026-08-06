@@ -7,6 +7,7 @@ target/
 !.github/
 .DS_Store
 src-tauri/gen/
+**/src-tauri/gen/
 .deskspawn/
 
 # Build artifacts

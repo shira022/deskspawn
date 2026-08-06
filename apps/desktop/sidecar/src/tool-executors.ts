@@ -16,6 +16,9 @@ const SECURITY_SERVER_URL = SECURITY_SERVER_PORT
   ? `http://127.0.0.1:${SECURITY_SERVER_PORT}`
   : null;
 
+// H1: security_server の認証トークン（Rust から env で共有される）
+const AUTH_TOKEN = process.env.DESKSPAWN_AUTH_TOKEN || '';
+
 if (!SECURITY_SERVER_URL) {
   console.warn('[tool-executors] DESKSPAWN_SECURITY_PORT not set — security server unavailable!');
 }
@@ -28,9 +31,11 @@ export function setWorkspaceDir(dir: string) {
   console.log(`[tool-executors] Workspace dir set to: ${_workspaceDir}`);
   // Notify the Rust security server about the workspace change
   if (SECURITY_SERVER_URL) {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (AUTH_TOKEN) headers['X-DeskSpawn-Token'] = AUTH_TOKEN;
     fetch(`${SECURITY_SERVER_URL}/api/update-workspace`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ path: _workspaceDir }),
     }).catch((err) => console.warn('[tool-executors] Failed to update workspace in security server:', err.message));
   }
@@ -53,9 +58,11 @@ function securityUrl(endpoint: string): string {
 }
 
 async function securityPost(endpoint: string, body: unknown): Promise<any> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (AUTH_TOKEN) headers['X-DeskSpawn-Token'] = AUTH_TOKEN;
   const res = await fetch(securityUrl(endpoint), {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     body: JSON.stringify(body),
   });
   const data = await res.json();

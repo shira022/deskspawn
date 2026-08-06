@@ -11,10 +11,10 @@ export class WebPreviewService implements PreviewService {
   private previewManager = new PreviewManager();
 
   async startPreview(
-    projectId: string,
+    appId: string,
     _files: Record<string, string>,
   ): Promise<{ url: string }> {
-    await this.previewManager.boot(projectId);
+    await this.previewManager.boot(appId);
     const url = this.previewManager.url;
     if (!url) throw new Error("Preview failed to start");
     return { url };

@@ -1,7 +1,7 @@
 //! First-run setup — initializes the `~/deskspawn` tree and runtime state.
 //!
 //! Called from the Tauri setup hook. Safe to run on every launch (idempotent):
-//! it ensures directories exist and seeds the project registry if missing.
+//! it ensures directories exist and seeds the app registry if missing.
 
 use crate::engine::workspace;
 use std::fs;
@@ -15,14 +15,14 @@ pub fn run_setup() -> Result<String, String> {
     let root = workspace::ensure_deskspawn_tree()?;
     steps.push(format!("root={}", root.display()));
 
-    // 2. Seed an empty project registry if missing.
-    let projects_json = workspace::projects_json_path()?;
-    if !projects_json.exists() {
-        fs::write(&projects_json, "[]\n")
-            .map_err(|e| format!("Failed to seed project registry: {}", e))?;
-        steps.push("seeded projects.json".to_string());
+    // 2. Seed an empty app registry if missing.
+    let apps_json = workspace::apps_json_path()?;
+    if !apps_json.exists() {
+        fs::write(&apps_json, "[]\n")
+            .map_err(|e| format!("Failed to seed app registry: {}", e))?;
+        steps.push("seeded apps.json".to_string());
     } else {
-        steps.push("projects.json exists".to_string());
+        steps.push("apps.json exists".to_string());
     }
 
     // 3. Verify templates directory is present (contents are populated
@@ -59,10 +59,10 @@ mod tests {
         let first = run_setup();
         assert!(first.is_ok(), "first run failed: {:?}", first);
 
-        let projects_json = workspace::projects_json_path().unwrap();
-        assert!(projects_json.exists(), "projects.json must exist after setup");
+        let apps_json = workspace::apps_json_path().unwrap();
+        assert!(apps_json.exists(), "apps.json must exist after setup");
         assert_eq!(
-            fs::read_to_string(&projects_json).unwrap(),
+            fs::read_to_string(&apps_json).unwrap(),
             "[]\n",
             "registry must start empty"
         );
@@ -71,7 +71,7 @@ mod tests {
         let second = run_setup();
         assert!(second.is_ok(), "second run failed: {:?}", second);
         assert_eq!(
-            fs::read_to_string(&projects_json).unwrap(),
+            fs::read_to_string(&apps_json).unwrap(),
             "[]\n",
             "registry must be unchanged after second run"
         );
@@ -115,18 +115,18 @@ mod tests {
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
 
         let root = workspace::root_dir().unwrap();
-        assert_eq!(workspace::projects_dir().unwrap(), root.join("projects"));
+        assert_eq!(workspace::apps_dir().unwrap(), root.join("apps"));
         assert_eq!(workspace::templates_dir().unwrap(), root.join("templates"));
         assert_eq!(workspace::config_dir().unwrap(), root.join("config"));
         assert_eq!(workspace::tools_dir().unwrap(), root.join("tools"));
         assert_eq!(workspace::workspace_dir().unwrap(), root.join("workspace"));
         assert_eq!(workspace::logs_dir().unwrap(), root.join("logs"));
 
-        let pid = "test-project";
-        assert_eq!(workspace::project_dir(pid).unwrap(), root.join("projects").join(pid));
+        let pid = "test-app";
+        assert_eq!(workspace::app_dir(pid).unwrap(), root.join("apps").join(pid));
         assert_eq!(
-            workspace::project_chat_db_path(pid).unwrap(),
-            root.join("projects").join(pid).join(".deskspawn").join("chat.db")
+            workspace::app_chat_db_path(pid).unwrap(),
+            root.join("apps").join(pid).join(".deskspawn").join("chat.db")
         );
 
         std::env::remove_var("DESKSPAWN_ROOT");
