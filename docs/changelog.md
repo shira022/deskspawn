@@ -5,6 +5,25 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v0.4.1 (Windows Build & Preview Fixes) — 2026-08-06
+
+**Highlights:**
+
+- 🔧 **Windows build fixed** — `@types/node` was missing from the desktop
+  package (CI only built web, so the desktop build failure went undetected).
+- 🛠️ **Sidecar preview fixed** — the default workspace path resolved from
+  `__dirname` (which a `bun --compile` binary resolves to the runtime CWD,
+  e.g. a non-existent `B:\workspace`), breaking the preview dev server.
+  Now resolves from `os.homedir()` like the projects directory (ADR-007).
+- 🔢 **Single-version policy** — all packages (root, web, desktop, sidecar,
+  packages/*, tauri.conf.json, Cargo.toml) now share one version (`0.4.1`).
+  `scripts/check-versions.mjs` verifies consistency; `scripts/set-version.py`
+  bumps every location. Enforced in the verify/merge agent skills and
+  AGENTS.md to prevent tag/version drift (v0.4.0 was tagged while the app
+  still reported 0.2.0).
+
+---
+
 ## v0.4.0 (Desktop Redesign — Full-Stack Generated Apps) — 2026-08-05
 
 **Highlights:**
