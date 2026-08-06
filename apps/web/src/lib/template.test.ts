@@ -41,7 +41,7 @@ describe("getTemplateFiles", () => {
       "src/App.tsx",
       "src/hooks/index.ts",
       "src/index.css",
-      "src/lib/project-id.ts",
+      "src/lib/app-id.ts",
       "src/lib/storage-idb.ts",
       "src/lib/storage.ts",
       "src/main.tsx",

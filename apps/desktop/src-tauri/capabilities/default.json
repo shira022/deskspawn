@@ -36,9 +36,8 @@
       "allow": [
         { "path": "$APPDATA/**" },
         { "path": "$RESOURCE/**" },
-        { "path": "$HOME/DeskSpawn/**" },
-        { "path": "$HOME/Desktop/**" },
-        { "path": "$HOME/Documents/**" }
+        { "path": "$HOME/deskspawn/**" },
+        { "path": "$HOME/DeskSpawn/**" }
       ]
     },
     "fs:allow-read",

@@ -126,11 +126,11 @@ vi.mock("@webcontainer/api", () => {
 // ─── Mock @/lib/storage-opfs ───────────────────────────────────────────────────
 
 vi.mock("@/lib/storage-opfs", () => ({
-  readProjectFile: vi.fn(),
-  listProjectFiles: vi.fn(),
+  readAppFile: vi.fn(),
+  listAppFiles: vi.fn(),
 }));
 
-import { readProjectFile, listProjectFiles } from "@/lib/storage-opfs";
+import { readAppFile, listAppFiles } from "@/lib/storage-opfs";
 import { PreviewManager } from "./webcontainer";
 
 describe("PreviewManager", () => {
@@ -139,8 +139,8 @@ describe("PreviewManager", () => {
   beforeEach(() => {
     resetMockState();
     vi.clearAllMocks();
-    vi.mocked(readProjectFile).mockReset();
-    vi.mocked(listProjectFiles).mockReset();
+    vi.mocked(readAppFile).mockReset();
+    vi.mocked(listAppFiles).mockReset();
     manager = new PreviewManager();
   });
 
@@ -153,7 +153,7 @@ describe("PreviewManager", () => {
   describe("constructor", () => {
     it("should initialize with idle status", () => {
       expect(manager.isBooted).toBe(false);
-      expect(manager.projectId).toBeNull();
+      expect(manager.appId).toBeNull();
       expect(manager.url).toBeNull();
     });
   });
@@ -169,9 +169,9 @@ describe("PreviewManager", () => {
     });
   });
 
-  describe("projectId", () => {
+  describe("appId", () => {
     it("should return null initially", () => {
-      expect(manager.projectId).toBeNull();
+      expect(manager.appId).toBeNull();
     });
   });
 
@@ -233,20 +233,20 @@ describe("PreviewManager", () => {
     it("should reset state to idle when container exists", () => {
       // Manually set booted state
       (manager as any).container = { teardown: vi.fn().mockResolvedValue(undefined) } as any;
-      (manager as any).currentProjectId = "proj-1";
+      (manager as any).currentAppId = "app-1";
       (manager as any)._status = "ready";
 
       manager.teardown();
 
       expect(manager.isBooted).toBe(false);
-      expect(manager.projectId).toBeNull();
+      expect(manager.appId).toBeNull();
       expect(manager.url).toBeNull();
     });
 
     it("should notify listeners with idle status on teardown", () => {
       const listener = vi.fn();
       (manager as any).container = { teardown: vi.fn().mockResolvedValue(undefined) } as any;
-      (manager as any).currentProjectId = "proj-1";
+      (manager as any).currentAppId = "app-1";
       (manager as any)._status = "ready";
       (manager as any)._url = "http://localhost:5173";
       (manager as any).listeners = new Set([listener]);
@@ -271,25 +271,25 @@ describe("PreviewManager", () => {
   // ── syncAndReload() ── tested via integration (complex async flow)
 
   describe("syncAndReload (sync fallback path)", () => {
-    it("should throw when container is booted but project ID is wrong", async () => {
+    it("should throw when container is booted but app ID is wrong", async () => {
       (manager as any).container = {} as any;
-      (manager as any).currentProjectId = "other-proj";
+      (manager as any).currentAppId = "other-proj";
 
-      // syncAndReload with different project ID should go through boot path
-      // but we can verify it doesn't crash with wrong project
+      // syncAndReload with different app ID should go through boot path
+      // but we can verify it doesn't crash with wrong app
       const promise = manager.syncAndReload("other-proj");
-      // If container exists and project matches, it skips boot
+      // If container exists and app matches, it skips boot
       // We'd need the full integration to test the sync path
       // For unit testing, just verify it doesn't immediately reject
       await expect(Promise.race([promise, Promise.resolve("timeout")])).resolves.toBeDefined();
     }, 1000);
   });
 
-  // ── checkProject() ─────────────────────────────────────────────────────
+  // ── checkApp() ─────────────────────────────────────────────────────
 
-  describe("checkProject", () => {
+  describe("checkApp", () => {
     it("should return empty array when container is not booted", async () => {
-      const errors = await manager.checkProject("proj-1");
+      const errors = await manager.checkApp("app-1");
       expect(errors).toEqual([]);
     });
   });

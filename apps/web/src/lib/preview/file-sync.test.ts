@@ -8,8 +8,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 // variables aren't initialized yet when the factory runs.
 
 vi.mock("@/lib/storage-opfs", () => ({
-  readProjectFile: vi.fn(),
-  listProjectFiles: vi.fn(),
+  readAppFile: vi.fn(),
+  listAppFiles: vi.fn(),
 }));
 
 import {
@@ -63,8 +63,8 @@ function createFileInfo(path: string, isDir = false) {
 describe("file-sync", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(storageOpfs.readProjectFile).mockReset();
-    vi.mocked(storageOpfs.listProjectFiles).mockReset();
+    vi.mocked(storageOpfs.readAppFile).mockReset();
+    vi.mocked(storageOpfs.listAppFiles).mockReset();
   });
 
   afterEach(() => {
@@ -77,13 +77,13 @@ describe("file-sync", () => {
     it("should read all files from storage and mount to WebContainer", async () => {
       const { container, mountCalls } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("package.json"),
         createFileInfo("src/index.ts"),
         createFileInfo("src/components/App.tsx"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           const files: Record<string, string> = {
             "package.json": '{"name":"test"}',
@@ -94,10 +94,10 @@ describe("file-sync", () => {
         }
       );
 
-      await mountAllFiles(container, "proj-1");
+      await mountAllFiles(container, "app-1");
 
-      expect(vi.mocked(storageOpfs.listProjectFiles)).toHaveBeenCalledWith("proj-1");
-      expect(vi.mocked(storageOpfs.readProjectFile)).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(storageOpfs.listAppFiles)).toHaveBeenCalledWith("app-1");
+      expect(vi.mocked(storageOpfs.readAppFile)).toHaveBeenCalledTimes(3);
       expect(container.mount).toHaveBeenCalledTimes(1);
 
       // Verify the tree structure
@@ -117,23 +117,23 @@ describe("file-sync", () => {
     it("should exclude node_modules files", async () => {
       const { container, mountCalls } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("package.json"),
         createFileInfo("node_modules/react/index.js"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           if (path === "package.json") return "{}";
           return "some content";
         }
       );
 
-      await mountAllFiles(container, "proj-1");
+      await mountAllFiles(container, "app-1");
 
-      expect(vi.mocked(storageOpfs.readProjectFile)).toHaveBeenCalledTimes(1);
-      expect(vi.mocked(storageOpfs.readProjectFile)).toHaveBeenCalledWith(
-        "proj-1",
+      expect(vi.mocked(storageOpfs.readAppFile)).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(storageOpfs.readAppFile)).toHaveBeenCalledWith(
+        "app-1",
         "package.json"
       );
 
@@ -144,13 +144,13 @@ describe("file-sync", () => {
     it("should exclude package-lock.json", async () => {
       const { container, mountCalls } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("package.json"),
         createFileInfo("package-lock.json"),
         createFileInfo("src/index.ts"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           if (path === "package.json") return "{}";
           if (path === "src/index.ts") return "content";
@@ -158,10 +158,10 @@ describe("file-sync", () => {
         }
       );
 
-      await mountAllFiles(container, "proj-1");
+      await mountAllFiles(container, "app-1");
 
       // package-lock.json should be excluded
-      expect(vi.mocked(storageOpfs.readProjectFile)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(storageOpfs.readAppFile)).toHaveBeenCalledTimes(2);
       const tree = mountCalls[0];
       expect(tree["package-lock.json"]).toBeUndefined();
     });
@@ -169,13 +169,13 @@ describe("file-sync", () => {
     it("should skip directories", async () => {
       const { container, mountCalls } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("src", true), // directory
         createFileInfo("src/index.ts"),
         createFileInfo("package.json"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           if (path === "package.json") return "{}";
           if (path === "src/index.ts") return "content";
@@ -183,46 +183,46 @@ describe("file-sync", () => {
         }
       );
 
-      await mountAllFiles(container, "proj-1");
+      await mountAllFiles(container, "app-1");
 
-      // Should not call readProjectFile for directory
-      expect(vi.mocked(storageOpfs.readProjectFile)).toHaveBeenCalledTimes(2);
+      // Should not call readAppFile for directory
+      expect(vi.mocked(storageOpfs.readAppFile)).toHaveBeenCalledTimes(2);
       const tree = mountCalls[0];
       expect(tree["package.json"]).toBeDefined();
       expect(tree["src"].directory["index.ts"]).toBeDefined();
     });
 
-    it("should skip files where readProjectFile returns null", async () => {
+    it("should skip files where readAppFile returns null", async () => {
       const { container, mountCalls } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("package.json"),
         createFileInfo("missing.ts"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           if (path === "package.json") return "{}";
           return null; // missing.ts returns null
         }
       );
 
-      await mountAllFiles(container, "proj-1");
+      await mountAllFiles(container, "app-1");
 
-      expect(vi.mocked(storageOpfs.readProjectFile)).toHaveBeenCalledTimes(2);
+      expect(vi.mocked(storageOpfs.readAppFile)).toHaveBeenCalledTimes(2);
       const tree = mountCalls[0];
       expect(tree["package.json"]).toBeDefined();
       expect(tree["missing.ts"]).toBeUndefined();
     });
 
-    it("should handle empty project (no files)", async () => {
+    it("should handle empty app (no files)", async () => {
       const { container } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([]);
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([]);
 
-      await mountAllFiles(container, "proj-1");
+      await mountAllFiles(container, "app-1");
 
-      expect(vi.mocked(storageOpfs.readProjectFile)).not.toHaveBeenCalled();
+      expect(vi.mocked(storageOpfs.readAppFile)).not.toHaveBeenCalled();
       expect(container.mount).toHaveBeenCalledWith({});
     });
   });
@@ -238,15 +238,15 @@ describe("file-sync", () => {
       );
       const { container } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue(
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue(
         '{"dependencies":{"react":"^18.0.0"}}'
       );
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       expect(changed).toBe(false);
-      expect(vi.mocked(storageOpfs.readProjectFile)).toHaveBeenCalledWith(
-        "proj-1",
+      expect(vi.mocked(storageOpfs.readAppFile)).toHaveBeenCalledWith(
+        "app-1",
         "package.json"
       );
     });
@@ -259,11 +259,11 @@ describe("file-sync", () => {
       );
       const { container } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue(
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue(
         '{"dependencies":{"react":"^18.0.0"}}'
       );
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       expect(changed).toBe(true);
     });
@@ -276,11 +276,11 @@ describe("file-sync", () => {
       );
       const { container } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue(
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue(
         '{"devDependencies":{"vite":"^5.0.0"}}'
       );
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       expect(changed).toBe(true);
     });
@@ -293,11 +293,11 @@ describe("file-sync", () => {
       );
       const { container } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue(
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue(
         '{"dependencies":{"react":"^18.0.0","lodash":"^4.0.0"}}'
       );
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       expect(changed).toBe(true);
     });
@@ -305,11 +305,11 @@ describe("file-sync", () => {
     it("should return true when container has no package.json but OPFS does", async () => {
       const { container } = createMockContainer(); // no package.json in container
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue(
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue(
         '{"dependencies":{"react":"^18.0.0"}}'
       );
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       expect(changed).toBe(true);
     });
@@ -322,9 +322,9 @@ describe("file-sync", () => {
       );
       const { container } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue(null);
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue(null);
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       expect(changed).toBe(true);
     });
@@ -332,9 +332,9 @@ describe("file-sync", () => {
     it("should return false when both are null", async () => {
       const { container } = createMockContainer();
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue(null);
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue(null);
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       expect(changed).toBe(false);
     });
@@ -344,9 +344,9 @@ describe("file-sync", () => {
       fsFiles.set("/package.json", "not valid json");
       const { container } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue("not valid json");
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue("not valid json");
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       // Same invalid string → no change
       expect(changed).toBe(false);
@@ -357,9 +357,9 @@ describe("file-sync", () => {
       fsFiles.set("/package.json", "not valid json");
       const { container } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue("different invalid json");
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue("different invalid json");
 
-      const changed = await detectPackageJsonChange(container, "proj-1");
+      const changed = await detectPackageJsonChange(container, "app-1");
 
       expect(changed).toBe(true);
     });
@@ -375,13 +375,13 @@ describe("file-sync", () => {
 
       const { container, writeLog } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("package.json"),
         createFileInfo("src/index.ts"),
       ]);
 
       let _callIndex = 0;
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           _callIndex++;
           if (path === "package.json")
@@ -391,7 +391,7 @@ describe("file-sync", () => {
         }
       );
 
-      const result = await syncChangedFiles(container, "proj-1");
+      const result = await syncChangedFiles(container, "app-1");
 
       expect(result.filesSynced).toBe(2);
       expect(result.installTriggered).toBe(true);
@@ -409,12 +409,12 @@ describe("file-sync", () => {
 
       const { container, writeLog } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("src/index.ts"),
         createFileInfo("src/app.ts"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           if (path === "src/index.ts") return "same content"; // unchanged
           if (path === "src/app.ts") return "new app content"; // new file
@@ -422,7 +422,7 @@ describe("file-sync", () => {
         }
       );
 
-      const result = await syncChangedFiles(container, "proj-1");
+      const result = await syncChangedFiles(container, "app-1");
 
       // Only the new file should be synced
       expect(result.filesSynced).toBe(1);
@@ -434,13 +434,13 @@ describe("file-sync", () => {
     it("should write a touch file after syncing", async () => {
       const { container, writeLog } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("src/index.ts"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue("new content");
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue("new content");
 
-      const result = await syncChangedFiles(container, "proj-1");
+      const result = await syncChangedFiles(container, "app-1");
 
       expect(result.filesSynced).toBe(1);
 
@@ -459,13 +459,13 @@ describe("file-sync", () => {
 
       const { container, writeLog } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("src/index.ts"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue("same content");
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue("same content");
 
-      const result = await syncChangedFiles(container, "proj-1");
+      const result = await syncChangedFiles(container, "app-1");
 
       expect(result.filesSynced).toBe(0);
 
@@ -475,12 +475,12 @@ describe("file-sync", () => {
       expect(touchWrite).toBeUndefined();
     });
 
-    it("should handle empty project", async () => {
+    it("should handle empty app", async () => {
       const { container } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([]);
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([]);
 
-      const result = await syncChangedFiles(container, "proj-1");
+      const result = await syncChangedFiles(container, "app-1");
 
       expect(result.filesSynced).toBe(0);
       expect(result.installTriggered).toBe(false);
@@ -490,7 +490,7 @@ describe("file-sync", () => {
     it("should exclude node_modules and lock files", async () => {
       const { container, writeLog } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("package.json"),
         createFileInfo("package-lock.json"),
         createFileInfo("node_modules/react/index.js"),
@@ -498,7 +498,7 @@ describe("file-sync", () => {
         createFileInfo("dist/bundle.js"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           if (path === "package.json") return "{}";
           if (path === "src/index.ts") return "content";
@@ -506,7 +506,7 @@ describe("file-sync", () => {
         }
       );
 
-      const result = await syncChangedFiles(container, "proj-1");
+      const result = await syncChangedFiles(container, "app-1");
 
       expect(result.filesSynced).toBe(2);
       const writtenPaths = writeLog.map((w) => w.path);
@@ -520,13 +520,13 @@ describe("file-sync", () => {
     it("should collect errors for files that fail to sync", async () => {
       const { container } = createMockContainer();
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("package.json"),
         createFileInfo("src/index.ts"),
       ]);
 
       let _callCount = 0;
-      vi.mocked(storageOpfs.readProjectFile).mockImplementation(
+      vi.mocked(storageOpfs.readAppFile).mockImplementation(
         async (_pid: string, path: string) => {
           _callCount++;
           if (path === "package.json") return "{}";
@@ -535,7 +535,7 @@ describe("file-sync", () => {
         }
       );
 
-      const result = await syncChangedFiles(container, "proj-1");
+      const result = await syncChangedFiles(container, "app-1");
 
       expect(result.errors.length).toBeGreaterThan(0);
       expect(result.errors[0]).toContain("OPFS read error");
@@ -549,15 +549,15 @@ describe("file-sync", () => {
 
       const { container } = createMockContainer(fsFiles);
 
-      vi.mocked(storageOpfs.listProjectFiles).mockResolvedValue([
+      vi.mocked(storageOpfs.listAppFiles).mockResolvedValue([
         createFileInfo("package.json"),
       ]);
 
-      vi.mocked(storageOpfs.readProjectFile).mockResolvedValue(
+      vi.mocked(storageOpfs.readAppFile).mockResolvedValue(
         '{"dependencies":{"react":"^18.0.0","lodash":"^4.0.0"}}'
       );
 
-      const result = await syncChangedFiles(container, "proj-1");
+      const result = await syncChangedFiles(container, "app-1");
 
       expect(result.installTriggered).toBe(true);
     });

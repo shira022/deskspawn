@@ -1,17 +1,17 @@
 /**
  * PreviewPanel — プレビュー表示パネル
  *
- * WebContainer を使ってプロジェクトの Vite Dev Server を起動し、
+ * WebContainer を使ってアプリの Vite Dev Server を起動し、
  * iframe 内にプレビューを表示する。
  *
  * 動作:
- * 1. プロジェクト選択時に WebContainer を起動 (boot → mount → install → dev)
+ * 1. アプリ選択時に WebContainer を起動 (boot → mount → install → dev)
  * 2. コード変更時にファイルを同期 (sync → 必要なら npm install)
  * 3. Vite HMR が差分を自動反映
  * 4. iframe に Dev Server の URL を表示
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,7 @@ import {
   Terminal,
   Smartphone,
   Tablet,
-
+  ExternalLink,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -151,7 +151,7 @@ function LogViewer({ logs, status }: { logs: string[]; status: PreviewStatus }) 
 
 export function PreviewPanel() {
   const { t } = useTranslation();
-  const currentProjectId = useAppStore((s) => s.currentProjectId);
+  const currentAppId = useAppStore((s) => s.currentAppId);
   const initialized = useAppStore((s) => s.initialized);
   const reloadCounter = useAppStore((s) => s.reloadCounter);
   const previewMaximized = useAppStore((s) => s.previewMaximized);
@@ -163,7 +163,7 @@ export function PreviewPanel() {
   const [compatOk, setCompatOk] = useState(true);
   const [compatMessage, setCompatMessage] = useState("");
   const [iframeLoading, setIframeLoading] = useState(true);
-  const prevProjectRef = useRef<string | null>(null);
+  const prevAppRef = useRef<string | null>(null);
   const prevReloadRef = useRef(0);
   const iframeLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -220,34 +220,34 @@ export function PreviewPanel() {
     return unsub;
   }, []);
 
-  // プロジェクト選択時 → プレビュー起動。
+  // アプリ選択時 → プレビュー起動。
   // initialized（initialize 完了）を待ってから boot する — 起動直後に
-  // currentProjectId が復元される前の競合を避けるため。
+  // currentAppId が復元される前の競合を避けるため。
   useEffect(() => {
     if (!initialized) return;
-    if (!currentProjectId) return;
-    if (prevProjectRef.current === currentProjectId) return;
-    prevProjectRef.current = currentProjectId;
+    if (!currentAppId) return;
+    if (prevAppRef.current === currentAppId) return;
+    prevAppRef.current = currentAppId;
 
     previewManager
-      .boot(currentProjectId)
+      .boot(currentAppId)
       .catch((e: any) => {
         console.error("[preview] Boot failed:", e);
         setError(e.message || String(e));
       });
-  }, [initialized, currentProjectId]);
+  }, [initialized, currentAppId]);
 
   // タブが再フォーカスされたときにエラー状態から自動復帰
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
       if (status !== "error") return;
-      if (!currentProjectId) return;
+      if (!currentAppId) return;
 
       console.log("[preview] Tab became visible, recovering from error...");
       setError(null);
       previewManager
-        .boot(currentProjectId)
+        .boot(currentAppId)
         .catch((e: any) => {
           console.error("[preview] Auto-recovery failed:", e);
           setError(e.message || String(e));
@@ -256,7 +256,7 @@ export function PreviewPanel() {
 
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
-  }, [status, currentProjectId]);
+  }, [status, currentAppId]);
 
   // previewUrl 変更時 → iframe のローディング状態をリセット
   useEffect(() => {
@@ -285,11 +285,11 @@ export function PreviewPanel() {
   // workspaceReady によるガードは行わない — リトライ時など workspace が
   // ready でない状態でも triggerReload() で即座にプレビューを再表示する。
   useEffect(() => {
-    if (!currentProjectId || reloadCounter <= prevReloadRef.current) return;
+    if (!currentAppId || reloadCounter <= prevReloadRef.current) return;
     prevReloadRef.current = reloadCounter;
 
     previewManager
-      .syncAndReload(currentProjectId)
+      .syncAndReload(currentAppId)
       .then(() => {
         // syncAndReload はファイル同期 + dev server再起動を行うが、
         // iframe は古いページ＋モジュールキャッシュを保持したまま。
@@ -306,7 +306,7 @@ export function PreviewPanel() {
         console.error("[preview] Sync failed:", e);
         setError(e.message || String(e));
       });
-  }, [reloadCounter, currentProjectId, previewUrl]);
+  }, [reloadCounter, currentAppId, previewUrl]);
 
   // ★ injectIframeModule は削除済み
   // 理由: HTML内の <script type="module" src="/__virtual__/5174/src/main.tsx"> で
@@ -317,7 +317,7 @@ export function PreviewPanel() {
 
   // 手動リロード
   const handleReload = useCallback(() => {
-    if (!currentProjectId) return;
+    if (!currentAppId) return;
     setError(null);
     // iframe のリロード
     const iframe = document.getElementById("preview-iframe") as HTMLIFrameElement | null;
@@ -325,10 +325,38 @@ export function PreviewPanel() {
       iframe.src = previewUrl;
     }
     // コンテナ再同期
-    previewManager.syncAndReload(currentProjectId).catch((e: any) => {
+    previewManager.syncAndReload(currentAppId).catch((e: any) => {
       setError(e.message || String(e));
     });
-  }, [currentProjectId, previewUrl]);
+  }, [currentAppId, previewUrl]);
+
+  // デスクトップ: プレビューURL からポートを抽出（Local :port バッジ用）
+  const previewPort = useMemo(() => {
+    if (!previewUrl) return "";
+    try {
+      return new URL(previewUrl).port;
+    } catch {
+      return "";
+    }
+  }, [previewUrl]);
+
+  // プレビューを外部ブラウザで開く
+  // Desktop: Tauri の open_url コマンド → システムブラウザ
+  // Web: 新しいタブ
+  const handleOpenInBrowser = useCallback(() => {
+    if (!previewUrl) return;
+    if (isDesktopEnv()) {
+      import("@tauri-apps/api/core")
+        .then(({ invoke }) =>
+          invoke("open_url", { url: previewUrl }).catch((e: unknown) =>
+            console.error("[preview] open_url failed:", e),
+          ),
+        )
+        .catch((e: unknown) => console.error("[preview] tauri import failed:", e));
+    } else {
+      window.open(previewUrl, "_blank", "noopener,noreferrer");
+    }
+  }, [previewUrl]);
 
   // エラー画面（互換性）
   if (!compatOk) {
@@ -344,12 +372,12 @@ export function PreviewPanel() {
     );
   }
 
-  // プロジェクト未選択
-  if (!currentProjectId) {
+  // アプリ未選択
+  if (!currentAppId) {
     return (
       <div className="flex h-full items-center justify-center bg-muted/10 p-4">
         <p className="text-sm text-muted-foreground">
-          {t("preview.selectProject")}
+          {t("preview.selectApp")}
         </p>
       </div>
     );
@@ -374,10 +402,31 @@ export function PreviewPanel() {
             </Badge>
           )}
           {status === "ready" && previewUrl && (
-            <Badge variant="outline" className="gap-1 text-[10px] text-green-600 border-green-300">
-              <Wifi className="h-2.5 w-2.5" />
-              HMR
-            </Badge>
+            isDesktopEnv() ? (
+              <>
+                <Badge
+                  variant="outline"
+                  className="gap-1 text-[10px] text-emerald-600 border-emerald-300"
+                >
+                  <Wifi className="h-2.5 w-2.5" />
+                  {t("preview.localBadge", { port: previewPort })}
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                  onClick={handleOpenInBrowser}
+                  title={t("preview.openInBrowser")}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                </Button>
+              </>
+            ) : (
+              <Badge variant="outline" className="gap-1 text-[10px] text-green-600 border-green-300">
+                <Wifi className="h-2.5 w-2.5" />
+                HMR
+              </Badge>
+            )
           )}
 
           {/* Device Presets (toggle on/off) */}

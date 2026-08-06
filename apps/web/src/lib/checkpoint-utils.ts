@@ -1,5 +1,5 @@
 import type { CheckpointInfo, ChatMessage } from "@/types";
-import { getProjectId } from "@/engine/tool-executors";
+import { getAppId } from "@/engine/tool-executors";
 
 /**
  * Given the current checkpoint index (as used by the preview slider),
@@ -44,13 +44,13 @@ export function getMessageCountForCheckpoint(
 }
 
 /**
- * Restore project files to a given checkpoint and clean up future checkpoints
+ * Restore app files to a given checkpoint and clean up future checkpoints
  * using browser-native checkpoint storage (IndexedDB).
  * Throws if the restore fails.
  */
 export async function restoreCheckpoint(checkpointId: string): Promise<void> {
-  const pid = getProjectId();
-  if (!pid) throw new Error("No project selected.");
+  const pid = getAppId();
+  if (!pid) throw new Error("No app selected.");
 
   // Use the browser-native checkpoint restore from tool-executors
   const { restoreCheckpoint: engineRestore, deleteCheckpointsAfter } = await import("@/engine/tool-executors");

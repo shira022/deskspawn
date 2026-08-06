@@ -33,7 +33,7 @@ export interface SyncResult {
 /** 状態変更リスナー */
 export type StateListener = (state: PreviewState) => void;
 
-/** 型チェックエラー（checkProject/getErrors 戻り値） */
+/** 型チェックエラー（checkApp/getErrors 戻り値） */
 export interface ErrorEntry {
   type: "typescript" | "syntax" | "missing-package" | "vite";
   message: string;

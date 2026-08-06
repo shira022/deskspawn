@@ -14,9 +14,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Loader2, Sparkles } from "lucide-react";
-import { listProjects, saveProject } from "@/lib/storage";
-import { setProjectId } from "@/engine/tool-executors";
-import { writeProjectFiles, writeProjectFile } from "@/lib/storage-opfs";
+import { listApps, saveApp } from "@/lib/storage";
+import { setAppId } from "@/engine/tool-executors";
+import { writeAppFiles, writeAppFile } from "@/lib/storage-opfs";
 import { getTemplateFiles } from "@/lib/template";
 
 interface NewAppDialogProps {
@@ -31,15 +31,15 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
   const { t } = useTranslation();
 
   const {
-    setCurrentProjectId,
-    setProjects,
+    setCurrentAppId,
+    setApps,
     clearMessages,
     setWorkspaceReady,
     setAgentStatus,
     setAgentStepCount,
     setFileTree,
     setSelectedFile,
-    setProjectSwitching,
+    setAppSwitching,
     setAppLoading,
     triggerReload,
     settings,
@@ -48,38 +48,38 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
   const handleCreate = async () => {
     const name = appName.trim();
     if (!name) {
-      setError(t('project.appNameRequired'));
+      setError(t('app.appNameRequired'));
       return;
     }
 
     setCreating(true);
     setError("");
-    setProjectSwitching(true);
+    setAppSwitching(true);
 
     try {
-      const projectId = crypto.randomUUID();
+      const appId = crypto.randomUUID();
       const now = new Date().toISOString();
 
-      const project = {
-        id: projectId,
+      const app = {
+        id: appId,
         name,
         createdAt: now,
         updatedAt: now,
       };
 
       // Save to IndexedDB (web) or Rust registry (desktop).
-      // Desktop: the backend assigns its own id (`proj-...`) which is the REAL
+      // Desktop: the backend assigns its own id (`app-...`) which is the REAL
       // directory id — use it for everything below so files land in the
-      // actual on-disk project dir (ADR-008).
-      const realProjectId = await saveProject(project);
+      // actual on-disk app dir (ADR-008).
+      const realAppId = await saveApp(app);
 
-      // Set current project in engine
-      setProjectId(realProjectId);
+      // Set current app in engine
+      setAppId(realAppId);
 
-      // Refresh project list
-      const updatedProjects = await listProjects();
-      setProjects(updatedProjects);
-      setCurrentProjectId(realProjectId);
+      // Refresh app list
+      const updatedApps = await listApps();
+      setApps(updatedApps);
+      setCurrentAppId(realAppId);
 
       // Reset session state
       clearMessages();
@@ -89,17 +89,17 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
       setFileTree([]);
       setSelectedFile(null);
 
-      // Copy template files into the new project (real dir on desktop)
-      await writeProjectFiles(realProjectId, getTemplateFiles(settings.language));
+      // Copy template files into the new app (real dir on desktop)
+      await writeAppFiles(realAppId, getTemplateFiles(settings.language));
 
-      // Write the actual project ID so the generated app uses the correct DB name
-      await writeProjectFile(realProjectId, "src/lib/project-id.ts",
+      // Write the actual app ID so the generated app uses the correct DB name
+      await writeAppFile(realAppId, "src/lib/app-id.ts",
         `// ============================================================
-// Project ID — injected by DeskSpawn at project creation time.
-// DO NOT MODIFY: Uniquely identifies this project's IndexedDB.
+// App ID — injected by DeskSpawn at app creation time.
+// DO NOT MODIFY: Uniquely identifies this app's IndexedDB.
 // ============================================================
 
-export const PROJECT_ID = "${realProjectId}";
+export const APP_ID = "${realAppId}";
 `,
       );
 
@@ -109,11 +109,11 @@ export const PROJECT_ID = "${realProjectId}";
       setAppLoading(false);
       triggerReload();
       onOpenChange(false);
-      setProjectSwitching(false);
+      setAppSwitching(false);
       setAppName("");
     } catch (e: any) {
-      setError(e.message || t('project.createError') || 'Failed to create project');
-      setProjectSwitching(false);
+      setError(e.message || t('app.createError') || 'Failed to create app');
+      setAppSwitching(false);
       setAppLoading(false);
     } finally {
       setCreating(false);
@@ -126,10 +126,10 @@ export const PROJECT_ID = "${realProjectId}";
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5" />
-            {t('project.createNewTitle')}
+            {t('app.createNewTitle')}
           </DialogTitle>
           <DialogDescription>
-            {t('project.createNewDesc')}
+            {t('app.createNewDesc')}
           </DialogDescription>
         </DialogHeader>
 
@@ -137,14 +137,14 @@ export const PROJECT_ID = "${realProjectId}";
 
         <div className="space-y-4">
           <div className="space-y-2">
-            <Label>{t('project.appName')}</Label>
+            <Label>{t('app.appName')}</Label>
             <Input
               value={appName}
               onChange={(e) => {
                 setAppName(e.target.value);
                 setError("");
               }}
-              placeholder={t('project.appNamePlaceholder')}
+              placeholder={t('app.appNamePlaceholder')}
               autoFocus
             />
             {error && (
@@ -154,10 +154,10 @@ export const PROJECT_ID = "${realProjectId}";
 
           <div className="rounded-lg border bg-muted/30 p-3">
             <p className="text-xs text-muted-foreground space-y-1">
-              <span>{t('project.templateReact')}</span><br />
-              <span>{t('project.templateIndexedDB')}</span><br />
-              <span>{t('project.templateAutoBackup')}</span><br />
-              <span>{t('project.templateShare')}</span>
+              <span>{t('app.templateReact')}</span><br />
+              <span>{t('app.templateIndexedDB')}</span><br />
+              <span>{t('app.templateAutoBackup')}</span><br />
+              <span>{t('app.templateShare')}</span>
             </p>
           </div>
         </div>
@@ -174,10 +174,10 @@ export const PROJECT_ID = "${realProjectId}";
             {creating ? (
               <>
                 <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                {t('project.creating')}
+                {t('app.creating')}
               </>
             ) : (
-              t('project.create')
+              t('app.create')
             )}
           </Button>
         </DialogFooter>

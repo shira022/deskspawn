@@ -77,6 +77,12 @@ impl SidecarManager {
         };
         let sidecar = sidecar.env("DESKSPAWN_SECURITY_PORT", self.security_port.to_string());
 
+        // H1: 認証トークンをサイドカーへ env で渡す（ローカルHTTPサーバーの保護）。
+        // トークンは起動時に一度だけ生成され、サイドカー・security_server・
+        // Rust→サイドカー内部呼び出しで共有される。
+        let token = crate::engine::security::init_auth_token();
+        let sidecar = sidecar.env("DESKSPAWN_AUTH_TOKEN", token);
+
         let (mut rx, child) = sidecar
             .spawn()
             .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;
@@ -177,11 +183,16 @@ impl SidecarManager {
             }
 
             // Try health endpoint
-            match ureq::get(&health_url)
+            let mut req = ureq::get(&health_url)
                 .config()
                 .timeout_connect(Some(Duration::from_secs(2)))
                 .timeout_recv_response(Some(Duration::from_secs(2)))
-                .build()
+                .build();
+            // H1: 認証トークン付与（サイドカーはトークン無しリクエストを拒否する）
+            if let Some(token) = crate::engine::security::auth_token() {
+                req = req.header("X-DeskSpawn-Token", &token);
+            }
+            match req
                 .call()
             {
                 Ok(resp) if resp.status() == 200 => {
@@ -370,4 +381,14 @@ pub fn sidecar_port(
     sidecar: State<'_, SidecarManager>,
 ) -> Result<u16, String> {
     Ok(sidecar.actual_port())
+}
+
+/// Get the sidecar auth token (H1).
+///
+/// フロントエンド（WebView 内 JS）がサイドカー HTTP API を呼ぶ際の
+/// `X-DeskSpawn-Token` ヘッダ値。Tauri IPC 経由のため外部オリジンの
+/// Web ページからは取得できない（ブラウザタブ攻撃の遮断）。
+#[tauri::command]
+pub fn get_sidecar_token() -> Result<String, String> {
+    crate::engine::security::auth_token().ok_or_else(|| "Sidecar auth token not initialized".to_string())
 }

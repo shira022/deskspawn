@@ -149,7 +149,7 @@ export function useChatStream(): UseChatStreamReturn {
       generationActive.current = true;
 
       const state = useAppStore.getState();
-      const { aiConfig: cfg, currentProjectId: pid, addMessage, setAgentStatus, setAgentStepCount } = state;
+      const { aiConfig: cfg, currentAppId: pid, addMessage, setAgentStatus, setAgentStepCount } = state;
 
       // Validate config
       if (!cfg) {
@@ -168,7 +168,7 @@ export function useChatStream(): UseChatStreamReturn {
         addMessage({
           id: `msg-err-${Date.now()}`,
           role: "assistant",
-          content: i18n.t('chat.error.noProjectSelected', { newAppLabel: i18n.t('project.newApp') }),
+          content: i18n.t('chat.error.noAppSelected', { newAppLabel: i18n.t('app.newApp') }),
           timestamp: Date.now(),
         });
         generationActive.current = false;
@@ -407,7 +407,7 @@ export function useChatStream(): UseChatStreamReturn {
               if (_phase === "visual_qa") {
                 try {
                   const { previewManager } = await import("@/lib/preview");
-                  const pid = useAppStore.getState().currentProjectId;
+                  const pid = useAppStore.getState().currentAppId;
                   if (pid) {
                     await previewManager.syncForErrors(pid);
                   }
@@ -422,7 +422,7 @@ export function useChatStream(): UseChatStreamReturn {
               if (_phase === "coder") {
                 try {
                   const { previewManager } = await import("@/lib/preview");
-                  const pid = useAppStore.getState().currentProjectId;
+                  const pid = useAppStore.getState().currentAppId;
                   if (pid) {
                     await previewManager.syncForErrors(pid);
                   }
@@ -459,7 +459,7 @@ export function useChatStream(): UseChatStreamReturn {
 
         if (pipelineResult.text) {
           // ── Create checkpoint ──
-          // Snapshot project files so the user can navigate back to this state.
+          // Snapshot app files so the user can navigate back to this state.
           let checkpointId: string | undefined;
           try {
             checkpointId = await createCheckpoint(pid);

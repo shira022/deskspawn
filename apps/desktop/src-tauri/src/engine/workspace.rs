@@ -7,10 +7,10 @@
 //! Layout:
 //! ```text
 //! ~/deskspawn/
-//! ├── projects/            project source files (real files on disk)
-//! │   ├── projects.json    project registry (JSON)
-//! │   └── <projectId>/     per-project directory (source + .deskspawn/)
-//! ├── templates/           project templates (expanded on first run)
+//! ├── apps/            app source files (real files on disk)
+//! │   ├── apps.json    app registry (JSON)
+//! │   └── <appId>/     per-app directory (source + .deskspawn/)
+//! ├── templates/           app templates (expanded on first run)
 //! ├── config/              AI config (config.json)
 //! ├── tools/               bundled tools (e.g. bun) — populated on first run
 //! ├── workspace/           Rust workspace (execution sandbox)
@@ -24,17 +24,17 @@ use std::path::PathBuf;
 pub const DESKSPAWN_ROOT_NAME: &str = "deskspawn";
 
 /// Subdirectory names.
-pub const PROJECTS_DIR_NAME: &str = "projects";
+pub const APPS_DIR_NAME: &str = "apps";
 pub const TEMPLATES_DIR_NAME: &str = "templates";
 pub const CONFIG_DIR_NAME: &str = "config";
 pub const TOOLS_DIR_NAME: &str = "tools";
 pub const WORKSPACE_DIR_NAME: &str = "workspace";
 pub const LOGS_DIR_NAME: &str = "logs";
 
-/// Project registry file name inside the projects directory.
-pub const PROJECTS_JSON_NAME: &str = "projects.json";
+/// App registry file name inside the apps directory.
+pub const APPS_JSON_NAME: &str = "apps.json";
 
-/// Hidden per-project metadata directory.
+/// Hidden per-app metadata directory.
 pub const DESKSPAWN_META_DIR_NAME: &str = ".deskspawn";
 
 /// Returns the deskspawn root directory: `<HOME>/deskspawn`.
@@ -54,14 +54,14 @@ pub fn root_dir() -> Result<PathBuf, String> {
     Ok(PathBuf::from(home).join(DESKSPAWN_ROOT_NAME))
 }
 
-/// `~/deskspawn/projects`
-pub fn projects_dir() -> Result<PathBuf, String> {
-    Ok(root_dir()?.join(PROJECTS_DIR_NAME))
+/// `~/deskspawn/apps`
+pub fn apps_dir() -> Result<PathBuf, String> {
+    Ok(root_dir()?.join(APPS_DIR_NAME))
 }
 
-/// `~/deskspawn/projects/projects.json`
-pub fn projects_json_path() -> Result<PathBuf, String> {
-    Ok(projects_dir()?.join(PROJECTS_JSON_NAME))
+/// `~/deskspawn/apps/apps.json`
+pub fn apps_json_path() -> Result<PathBuf, String> {
+    Ok(apps_dir()?.join(APPS_JSON_NAME))
 }
 
 /// `~/deskspawn/templates`
@@ -89,28 +89,28 @@ pub fn logs_dir() -> Result<PathBuf, String> {
     Ok(root_dir()?.join(LOGS_DIR_NAME))
 }
 
-/// Per-project directory: `~/deskspawn/projects/<projectId>`
-pub fn project_dir(project_id: &str) -> Result<PathBuf, String> {
-    Ok(projects_dir()?.join(project_id))
+/// Per-app directory: `~/deskspawn/apps/<appId>`
+pub fn app_dir(app_id: &str) -> Result<PathBuf, String> {
+    Ok(apps_dir()?.join(app_id))
 }
 
-/// Per-project metadata dir: `~/deskspawn/projects/<projectId>/.deskspawn`
-pub fn project_meta_dir(project_id: &str) -> Result<PathBuf, String> {
-    Ok(project_dir(project_id)?.join(DESKSPAWN_META_DIR_NAME))
+/// Per-app metadata dir: `~/deskspawn/apps/<appId>/.deskspawn`
+pub fn app_meta_dir(app_id: &str) -> Result<PathBuf, String> {
+    Ok(app_dir(app_id)?.join(DESKSPAWN_META_DIR_NAME))
 }
 
-/// Per-project chat DB: `~/deskspawn/projects/<projectId>/.deskspawn/chat.db`
-pub fn project_chat_db_path(project_id: &str) -> Result<PathBuf, String> {
-    Ok(project_meta_dir(project_id)?.join("chat.db"))
+/// Per-app chat DB: `~/deskspawn/apps/<appId>/.deskspawn/chat.db`
+pub fn app_chat_db_path(app_id: &str) -> Result<PathBuf, String> {
+    Ok(app_meta_dir(app_id)?.join("chat.db"))
 }
 
 /// Ensure the full directory tree exists. Returns the root path.
 ///
-/// Creates: root, projects, templates, config, tools, workspace, logs.
+/// Creates: root, apps, templates, config, tools, workspace, logs.
 pub fn ensure_deskspawn_tree() -> Result<PathBuf, String> {
     let root = root_dir()?;
     for sub in [
-        PROJECTS_DIR_NAME,
+        APPS_DIR_NAME,
         TEMPLATES_DIR_NAME,
         CONFIG_DIR_NAME,
         TOOLS_DIR_NAME,
@@ -146,7 +146,7 @@ pub fn determine_workspace_path() -> Result<PathBuf, String> {
 /// Serializes tests that mutate the shared `DESKSPAWN_ROOT` env var.
 ///
 /// All test modules that set `DESKSPAWN_ROOT` must lock this mutex so that
-/// tests across modules (setup, projects, ...) do not race on the process-wide
+/// tests across modules (setup, apps, ...) do not race on the process-wide
 /// environment variable when cargo runs tests in parallel threads.
 #[cfg(test)]
 pub static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());

@@ -1,10 +1,44 @@
 # Installation
 
-DeskSpawn runs entirely in your browser. **There is nothing to install.**
+DeskSpawn is a **desktop application** (Windows) with a browser-based demo
+for evaluation. For real work, install the desktop app.
 
-## Using the Hosted Version
+---
 
-Visit **[deskspawn.pages.dev](https://deskspawn.pages.dev)** to start using DeskSpawn immediately.
+## Desktop App (recommended)
+
+### System Requirements
+
+| Component | Requirement |
+|-----------|-------------|
+| OS | **Windows 10** or **Windows 11** |
+| WebView2 | Preinstalled on Windows 11; on Windows 10 it is installed automatically |
+| RAM | 4 GB minimum (8 GB recommended) |
+| Disk | ~200 MB for the app, plus space for your generated apps |
+| Network | Only needed for AI API calls (preview runs fully offline) |
+
+### Install
+
+1. Download the latest installer from
+   [GitHub Releases](https://github.com/shira022/deskspawn/releases)
+   (`.msi` or `.exe`/NSIS bundle).
+2. Run the installer and follow the setup wizard.
+3. Launch **DeskSpawn** from the Start menu.
+
+> 🛒 **Microsoft Store**: a Store listing is planned. Once published, you will
+> also be able to install DeskSpawn from the Microsoft Store.
+
+### Updates
+
+The desktop app checks for updates automatically and prompts you to install
+them. You can also check manually from the app.
+
+---
+
+## Web Version (evaluation only)
+
+The web version lets you try DeskSpawn in your browser without installing
+anything.
 
 ### Browser Requirements
 
@@ -13,46 +47,30 @@ Visit **[deskspawn.pages.dev](https://deskspawn.pages.dev)** to start using Desk
 | **Chrome 105+** | ✅ Fully supported (recommended) |
 | **Edge 105+** | ✅ Fully supported |
 | **Opera 91+** | ✅ Fully supported |
-| **Firefox** | ⚠️ Limited — preview system (WebContainer) not supported |
-| **Safari** | ⚠️ Limited — preview system (WebContainer) not supported |
+| **Firefox / Safari** | ⚠️ Limited — the preview (WebContainer) requires Chromium |
 
-> WebContainer requires cross-origin isolation (COOP/COEP headers) and
-> SharedArrayBuffer support, which are only available in Chromium-based browsers.
+> ⚠️ **The web version is for evaluation only.** API keys and app data are
+> stored in the browser (IndexedDB), which is less secure than the desktop
+> app (OS keychain + local storage). For serious work, use the desktop app.
 
-## Self-Hosting
+---
 
-DeskSpawn is a static site that can be deployed to any static hosting provider
-that supports custom HTTP headers.
+## Developer Build (from source)
 
-### Cloudflare Pages (Recommended)
+See [CONTRIBUTING.md](../CONTRIBUTING.md) for the full development setup.
+Quick start:
 
-1. Fork the [GitHub repository](https://github.com/shira022/deskspawn)
-2. Go to [Cloudflare Pages dashboard](https://dash.cloudflare.com/?to=/:account/pages)
-3. Click **Create a project** → **Connect to Git**
-4. Select your fork and configure:
-   - **Project name**: `deskspawn`
-   - **Build command**: `npm run build`
-   - **Build output directory**: `dist`
-5. Deploy
+```bash
+git clone https://github.com/shira022/deskspawn.git
+cd deskspawn
+pnpm install
 
-The included `public/_headers` file automatically configures the required
-COOP/COEP headers, CSP, and other security headers.
+# Web app (dev server on http://localhost:5173)
+pnpm dev
 
-### Other Hosting Options
+# Desktop app (Tauri dev mode)
+pnpm --filter desktop tauri dev
+```
 
-| Platform | COOP/COEP | Setup |
-|----------|-----------|-------|
-| **Vercel** | ✅ via `vercel.json` | Requires Pro plan ($20/mo) for commercial use |
-| **Netlify** | ✅ via `netlify.toml` | 100 GB bandwidth cap on free tier |
-| **GitHub Pages** | ❌ | WebContainer preview will not work |
-
-See the [README](https://github.com/shira022/deskspawn#readme) for more details.
-
-## System Requirements
-
-| Component | Minimum |
-|-----------|---------|
-| Browser | Chrome 105+ / Edge 105+ |
-| RAM | 4 GB (8 GB recommended) |
-| Network | Broadband (for AI API calls) |
-| Storage | 50 MB free (for IndexedDB/OPFS project data) |
+Building the Windows installer from source requires Rust (MSVC) and the VS
+Build Tools on Windows — see [CONTRIBUTING.md](../CONTRIBUTING.md).
