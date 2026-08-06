@@ -5,6 +5,38 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v0.4.2 (Security Hardening & Desktop-First Renewal) — 2026-08-06
+
+**Highlights:**
+
+- 🖥️ **Desktop-first renewal** (PR #98) — Desktop (Tauri) is now the
+  first-class platform: landing page, platform UI, status bar, and
+  project → app terminology. Desktop import/export operates on real
+  files via Rust IPC.
+- 🔐 **Security hardening** (from the PR #98 security audit):
+  - **C1** Path traversal via app IDs closed — strict `app-<uuid>` format
+    + registry validation on all IPC commands
+  - **C2** Command injection in "open in browser" closed — localhost-only
+    URLs + shell metacharacter rejection
+  - **H1** Sidecar (AI proxy) authentication — random token
+    (`X-DeskSpawn-Token`), CORS allowlist, and removal of the arbitrary
+    `x-upstream` forward (SSRF closed)
+  - **H2** Filesystem permissions narrowed to `~/deskspawn/**` only
+    (Desktop/Documents access removed)
+  - **M1** Zip import/export hardened — zip-slip rejection, size limits,
+    `.env` secret exclusion
+  - **M2** API keys now actually stored in the OS keychain (were silently
+    falling back to plaintext IndexedDB); UI honestly reflects the real
+    storage method
+  - **M3** True UUID v4 app IDs (were predictable `app-<nanos>-<pid>`)
+  - **M4** AI-generated code validated against dangerous patterns on
+    write; `npx` restricted to an allowlist
+- ⬆️ **Dependency updates** — `@ai-sdk/anthropic` 3.x → 4.0.27,
+  `@ai-sdk/google-vertex` 4.x → 5.0.38, plus the non-major group
+  (react-dom 19 upgrade deferred — requires a coordinated react 19 bump)
+
+---
+
 ## v0.4.1 (Windows Build & Preview Fixes) — 2026-08-06
 
 **Highlights:**
