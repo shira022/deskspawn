@@ -107,10 +107,10 @@ export interface FileNode {
 }
 
 // ============================================================
-// Project Types
+// App Types
 // ============================================================
 
-export interface ProjectMeta {
+export interface AppMeta {
   id: string;
   name: string;
   createdAt: string;

@@ -186,9 +186,45 @@ pub async fn install_with_winget(
     }
 }
 
+/// 外部ブラウザで開いても安全な URL かどうか（C2: コマンドインジェクション対策）。
+///
+/// 許可条件:
+/// - http/https スキーム
+/// - ホストが localhost / 127.0.0.1 / [::1] のみ（プレビュー用途）
+/// - ホスト直後は「:ポート」「/」「終端」のみ（localhost.evil.com 等を拒否）
+/// - cmd のシェルメタ文字（& | < > ^ ( ) ; % ' " ` $）を含まない
+pub fn is_safe_open_url(url: &str) -> bool {
+    const META_CHARS: &[char] = &[
+        '&', '|', '<', '>', '^', '(', ')', ';', '%', '\'', '"', '`', '$',
+    ];
+    if url.chars().any(|c| META_CHARS.contains(&c)) {
+        return false;
+    }
+    let lower = url.to_ascii_lowercase();
+    const ALLOWED_HOSTS: &[&str] = &[
+        "http://localhost",
+        "https://localhost",
+        "http://127.0.0.1",
+        "https://127.0.0.1",
+        "http://[::1]",
+        "https://[::1]",
+    ];
+    ALLOWED_HOSTS.iter().any(|prefix| {
+        if !lower.starts_with(prefix) {
+            return false;
+        }
+        let rest = &lower[prefix.len()..];
+        rest.is_empty() || rest.starts_with(':') || rest.starts_with('/')
+    })
+}
+
 /// Open a URL in the default system browser.
 #[tauri::command]
 pub fn open_url(url: String) -> Result<(), String> {
+    // C2: URL 検証 — localhost プレビュー以外は開かせない + シェルメタ文字を拒否
+    if !is_safe_open_url(&url) {
+        return Err(format!("URL rejected by safety policy: {}", url));
+    }
     let result = if cfg!(target_os = "macos") {
         std::process::Command::new("open")
             .arg(&url)
@@ -273,5 +309,43 @@ fn get_package_display_name(package: &str) -> &str {
     match package {
         WINGET_NODEJS => "Node.js",
         _ => package,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn safe_open_url_accepts_localhost_previews() {
+        assert!(is_safe_open_url("http://localhost:5173"));
+        assert!(is_safe_open_url("http://localhost:5173/"));
+        assert!(is_safe_open_url("http://localhost:5173/path/to/page"));
+        assert!(is_safe_open_url("http://127.0.0.1:5174"));
+        assert!(is_safe_open_url("https://localhost:8443"));
+        assert!(is_safe_open_url("http://[::1]:5174"));
+        assert!(is_safe_open_url("http://localhost"));
+    }
+
+    #[test]
+    fn safe_open_url_rejects_injection_and_external_hosts() {
+        // C2: cmd インジェクション（& でコマンド連結）
+        assert!(!is_safe_open_url("http://localhost:5173 & calc"));
+        assert!(!is_safe_open_url("http://x & calc"));
+        assert!(!is_safe_open_url("http://localhost & calc"));
+        assert!(!is_safe_open_url("http://localhost:5173 | whoami"));
+        assert!(!is_safe_open_url("http://localhost:5173; rm -rf ~"));
+        assert!(!is_safe_open_url("http://localhost:5173`whoami`"));
+        assert!(!is_safe_open_url("http://localhost:5173$(whoami)"));
+        assert!(!is_safe_open_url("http://localhost:5173\" & calc"));
+        // ホスト偽装
+        assert!(!is_safe_open_url("http://localhost.evil.com"));
+        assert!(!is_safe_open_url("http://localhost@evil.com"));
+        // 外部ホスト / 他スキーム
+        assert!(!is_safe_open_url("https://example.com"));
+        assert!(!is_safe_open_url("file:///etc/passwd"));
+        assert!(!is_safe_open_url("ms-settings:display"));
+        assert!(!is_safe_open_url("javascript:alert(1)"));
+        assert!(!is_safe_open_url(""));
     }
 }

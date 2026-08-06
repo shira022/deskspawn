@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
-import type { ChatMessage, FileNode, ProjectMeta } from "@/types";
+import type { ChatMessage, FileNode, AppMeta } from "@/types";
 
 // ── Mocks (hoisted by vitest) ────────────────────────────────────────────────────
 
@@ -28,7 +28,7 @@ vi.mock("@/lib/storage", () => {
     hasApiKey: vi.fn().mockResolvedValue(false),
     saveLastProvider: vi.fn().mockResolvedValue(undefined),
     loadLastProvider: vi.fn().mockResolvedValue(null),
-    listProjects: vi.fn().mockResolvedValue([]),
+    listApps: vi.fn().mockResolvedValue([]),
     deleteProviderConfig: vi.fn().mockResolvedValue(undefined),
     hasProviderConfig: vi.fn().mockResolvedValue(false),
   };
@@ -41,7 +41,7 @@ const mockEngineFns: Record<string, ReturnType<typeof vi.fn>> = {};
 
 vi.mock("@/engine/tool-executors", () => {
   const fns = {
-    setProjectId: vi.fn(),
+    setAppId: vi.fn(),
     listCheckpoints: vi.fn().mockResolvedValue([]),
     persistChatHistory: vi.fn().mockResolvedValue(undefined),
     loadChatHistory: vi.fn().mockResolvedValue([]),
@@ -59,10 +59,10 @@ vi.mock("@/lib/models-fetcher", () => ({
   getModelsForProvider: vi.fn().mockResolvedValue([]),
 }));
 
-vi.mock("@/lib/seed-project", () => ({
-  seedProjectFromFilesystem: vi.fn().mockResolvedValue({ seeded: 0 }),
-  seedProjectFromWorkspace: vi.fn().mockResolvedValue({ seeded: 0 }),
-  hasProjectFiles: vi.fn().mockResolvedValue(true),
+vi.mock("@/lib/seed-app", () => ({
+  seedAppFromFilesystem: vi.fn().mockResolvedValue({ seeded: 0 }),
+  seedAppFromWorkspace: vi.fn().mockResolvedValue({ seeded: 0 }),
+  hasAppFiles: vi.fn().mockResolvedValue(true),
 }));
 
 // ── Store import (after mocks are in place) ──────────────────────────────────────
@@ -407,35 +407,35 @@ describe("useAppStore — agent state", () => {
   });
 });
 
-describe("useAppStore — projects", () => {
-  const project: ProjectMeta = {
-    id: "proj-1",
+describe("useAppStore — apps", () => {
+  const app: AppMeta = {
+    id: "app-1",
     name: "My App",
     createdAt: "2025-01-01",
     updatedAt: "2025-01-02",
   };
 
-  it("addProject adds a project to the list", () => {
-    useAppStore.getState().addProject(project);
-    expect(useAppStore.getState().projects).toHaveLength(1);
-    expect(useAppStore.getState().projects[0].name).toBe("My App");
+  it("addApp adds an app to the list", () => {
+    useAppStore.getState().addApp(app);
+    expect(useAppStore.getState().apps).toHaveLength(1);
+    expect(useAppStore.getState().apps[0].name).toBe("My App");
   });
 
-  it("removeProject removes by id", () => {
-    useAppStore.getState().addProject(project);
-    useAppStore.getState().addProject({ ...project, id: "proj-2", name: "Other" });
-    useAppStore.getState().removeProject("proj-1");
+  it("removeApp removes by id", () => {
+    useAppStore.getState().addApp(app);
+    useAppStore.getState().addApp({ ...app, id: "app-2", name: "Other" });
+    useAppStore.getState().removeApp("app-1");
 
-    expect(useAppStore.getState().projects).toHaveLength(1);
-    expect(useAppStore.getState().projects[0].id).toBe("proj-2");
+    expect(useAppStore.getState().apps).toHaveLength(1);
+    expect(useAppStore.getState().apps[0].id).toBe("app-2");
   });
 
-  it("setProjects replaces the entire project list", () => {
-    useAppStore.getState().addProject(project);
-    useAppStore.getState().setProjects([{ ...project, id: "proj-3", name: "New" }]);
+  it("setApps replaces the entire app list", () => {
+    useAppStore.getState().addApp(app);
+    useAppStore.getState().setApps([{ ...app, id: "app-3", name: "New" }]);
 
-    expect(useAppStore.getState().projects).toHaveLength(1);
-    expect(useAppStore.getState().projects[0].id).toBe("proj-3");
+    expect(useAppStore.getState().apps).toHaveLength(1);
+    expect(useAppStore.getState().apps[0].id).toBe("app-3");
   });
 });
 
@@ -471,7 +471,7 @@ describe("useAppStore — checkpoints", () => {
   });
 
   it("fetchCheckpoints calls engine listCheckpoints and updates state", async () => {
-    useAppStore.getState().currentProjectId = "test-pid";
+    useAppStore.getState().currentAppId = "test-pid";
 
     mockEngineFns.listCheckpoints.mockResolvedValue([
       { id: "cp-1", createdAt: new Date("2025-01-01") },
@@ -505,7 +505,7 @@ describe("useAppStore — initialize()", () => {
     mockStorageFns.loadLastProvider.mockResolvedValue("openai");
     mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o", maxSteps: 10 });
     mockStorageFns.loadApiKey.mockResolvedValue("sk-test-key");
-    mockStorageFns.listProjects.mockResolvedValue([]);
+    mockStorageFns.listApps.mockResolvedValue([]);
 
     await useAppStore.getState().initialize();
 
@@ -520,7 +520,7 @@ describe("useAppStore — initialize()", () => {
 
   it("stays in ai-config phase when no stored config exists", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue(null);
-    mockStorageFns.listProjects.mockResolvedValue([]);
+    mockStorageFns.listApps.mockResolvedValue([]);
 
     await useAppStore.getState().initialize();
 
@@ -528,32 +528,32 @@ describe("useAppStore — initialize()", () => {
     expect(useAppStore.getState().aiConfig).toBeNull();
   });
 
-  it("loads projects from IndexedDB", async () => {
-    const storedProjects = [
-      { id: "proj-1", name: "Test App", createdAt: "2025-01-01", updatedAt: "2025-01-02" },
+  it("loads apps from IndexedDB", async () => {
+    const storedApps = [
+      { id: "app-1", name: "Test App", createdAt: "2025-01-01", updatedAt: "2025-01-02" },
     ];
     mockStorageFns.loadLastProvider.mockResolvedValue(null);
-    mockStorageFns.listProjects.mockResolvedValue(storedProjects);
+    mockStorageFns.listApps.mockResolvedValue(storedApps);
 
     await useAppStore.getState().initialize();
 
-    expect(useAppStore.getState().projects).toEqual(storedProjects);
+    expect(useAppStore.getState().apps).toEqual(storedApps);
   });
 
-  it("loads current project from localStorage and fetches checkpoints", async () => {
+  it("loads current app from localStorage and fetches checkpoints", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue(null);
-    mockStorageFns.listProjects.mockResolvedValue([]);
+    mockStorageFns.listApps.mockResolvedValue([]);
 
     const mockGetItem = vi.mocked(localStorage.getItem);
-    // initialize() reads localStorage.getItem("deskspawn_current_project")
+    // initialize() reads localStorage.getItem("deskspawn_current_app")
     // SETTINGS_KEY is already read during store creation (beforeAll)
-    mockGetItem.mockReturnValueOnce(JSON.stringify("proj-loaded"));
+    mockGetItem.mockReturnValueOnce(JSON.stringify("app-loaded"));
 
     await useAppStore.getState().initialize();
 
-    expect(useAppStore.getState().currentProjectId).toBe("proj-loaded");
-    expect(mockEngineFns.setProjectId).toHaveBeenCalledWith("proj-loaded");
-    expect(mockEngineFns.listCheckpoints).toHaveBeenCalledWith("proj-loaded");
+    expect(useAppStore.getState().currentAppId).toBe("app-loaded");
+    expect(mockEngineFns.setAppId).toHaveBeenCalledWith("app-loaded");
+    expect(mockEngineFns.listCheckpoints).toHaveBeenCalledWith("app-loaded");
   });
 
   it("handles initialization failure gracefully", async () => {
