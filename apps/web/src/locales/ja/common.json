@@ -106,7 +106,8 @@
     "costOutput": "出力",
     "costCached": "キャッシュ",
     "costReasoning": "推論",
-    "welcomeDescriptionDesktop": "使用する AI モデルを設定してください。API キーはアプリ内のローカルストレージに保存され、選択した AI プロバイダーへの送信はローカルサイドカー（プロキシ）経由で行われます。キーが直接外部サーバーへ送信されることはありません。"
+    "welcomeDescriptionDesktop": "使用する AI モデルを設定してください。API キーはアプリ内のローカルストレージに保存され、選択した AI プロバイダーへの送信はローカルサイドカー（プロキシ）経由で行われます。キーが直接外部サーバーへ送信されることはありません。",
+    "savedInKeychain": "OSキーチェーンに保存されています（Windows 資格情報マネージャー）"
   },
   "env": {
     "title": "環境チェック",
@@ -356,6 +357,12 @@
     "previewError": "プレビューエラー",
     "zoomIn": "ズームイン",
     "zoomOut": "ズームアウト",
-    "zoomReset": "ズームリセット"
+    "zoomReset": "ズームリセット",
+    "localBadge": "Local :{{port}}",
+    "openInBrowser": "ブラウザで開く"
+  },
+  "statusBar": {
+    "sidecarConnected": "Sidecar ✓",
+    "sidecarOffline": "Sidecar オフライン"
   }
 }

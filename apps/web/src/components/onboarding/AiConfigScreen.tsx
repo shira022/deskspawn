@@ -10,6 +10,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import type { ProviderKind, AiConfig, ModelInfo } from "@/types";
 import { useModels } from "@/hooks/useModels";
 import { hasApiKey, loadProviderConfig } from "@/lib/storage";
+import { isDesktopEnv } from "@/lib/platform";
 import {
   Sparkles,
   ChevronRight,
@@ -246,7 +247,7 @@ export function AiConfigScreen() {
                   <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                     <span className="flex-1">
-                      {t('ai.apiKey')} {t('ai.savedInBrowser')}
+                      {t('ai.apiKey')} {t(isDesktopEnv() ? 'ai.savedInKeychain' : 'ai.savedInBrowser')}
                     </span>
                     <Button
                       variant="ghost"

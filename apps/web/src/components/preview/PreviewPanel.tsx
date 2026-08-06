@@ -11,7 +11,7 @@
  * 4. iframe に Dev Server の URL を表示
  */
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "@/store/useAppStore";
 import { Button } from "@/components/ui/button";
@@ -28,7 +28,7 @@ import {
   Terminal,
   Smartphone,
   Tablet,
-
+  ExternalLink,
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
@@ -330,6 +330,34 @@ export function PreviewPanel() {
     });
   }, [currentProjectId, previewUrl]);
 
+  // デスクトップ: プレビューURL からポートを抽出（Local :port バッジ用）
+  const previewPort = useMemo(() => {
+    if (!previewUrl) return "";
+    try {
+      return new URL(previewUrl).port;
+    } catch {
+      return "";
+    }
+  }, [previewUrl]);
+
+  // プレビューを外部ブラウザで開く
+  // Desktop: Tauri の open_url コマンド → システムブラウザ
+  // Web: 新しいタブ
+  const handleOpenInBrowser = useCallback(() => {
+    if (!previewUrl) return;
+    if (isDesktopEnv()) {
+      import("@tauri-apps/api/core")
+        .then(({ invoke }) =>
+          invoke("open_url", { url: previewUrl }).catch((e: unknown) =>
+            console.error("[preview] open_url failed:", e),
+          ),
+        )
+        .catch((e: unknown) => console.error("[preview] tauri import failed:", e));
+    } else {
+      window.open(previewUrl, "_blank", "noopener,noreferrer");
+    }
+  }, [previewUrl]);
+
   // エラー画面（互換性）
   if (!compatOk) {
     return (
@@ -374,10 +402,31 @@ export function PreviewPanel() {
             </Badge>
           )}
           {status === "ready" && previewUrl && (
-            <Badge variant="outline" className="gap-1 text-[10px] text-green-600 border-green-300">
-              <Wifi className="h-2.5 w-2.5" />
-              HMR
-            </Badge>
+            isDesktopEnv() ? (
+              <>
+                <Badge
+                  variant="outline"
+                  className="gap-1 text-[10px] text-emerald-600 border-emerald-300"
+                >
+                  <Wifi className="h-2.5 w-2.5" />
+                  {t("preview.localBadge", { port: previewPort })}
+                </Badge>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-5 w-5 text-muted-foreground hover:text-foreground"
+                  onClick={handleOpenInBrowser}
+                  title={t("preview.openInBrowser")}
+                >
+                  <ExternalLink className="h-3 w-3" />
+                </Button>
+              </>
+            ) : (
+              <Badge variant="outline" className="gap-1 text-[10px] text-green-600 border-green-300">
+                <Wifi className="h-2.5 w-2.5" />
+                HMR
+              </Badge>
+            )
           )}
 
           {/* Device Presets (toggle on/off) */}
