@@ -7,7 +7,8 @@ Thank you for your interest in contributing to DeskSpawn!
 ### Prerequisites
 
 - **Node.js** 20+
-- **npm**
+- **pnpm** (`corepack enable` or `npm install -g pnpm`)
+- **Rust** (MSVC toolchain) + **VS Build Tools** — only needed for the desktop app (Tauri)
 
 ### Setup
 
@@ -17,29 +18,41 @@ git clone https://github.com/shira022/deskspawn.git
 cd deskspawn
 
 # Install dependencies
-npm install
-
-# Start the dev server
-npm run dev
+pnpm install
 ```
 
 ### Development Workflow
 
 ```bash
-# Frontend dev server (Vite) — http://localhost:5173
-npm run dev
+# Web app dev server (Vite) — http://localhost:5173
+pnpm dev
 
-# TypeScript type check
-npx tsc --noEmit
+# Desktop app (Tauri dev mode)
+pnpm --filter desktop tauri dev
 
-# Run tests
-npx vitest run
+# TypeScript type check (web)
+pnpm --filter web exec tsc -b --noEmit
+
+# TypeScript type check (desktop)
+pnpm --filter desktop exec tsc --noEmit
+
+# Run unit tests
+pnpm --filter web test
+
+# Run UI component tests
+pnpm --filter web test:ui
+
+# Run Rust tests (desktop backend)
+cd apps/desktop/src-tauri && cargo test
 
 # Lint
-npm run lint
+pnpm --filter web lint
 
-# Build for production
-npm run build
+# Build for production (web)
+pnpm --filter web build
+
+# End-to-end tests
+pnpm test:e2e
 ```
 
 ## Branch Strategy
@@ -90,9 +103,11 @@ Examples:
 2. Implement your changes following existing code patterns
 3. Ensure all checks pass locally:
    ```bash
-   npx tsc --noEmit
-   npx vitest run
-   npm run build
+   pnpm --filter web exec tsc -b --noEmit
+   pnpm --filter desktop exec tsc --noEmit
+   pnpm --filter web test
+   pnpm --filter web test:ui
+   pnpm --filter web build
    ```
 4. Push your branch and open a PR targeting `develop`
 5. CI will automatically run lint, typecheck, test, and build
@@ -102,11 +117,20 @@ Examples:
 
 ### TypeScript / React
 
-- Follow existing patterns in `src/`
+- Follow existing patterns in `apps/web/src/`
 - Use TypeScript strict mode (no `any` unless necessary)
 - Components use functional style with hooks
-- UI components follow shadcn/ui conventions (Tailwind CSS)
-- Use the `@/` path alias for imports from `src/`
+- UI components follow shadcn/ui conventions (Tailwind CSS v4)
+- Use the `@/` path alias for imports from `apps/web/src/`
+- **UI sharing rule**: the desktop app imports web components via the `@`
+  alias. Do NOT duplicate components — branch only platform-specific parts
+  (via `isDesktopEnv()` and per-platform i18n keys).
+
+### Rust
+
+- Follow existing patterns in `apps/desktop/src-tauri/src/`
+- Run `cargo fmt` before committing
+- Add tests for storage/workspace logic in the same file (as `#[cfg(test)]`)
 
 ## Security Policy
 
@@ -116,9 +140,11 @@ Please review [SECURITY.md](SECURITY.md) for our security policy and vulnerabili
 
 - No `eval()`, `new Function()`, or `innerHTML` with variable input
 - API keys must never be logged or sent to unintended endpoints
-- Use the existing IndexedDB/OPFS storage layer for all persistent data
+- Desktop: use the OS keychain via Rust IPC for secrets; web: use the storage
+  layer (IndexedDB/OPFS) — web is evaluation-only
 - Library dependencies should be approved in PR review
 - All `connect-src` endpoints must be documented for CSP maintenance
+- ADRs must never contain personal information (real paths, API keys, tokens)
 
 ## License
 
