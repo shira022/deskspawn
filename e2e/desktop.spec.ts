@@ -4,30 +4,51 @@
  * 実行中の WebView2 へ CDP で接続し、実際の画面操作で検証する。
  * アプリの状態はテスト間で共有される(実アプリ)ため直列実行。
  *
- * APIキーは DESKSPAWN_API_KEY 環境変数、無ければ ~/.hermes/config.yaml から読む。
- * (コミット禁止: テストファイルにキーを直書きしないこと)
+ * ── 2つの実行モード ─────────────────────────────────────────────────
+ * 1. ダミーモード (デフォルト): 実APIキー不要。ダミーのエンドポイント/モデルで
+ *    AI設定フローとUI反映を検証する。CIや外部貢献者でも実行可能。
+ * 2. 実APIモード (DESKSPAWN_E2E_REAL=1): 実際のプロバイダーに接続し、
+ *    モデル一覧取得とAI応答まで検証する。APIキーが必要。
+ *
+ * ── 環境変数 (すべて省略可) ─────────────────────────────────────────
+ *   DESKSPAWN_E2E_PROVIDER  プロバイダーID (default: custom)
+ *   DESKSPAWN_E2E_ENDPOINT  エンドポイントURL (custom/ollama/azure/anthropic)
+ *                           (default: http://127.0.0.1:9/v1 — 破棄ポートで意図的に繋がらない)
+ *   DESKSPAWN_E2E_MODEL     モデルID (default: e2e-model)
+ *   DESKSPAWN_E2E_REGION    AWSリージョン (amazon-bedrock のみ, default: us-east-1)
+ *   DESKSPAWN_API_KEY       APIキー (ダミーモードでは不要)
+ *   DESKSPAWN_E2E_REAL=1    実APIモードを有効化
+ *   CDP_URL                 WebView2 CDP エンドポイント (default: http://172.28.208.1:9222)
+ *
+ * 実APIモードの例 (OpenAI互換):
+ *   DESKSPAWN_E2E_PROVIDER=custom \
+ *   DESKSPAWN_E2E_ENDPOINT=https://api.example.com/v1 \
+ *   DESKSPAWN_E2E_MODEL=my-model \
+ *   DESKSPAWN_API_KEY=sk-... DESKSPAWN_E2E_REAL=1 pnpm test:e2e
+ *
+ * APIキーは環境変数からのみ取得する (テストファイルへの直書き禁止)。
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
-import { readFileSync } from 'fs';
 
 const CDP_URL = process.env.CDP_URL || 'http://172.28.208.1:9222';
-const ENDPOINT = 'https://opencode.ai/zen/go/v1';
-const MODEL = 'deepseek-v4-flash';
+
+// ── E2E設定 (すべて環境変数から。未設定ならダミー値でUIフローのみ検証) ──
+const PROVIDER = process.env.DESKSPAWN_E2E_PROVIDER || 'custom';
+const ENDPOINT = process.env.DESKSPAWN_E2E_ENDPOINT || 'http://127.0.0.1:9/v1';
+const MODEL = process.env.DESKSPAWN_E2E_MODEL || 'e2e-model';
+const REGION = process.env.DESKSPAWN_E2E_REGION || 'us-east-1';
+const API_KEY = process.env.DESKSPAWN_API_KEY || '';
+const REAL_API = process.env.DESKSPAWN_E2E_REAL === '1';
+// ダミーモード用: 保存バリデーションを通すための非実キー
+const DUMMY_KEY = 'sk-e2e-dummy-key';
+
+/** エンドポイント入力欄が表示されるプロバイダー (AiConfigDialog の表示条件と一致) */
+const NEEDS_ENDPOINT = ['custom', 'anthropic', 'azure-openai', 'ollama'].includes(PROVIDER);
+/** APIキー入力欄が表示されるプロバイダー (ollama 以外すべて) */
+const NEEDS_API_KEY = PROVIDER !== 'ollama';
 
 let browser: Browser;
 let page: Page;
-
-function getApiKey(): string {
-  if (process.env.DESKSPAWN_API_KEY) return process.env.DESKSPAWN_API_KEY;
-  try {
-    const raw = readFileSync('/home/shira/.hermes/config.yaml', 'utf8');
-    const m = raw.match(/api_key:\s*(\S+)/);
-    if (m) return m[1].trim();
-  } catch {
-    /* ignore */
-  }
-  return '';
-}
 
 test.beforeAll(async () => {
   browser = await chromium.connectOverCDP(CDP_URL);
@@ -114,6 +135,44 @@ async function closeModelPopover(page: Page) {
   });
 }
 
+/**
+ * モデル欄を設定する。プロバイダー/モードに応じて次のいずれかで動く:
+ *  - モデル一覧取得OK → select から指定モデルを選択
+ *  - 一覧に無いモデル → 「その他（手動入力）」→ 手動入力欄
+ *  - 一覧取得失敗 (ダミーモード/一覧API非対応) → 手動入力欄
+ */
+async function fillModel(page: Page, model: string) {
+  const modelSelect = page.locator('select').nth(1);
+  const manualInput = page.getByPlaceholder(/Enter model|モデル/).first();
+
+  // モデル一覧の取得完了を待つ (select か手動入力欄のどちらかが表示される)
+  await expect
+    .poll(
+      async () => {
+        const selectVisible = await modelSelect.isVisible().catch(() => false);
+        const manualVisible = await manualInput.isVisible().catch(() => false);
+        return selectVisible || manualVisible;
+      },
+      { timeout: 30_000 },
+    )
+    .toBe(true);
+
+  if (await modelSelect.isVisible().catch(() => false)) {
+    const option = modelSelect.locator('option', { hasText: model });
+    if ((await option.count()) > 0) {
+      // 指定モデルが一覧にある → 選択
+      await modelSelect.selectOption({ value: model });
+    } else {
+      // 一覧に無いモデル → 「その他（手動入力）」を選んで手動入力
+      await modelSelect.selectOption('__custom__');
+      await manualInput.fill(model);
+    }
+  } else {
+    // モデル一覧が取得できない (ダミーモード等) → 手動入力
+    await manualInput.fill(model);
+  }
+}
+
 // ── テスト ─────────────────────────────────────────────────────────────────
 
 test('01: 起動画面 — タイトルと主要UIが表示される', async () => {
@@ -126,36 +185,41 @@ test('01: 起動画面 — タイトルと主要UIが表示される', async () 
   await expect(page.getByPlaceholder(/作りたいアプリを指示/)).toBeVisible();
 });
 
-test('02: AI設定フロー — Customプロバイダーで保存しツールバーに反映', async () => {
-  const apiKey = getApiKey();
-  expect(apiKey, 'APIキーが必要 (DESKSPAWN_API_KEY か ~/.hermes/config.yaml)').toBeTruthy();
+test('02: AI設定フロー — プロバイダーを保存しツールバーに反映', async () => {
+  if (REAL_API) {
+    expect(API_KEY, '実APIモードでは DESKSPAWN_API_KEY が必要').toBeTruthy();
+  }
 
   await openAiConfig();
 
   // プロバイダー選択 (ネイティブselect)
   const providerSelect = page.locator('select').first();
-  await providerSelect.selectOption({ label: 'Custom' });
+  await providerSelect.selectOption({ value: PROVIDER });
 
-  // エンドポイント入力
-  const endpointInput = page.getByPlaceholder(/http|https|endpoint/i).first();
-  await endpointInput.fill(ENDPOINT);
+  // エンドポイント入力 (表示されるプロバイダーのみ)
+  if (NEEDS_ENDPOINT) {
+    const endpointInput = page.getByPlaceholder(/http|https|endpoint/i).first();
+    await endpointInput.fill(ENDPOINT);
+  }
 
   // APIキー入力 (前回保存済みなら「変更」で入力欄を表示 — ブラウザ内保存バッジ表示中)
-  const changeBtn = page.getByRole('button', { name: '変更' });
-  if (await changeBtn.isVisible().catch(() => false)) {
-    await changeBtn.click();
+  if (NEEDS_API_KEY) {
+    const changeBtn = page.getByRole('button', { name: '変更' });
+    if (await changeBtn.isVisible().catch(() => false)) {
+      await changeBtn.click();
+    }
+    const keyInput = page.locator('input[type="password"]').first();
+    await keyInput.fill(REAL_API ? API_KEY : DUMMY_KEY);
   }
-  const keyInput = page.locator('input[type="password"]').first();
-  await keyInput.fill(apiKey);
 
-  // モデルが /models から取得されて select に載るのを待つ
-  const modelSelect = page.locator('select').nth(1);
-  await expect(modelSelect).toBeVisible();
-  // モデル一覧がプロキシ経由でロードされるのを待つ (<option> はドロップダウン未展開時 hidden のため
-  // toBeVisible ではなく要素存在で判定)
-  const modelOption = modelSelect.locator('option', { hasText: MODEL });
-  await expect(modelOption).toHaveCount(1, { timeout: 30_000 });
-  await modelSelect.selectOption({ value: MODEL });
+  // AWSリージョン (amazon-bedrock のみ)
+  if (PROVIDER === 'amazon-bedrock') {
+    const regionInput = page.getByPlaceholder(/us-east-1|リージョン/).first();
+    await regionInput.fill(REGION);
+  }
+
+  // モデル選択/入力 (モデル一覧が取得できれば select、失敗すれば手動入力)
+  await fillModel(page, MODEL);
 
   // 保存
   await page.getByRole('button', { name: '保存' }).click();
@@ -190,13 +254,16 @@ test('03: チャット送信 — アプリ作成後にAI応答が表示される
   // ユーザーメッセージが表示される
   await expect(page.getByText(prompt)).toBeVisible();
 
-  // AI応答 (プロキシ経由の実応答) — ユーザー+アシスタントの2メッセージ追加を待つ
-  await expect(page.locator('[id^="chat-msg-"]')).toHaveCount(msgCountBefore + 2, {
-    timeout: 120_000,
-  });
-  await expect(page.locator('[id^="chat-msg-"]').last()).toContainText(new RegExp(token), {
-    timeout: 30_000,
-  });
+  // AI応答の検証は実APIモードのみ (ダミーモードでは実応答が来ない)
+  if (REAL_API) {
+    // AI応答 (プロキシ経由の実応答) — ユーザー+アシスタントの2メッセージ追加を待つ
+    await expect(page.locator('[id^="chat-msg-"]')).toHaveCount(msgCountBefore + 2, {
+      timeout: 120_000,
+    });
+    await expect(page.locator('[id^="chat-msg-"]').last()).toContainText(new RegExp(token), {
+      timeout: 30_000,
+    });
+  }
 });
 
 test('04: 新規アプリ — ダイアログが開いてキャンセルできる', async () => {
