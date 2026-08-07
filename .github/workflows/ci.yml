@@ -66,9 +66,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: latest
+      - run: corepack enable && pnpm install --frozen-lockfile
       - run: cd apps/desktop && bun build --compile ./sidecar/src/server.ts --outfile /tmp/deskspawn-sidecar-check
 
   # Rust (Tauri 本体) の検証: cargo check + cargo test を Windows ランナーで実行。
