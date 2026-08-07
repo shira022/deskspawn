@@ -85,10 +85,15 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
       - run: corepack enable && pnpm install --frozen-lockfile
       # tauri-build のビルドスクリプトが frontendDist を要求するため、先に dist を生成する
       - run: pnpm --filter desktop build
       - uses: dtolnay/rust-toolchain@stable
+      # externalBin (sidecar exe) を生成 — tauri-build の build.rs が存在を要求する
+      - run: cd apps/desktop && bun scripts/build-sidecar.mjs
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: apps/desktop/src-tauri
