@@ -48,6 +48,59 @@ jobs:
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web build
 
+  # デスクトップ版フロントの型チェック+ビルド (tsc -b で TS2688 等の型定義漏れも検出)。
+  # CIが web のみだと desktop のビルド破損が黙過される事故を防ぐ (実績: 2026-08-05 @types/node 欠落)。
+  desktop-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable && pnpm install --frozen-lockfile
+      - run: pnpm --filter desktop build
+
+  # sidecar のコンパイル検証 (bun build --compile が通ること)。
+  # 未宣言変数の ReferenceError 等は実行時まで出ないが、バンドル破損・構文エラーはここで検出できる。
+  sidecar-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: cd apps/desktop && bun build --compile ./sidecar/src/server.ts --outfile /tmp/deskspawn-sidecar-check
+
+  # Rust (Tauri 本体) の検証: cargo check + cargo test を Windows ランナーで実行。
+  # 存在しないバージョンが Cargo.lock に混入した場合 (実績: 2026-08-06 v0.4.2 で heck/jni-sys/rustc_version/windows-result が
+  # "0.4.2" に誤置換され crates.io 解決不能) は cargo check が即失敗するため、リリース事故を防げる。
+  rust-check-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: corepack enable && pnpm install --frozen-lockfile
+      # tauri-build のビルドスクリプトが frontendDist を要求するため、先に dist を生成する
+      - run: pnpm --filter desktop build
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+      - run: cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+
+  # バージョン整合チェック (タグ/リリース時の SemVer 不整合事故を防止)
+  version-consistency:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node scripts/check-versions.mjs
+
   npm-audit:
     runs-on: ubuntu-latest
     steps:
