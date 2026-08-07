@@ -30,6 +30,12 @@ deskspawn-*.png
 projects/
 workspace/
 *.png
+!apps/web/public/favicon.png
+!apps/web/public/apple-touch-icon.png
+!apps/desktop/src-tauri/icons/*.png
+# Mobile icons not needed (Windows + Web only)
+apps/desktop/src-tauri/icons/android/
+apps/desktop/src-tauri/icons/ios/
 
 # Playwright E2E
 node_modules/.cache/
