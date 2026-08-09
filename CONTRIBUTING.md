@@ -55,6 +55,40 @@ pnpm --filter web build
 pnpm test:e2e
 ```
 
+#### E2E modes (e2e/desktop.spec.ts)
+
+The desktop E2E suite runs in two modes — both default to safe values, so you can run it without any API key:
+
+| Mode | When | What it verifies |
+|------|------|------------------|
+| **Dummy** (default) | No env vars set | AI config flow (save → toolbar reflects model) using a fake endpoint/key. Model list fetch fails → manual-input path is exercised. |
+| **Real API** | `DESKSPAWN_E2E_REAL=1` + `DESKSPAWN_API_KEY` | Real provider connection: model list from `/models`, real chat response. |
+
+All settings are injected via environment variables (no provider/model is hardcoded):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DESKSPAWN_E2E_PROVIDER` | `custom` | Provider ID (`custom`, `openai`, `anthropic`, `ollama`, `azure-openai`, `amazon-bedrock`, …) |
+| `DESKSPAWN_E2E_ENDPOINT` | `http://127.0.0.1:9/v1` | Endpoint URL (custom/anthropic/azure/ollama) — discard port, intentionally unreachable |
+| `DESKSPAWN_E2E_MODEL` | `e2e-model` | Model ID to save |
+| `DESKSPAWN_E2E_REGION` | `us-east-1` | AWS region (amazon-bedrock only) |
+| `DESKSPAWN_API_KEY` | *(none)* | Real API key (real-API mode only) |
+| `DESKSPAWN_E2E_REAL` | *(unset)* | Set to `1` to enable real-API verification |
+| `CDP_URL` | `http://172.28.208.1:9222` | WebView2 CDP endpoint |
+
+Real-API example:
+
+```bash
+DESKSPAWN_E2E_PROVIDER=custom \
+DESKSPAWN_E2E_ENDPOINT=https://api.example.com/v1 \
+DESKSPAWN_E2E_MODEL=my-model \
+DESKSPAWN_API_KEY=sk-... \
+DESKSPAWN_E2E_REAL=1 \
+pnpm test:e2e
+```
+
+> **Never hardcode API keys in test files.** Keys are read from the environment only.
+
 ## Branch Strategy
 
 We use a 3-branch GitFlow:

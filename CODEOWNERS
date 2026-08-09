@@ -1,1 +1,32 @@
+# CODEOWNERS — who is automatically requested for review on pull requests.
+# Syntax: <file-pattern> <owner>
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+#
+# DeskSpawn is a single-maintainer project (Git Flow: feature/* → develop → main).
+
+# Default owner for everything
 * @shira022
+
+# CI/CD, security workflows and release automation
+/.github/ @shira022
+SECURITY.md @shira022
+
+# Desktop app — Tauri shell, Rust core (src-tauri), sidecar (Node/Bun server)
+/apps/desktop/ @shira022
+/apps/desktop/sidecar/ @shira022
+/apps/desktop/src-tauri/ @shira022
+
+# Web app (evaluation demo of the desktop product)
+/apps/web/ @shira022
+
+# Shared packages (ai-core, config, ui)
+/packages/ @shira022
+
+# Documentation and community files
+/docs/ @shira022
+README.md @shira022
+CONTRIBUTING.md @shira022
+CODE_OF_CONDUCT.md @shira022
+
+# E2E test suites
+/e2e/ @shira022
