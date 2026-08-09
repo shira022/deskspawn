@@ -28,8 +28,11 @@ void __filename;
 // bun compile の exe では __dirname が実行時cwd依存（B:等の一時ドライブに
 // 解決されうる）ため、プロジェクト保存先は確実に存在するホーム基準にする。
 const DESKSPAWN_ROOT = process.env.DESKSPAWN_ROOT || path.join(os.homedir(), 'deskspawn');
-const PROJECTS_DIR = process.env.DESKSPAWN_PROJECTS_DIR || path.join(DESKSPAWN_ROOT, 'projects');
-const PROJECTS_JSON = path.join(PROJECTS_DIR, 'projects.json');
+// #98 project→app rename: Rust/フロントは ~/deskspawn/apps + apps.json を使用（ADR-007〜012）。
+// ここが projects のまま残っていると、プレビューが存在しないディレクトリを参照して
+// 「Project has no package.json」になる（実績 2026-08-07）。旧env名は互換のため維持。
+const PROJECTS_DIR = process.env.DESKSPAWN_PROJECTS_DIR || path.join(DESKSPAWN_ROOT, 'apps');
+const PROJECTS_JSON = path.join(PROJECTS_DIR, 'apps.json');
 const TEMPLATE_DIR = process.env.DESKSPAWN_TEMPLATES_DIR || path.join(DESKSPAWN_ROOT, 'templates', 'react-template');
 const WORKSPACE_DEV_PORT = 5174;
 let workspaceDevActualPort = WORKSPACE_DEV_PORT;
@@ -1953,9 +1956,11 @@ function waitForDevServer(timeoutMs: number): Promise<boolean> {
 // written files through Rust IPC, so the dev server runs on the real files.
 app.post('/api/preview/start', async (req, res) => {
   try {
-    const { projectId, files } = req.body || {};
+    const { projectId: projectIdRaw, appId, files } = req.body || {};
+    // #98 project→app rename 後、フロントは appId を送る。旧クライアント互換のため projectId も受け付ける。
+    const projectId = appId || projectIdRaw;
     if (!projectId || typeof projectId !== 'string') {
-      res.status(400).json({ error: 'projectId is required' });
+      res.status(400).json({ error: 'projectId (or appId) is required' });
       return;
     }
     const dir = previewDir(projectId);
@@ -1994,9 +1999,10 @@ app.post('/api/preview/start', async (req, res) => {
 // files は任意: 送られてきた場合のみ実体に書き込む（Web互換フロー用）。
 app.post('/api/preview/sync', (req, res) => {
   try {
-    const { projectId, files } = req.body || {};
+    const { projectId: projectIdRaw, appId, files } = req.body || {};
+    const projectId = appId || projectIdRaw;
     if (!projectId || typeof projectId !== 'string') {
-      res.status(400).json({ error: 'projectId is required' });
+      res.status(400).json({ error: 'projectId (or appId) is required' });
       return;
     }
     if (!files || typeof files !== 'object') {
@@ -2035,9 +2041,10 @@ app.post('/api/preview/stop', (_req, res) => {
 // Type-check the preview workspace (tsc --noEmit) + Vite error detection
 app.post('/api/preview/check', async (req, res) => {
   try {
-    const { projectId } = req.body || {};
+    const { projectId: projectIdRaw, appId } = req.body || {};
+    const projectId = appId || projectIdRaw;
     if (!projectId || typeof projectId !== 'string') {
-      res.status(400).json({ error: 'projectId is required' });
+      res.status(400).json({ error: 'projectId (or appId) is required' });
       return;
     }
     const dir = previewDir(projectId);

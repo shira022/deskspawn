@@ -38,12 +38,12 @@ Examples of unacceptable behavior include:
 
 ## Enforcement Responsibilities
 
-Community leaders are responsible for clarifying and enforcing our standards of
-acceptable behavior and will take appropriate and fair corrective action in
-response to any behavior that they deem inappropriate, threatening, offensive,
-or harmful.
+The maintainer of DeskSpawn is responsible for clarifying and enforcing our
+standards of acceptable behavior and will take appropriate and fair corrective
+action in response to any behavior that they deem inappropriate, threatening,
+offensive, or harmful.
 
-Community leaders have the right and responsibility to remove, edit, or reject
+The maintainer has the right and responsibility to remove, edit, or reject
 comments, commits, code, wiki edits, issues, and other contributions that are
 not aligned to this Code of Conduct, and will communicate reasons for moderation
 decisions when appropriate.
@@ -59,17 +59,19 @@ representative at an online or offline event.
 ## Enforcement
 
 Instances of abusive, harassing, or otherwise unacceptable behavior may be
-reported to the community leaders responsible for enforcement at the GitHub
-repository's issue tracker or discussion board.
+reported to the maintainer responsible for enforcement by opening an issue at
+[https://github.com/shira022/deskspawn/issues](https://github.com/shira022/deskspawn/issues)
+(prefer a private report if the matter is sensitive — GitHub issues support
+private visibility for repository collaborators).
 
 All complaints will be reviewed and investigated promptly and fairly.
 
-All community leaders are obligated to respect the privacy and security of the
-reporter of any incident.
+The maintainer is obligated to respect the privacy and security of the reporter
+of any incident.
 
 ## Enforcement Guidelines
 
-Community leaders will follow these Community Impact Guidelines in determining
+The maintainer will follow these Community Impact Guidelines in determining
 the consequences for any action they deem in violation of this Code of Conduct:
 
 ### 1. Correction
@@ -77,7 +79,7 @@ the consequences for any action they deem in violation of this Code of Conduct:
 **Community Impact**: Use of inappropriate language or other behavior deemed
 unprofessional or unwelcome in the community.
 
-**Consequence**: A private, written warning from community leaders, providing
+**Consequence**: A private, written warning from the maintainer, providing
 clarity around the nature of the violation and an explanation of why the
 behavior was inappropriate. A public apology may be requested.
 
@@ -131,3 +133,27 @@ For answers to common questions about this code of conduct, see the FAQ at
 [Mozilla CoC]: https://github.com/mozilla/diversity
 [FAQ]: https://www.contributor-covenant.org/faq
 [translations]: https://www.contributor-covenant.org/translations
+
+---
+
+## 🇯🇵 日本語
+
+### 私たちの誓約
+
+私たちは、メンバー、コントリビューター、リーダーとして、年齢、体格、障害の有無、民族性、性別の特徴や表現、経験の程度、教育、社会経済的地位、国籍、容姿、人種、宗教、性的指向などに関わらず、誰もがハラスメントのない環境でコミュニティに参加できることを誓います。
+
+### 適用範囲
+
+本規範は、すべてのコミュニティスペースに適用されます。また、個人が公の場でコミュニティを公式に代表する場合にも適用されます。
+
+### 報告方法
+
+不快な行為、ハラスメント、その他受け入れがたい行為の報告は、
+[https://github.com/shira022/deskspawn/issues](https://github.com/shira022/deskspawn/issues)
+のイシュートラッカーからメンテナー宛に行ってください(機微な内容の場合は、リポジトリコラボレーター向けの非公開イシューを推奨します)。すべての報告は迅速かつ公平に調査されます。
+
+### 帰属
+
+本規範は [Contributor Covenant][homepage] バージョン2.1を基にしています。
+
+[homepage]: https://www.contributor-covenant.org
