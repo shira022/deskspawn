@@ -44,6 +44,43 @@ import { getModelsForProvider } from "@/lib/models-fetcher";
 import { seedAppFromFilesystem, seedAppFromWorkspace, hasAppFiles } from "@/lib/seed-app";
 import i18n from "@/lib/i18n";
 
+// ── Sidecar config sync (デスクトップのみ) ─────────────────────────────────────
+//
+// デスクトップの AI 設定は IndexedDB にのみ保存され、サイドカーのメモリ
+// （storedApiKey / storedCustomEndpoint）には自動では届かない。届かないと
+// /v1 プロキシが上流を知らず NO_UPSTREAM(400) / Unauthorized(401) になる
+// （実績 2026-08-07 / 08-10）。設定の読み込み・保存タイミングで明示的に
+// POST /api/config で push する。
+
+async function pushAiConfigToSidecar(config: {
+  apiKey?: string;
+  customEndpoint?: string;
+}): Promise<void> {
+  if (!isDesktopEnv()) return;
+  try {
+    const { sidecarFetch } = await import("@/lib/sidecar");
+    const body: Record<string, string> = {};
+    if (config.apiKey) body.apiKey = config.apiKey;
+    if (config.customEndpoint) body.customEndpoint = config.customEndpoint;
+    if (Object.keys(body).length === 0) return;
+    await sidecarFetch("/api/config", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+  } catch (e) {
+    console.warn("[sidecar] Failed to push AI config:", e);
+  }
+}
+
+/** デスクトップ環境判定（Web では false）。 */
+function isDesktopEnv(): boolean {
+  return (
+    typeof window !== "undefined" &&
+    Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__)
+  );
+}
+
 // ── Store Types ─────────────────────────────────────────────────────────────
 
 interface Store {
@@ -71,6 +108,9 @@ interface Store {
   truncateMessages: (fromIndex: number) => void;
   clearMessages: () => void;
   fetchChatHistory: () => Promise<void>;
+  /** 直近のチャット履歴永続化が失敗したか（UIに保存失敗バッジを表示するため） */
+  saveFailed: boolean;
+  setSaveFailed: (failed: boolean) => void;
 
   // Editing
   editingMessageId: string | null;
@@ -174,6 +214,12 @@ export const useAppStore = create<Store>((set, get) => ({
               phase: "main",
             });
 
+            // サイドカーへ上流設定を同期（デスクトップのみ・NO_UPSTREAM防止）
+            await pushAiConfigToSidecar({
+              apiKey: key ?? undefined,
+              customEndpoint: storedCfg.customEndpoint,
+            });
+
             // Pre-populate model cost cache from models.dev
             if (lastProvider !== "ollama" && lastProvider !== "custom") {
               try {
@@ -259,6 +305,12 @@ export const useAppStore = create<Store>((set, get) => ({
       },
       apiKeyStorageMethod: storageMethod,
     });
+
+    // サイドカーへ上流設定を同期（デスクトップのみ・NO_UPSTREAM防止）
+    await pushAiConfigToSidecar({
+      apiKey: aiConfig.apiKey || undefined,
+      customEndpoint: aiConfig.customEndpoint,
+    });
     return storageMethod;
   },
 
@@ -280,17 +332,27 @@ export const useAppStore = create<Store>((set, get) => ({
           apiKeyConfigured: !!key,
         } as AiConfig,
       });
+
+      // サイドカーへ上流設定を同期（デスクトップのみ・NO_UPSTREAM防止）
+      await pushAiConfigToSidecar({
+        apiKey: key ?? undefined,
+        customEndpoint: cfg.customEndpoint,
+      });
     }
   },
 
   // ── Chat ───────────────────────────────────────────────────────────
   messages: [],
+  saveFailed: false,
+  setSaveFailed: (failed) => set({ saveFailed: failed }),
   addMessage: (message) => {
     set((state) => ({ messages: [...state.messages, message] }));
-    // Persist to IndexedDB
+    // Persist to IndexedDB (Web) / SQLite (Desktop) — surface failures, don't swallow.
     const pid = get().currentAppId;
     if (pid) {
-      persistChatHistory(pid, get().messages).catch(() => {});
+      persistChatHistory(pid, get().messages).then((ok) => {
+        useAppStore.getState().setSaveFailed(!ok);
+      });
     }
   },
   updateMessage: (id, updates) => {
@@ -301,7 +363,9 @@ export const useAppStore = create<Store>((set, get) => ({
     }));
     const pid = get().currentAppId;
     if (pid) {
-      persistChatHistory(pid, get().messages).catch(() => {});
+      persistChatHistory(pid, get().messages).then((ok) => {
+        useAppStore.getState().setSaveFailed(!ok);
+      });
     }
   },
   truncateMessages: (fromIndex) => {
@@ -310,7 +374,9 @@ export const useAppStore = create<Store>((set, get) => ({
     }));
     const pid = get().currentAppId;
     if (pid) {
-      persistChatHistory(pid, get().messages).catch(() => {});
+      persistChatHistory(pid, get().messages).then((ok) => {
+        useAppStore.getState().setSaveFailed(!ok);
+      });
     }
   },
   clearMessages: () => set({ messages: [] }),

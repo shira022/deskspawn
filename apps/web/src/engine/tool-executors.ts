@@ -968,10 +968,20 @@ function elementLabel(el: Element): string {
 // ── Chat History ───────────────────────────────────────────────────────────────
 
 /**
- * チャット履歴をIndexedDBに永続化する。
+ * チャット履歴を永続化する（Web: IndexedDB / Desktop: SQLite via Rust）。
+ *
+ * エラーは握りつぶさず false を返す（呼び出し側が UI に保存失敗を表示できる）。
+ * Desktop の書き込みは enqueueWrite により直列化されるため、
+ * addMessage/updateMessage の連続呼び出しでも lost-update が起きない。
  */
-export async function persistChatHistory(appId: string, messages: any[]): Promise<void> {
-  await saveChatToStorage(appId, messages);
+export async function persistChatHistory(appId: string, messages: any[]): Promise<boolean> {
+  try {
+    await saveChatToStorage(appId, messages);
+    return true;
+  } catch (e) {
+    console.error("[persistChatHistory] Failed to save chat history:", e);
+    return false;
+  }
 }
 
 /**

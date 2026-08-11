@@ -208,10 +208,21 @@ export function ChatMessage({
             </div>
           ) : (
             <div className="prose prose-sm dark:prose-invert max-w-none text-sm px-4 py-2.5 [&>p]:mb-1 [&>ul]:mt-1 [&>p:last-child]:mb-0 [&_pre]:whitespace-pre-wrap [&_pre]:break-words [&_code]:break-words">
-              <MessageContent content={message.content} searchQuery={searchQuery} />
-              {/* Execution logs (collapsible) */}
-              {message.stepLogs && message.stepLogs.length > 0 && (
-                <StepLogPanel stepLogs={message.stepLogs} searchQuery={searchQuery} />
+              {agentStatus === "running" && !message.content ? (
+                // D2: 生成中のプレースホルダーは点滅インジケータを表示
+                <div className="flex items-center gap-1.5 py-1">
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0ms" }} />
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
+                  <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
+                </div>
+              ) : (
+                <>
+                  <MessageContent content={message.content} searchQuery={searchQuery} />
+                  {/* Execution logs (collapsible) */}
+                  {message.stepLogs && message.stepLogs.length > 0 && (
+                    <StepLogPanel stepLogs={message.stepLogs} searchQuery={searchQuery} />
+                  )}
+                </>
               )}
             </div>
           )}

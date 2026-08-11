@@ -6,7 +6,7 @@ import { ChatInput } from "@/components/chat/ChatInput";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { StepLogPanel } from "@/components/chat/StepLogPanel";
 import { PhaseDetailPanel } from "@/components/chat/PhaseDetailPanel";
-import { MessageSquare, Bot, Loader2, ChevronDown, ChevronLeft, ChevronRight, History, Clock, Search, X, WifiOff } from "lucide-react";
+import { MessageSquare, Bot, Loader2, ChevronDown, ChevronLeft, ChevronRight, History, Clock, Search, X, WifiOff, AlertTriangle } from "lucide-react";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { getMessageCountForCheckpoint, restoreCheckpoint } from "@/lib/checkpoint-utils";
 import { useChatStream } from "@/hooks/useChatStream";
@@ -21,6 +21,7 @@ export function ChatPanel() {
   const checkpoints = useAppStore((s) => s.checkpoints);
   const currentCheckpointIndex = useAppStore((s) => s.currentCheckpointIndex);
   const agentStatus = useAppStore((s) => s.agentStatus);
+  const saveFailed = useAppStore((s) => s.saveFailed);
   const agentStepCount = useAppStore((s) => s.agentStepCount);
   const agentMaxSteps = useAppStore((s) => s.agentMaxSteps);
   const aiConfig = useAppStore((s) => s.aiConfig);
@@ -602,6 +603,13 @@ export function ChatPanel() {
                   )}
                 </div>
               ))}
+
+              {saveFailed && (
+                <div className="mx-4 mb-2 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  {t("chat.saveFailedBanner")}
+                </div>
+              )}
 
               {agentStatus === "running" && Object.keys(phaseOutputs).length > 0 && (
                 <div className="pl-11">

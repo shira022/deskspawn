@@ -284,9 +284,18 @@ describe("persistChatHistory", () => {
     vi.mocked(saveChatHistory).mockResolvedValue(undefined);
 
     const messages = [{ role: "user", content: "Hello" }];
-    await persistChatHistory("app-1", messages);
+    const ok = await persistChatHistory("app-1", messages);
 
+    expect(ok).toBe(true);
     expect(saveChatHistory).toHaveBeenCalledWith("app-1", messages);
+  });
+
+  it("returns false (does not throw) when storage save fails", async () => {
+    vi.mocked(saveChatHistory).mockRejectedValue(new Error("disk full"));
+
+    const ok = await persistChatHistory("app-1", [{ role: "user", content: "Hello" }]);
+
+    expect(ok).toBe(false);
   });
 });
 

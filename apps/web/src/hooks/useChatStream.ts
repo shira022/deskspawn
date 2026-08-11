@@ -149,7 +149,7 @@ export function useChatStream(): UseChatStreamReturn {
       generationActive.current = true;
 
       const state = useAppStore.getState();
-      const { aiConfig: cfg, currentAppId: pid, addMessage, setAgentStatus, setAgentStepCount } = state;
+      const { aiConfig: cfg, currentAppId: pid, addMessage, updateMessage, setAgentStatus, setAgentStepCount } = state;
 
       // Validate config
       if (!cfg) {
@@ -199,6 +199,10 @@ export function useChatStream(): UseChatStreamReturn {
       abortRef.current = abortController;
 
       const providerLabel = providerLabels[cfg.provider as keyof typeof providerLabels] || cfg.provider;
+
+      // D2 (ADR-013): 生成中アシスタントメッセージのID（try の外で宣言し
+      // catch / abort パスからも参照できるようにする）。
+      let activeBotMsgId: string | null = null;
 
       try {
         // Init MCP clients (may throw)
@@ -362,6 +366,22 @@ export function useChatStream(): UseChatStreamReturn {
       const localPhaseOutputs: Record<string, { label: string; text: string }> = {};
 
       /**
+       * D2 (ADR-013): 生成開始と同時にアシスタントメッセージをプレース
+       * ホルダーとして永続化する。アプリが途中で閉じられても、ここまでの
+       * ステップログ／フェーズ詳細がDBに残る（未完了生成の復元・
+       * 「AI応答が保存されない」データ欠落の根本対策）。
+       * 以降、このメッセージを updateMessage で更新していく。
+       */
+      const botMsgId = `msg-bot-${Date.now()}`;
+      addMessage({
+        id: botMsgId,
+        role: "assistant",
+        content: "",
+        timestamp: Date.now(),
+      });
+      activeBotMsgId = botMsgId;
+
+      /**
        * ツール実行開始時に "running" エントリを作成し、そのインデックスを返す。
        * ツール完了時に updateEntry() で同じエントリを更新する。
        */
@@ -374,6 +394,7 @@ export function useChatStream(): UseChatStreamReturn {
           status: "running",
         });
         setLiveStepLogs([...stepLogs]);
+        updateMessage(botMsgId, { stepLogs: [...stepLogs] });
         return idx;
       };
 
@@ -384,6 +405,7 @@ export function useChatStream(): UseChatStreamReturn {
         if (idx >= 0 && idx < stepLogs.length) {
           stepLogs[idx] = { ...stepLogs[idx], status, result, detail };
           setLiveStepLogs([...stepLogs]);
+          updateMessage(botMsgId, { stepLogs: [...stepLogs] });
         }
       };
 
@@ -434,6 +456,14 @@ export function useChatStream(): UseChatStreamReturn {
             onPhaseDetail: (_phase, text) => {
               localPhaseOutputs[_phase] = { label: _phase, text };
               setPhaseOutputs({ ...localPhaseOutputs });
+              // フェーズ詳細も逐次永続化（D2）
+              updateMessage(botMsgId, {
+                phaseOutputs: Object.entries(localPhaseOutputs).map(([phase, { label, text }]) => ({
+                  phase,
+                  label,
+                  text,
+                })),
+              });
             },
             onToolCall: (_phase, _toolName, _args) => {
               // エントリ作成は各ツールの execute 関数内で addRunningEntry/updateEntry により行われます
@@ -485,14 +515,15 @@ export function useChatStream(): UseChatStreamReturn {
             };
           }
 
-          addMessage({
-            id: `msg-bot-${Date.now()}`,
-            role: "assistant",
+          updateMessage(botMsgId, {
             content: pipelineResult.text,
-            timestamp: Date.now(),
             checkpointId,
             stepLogs: [...stepLogs],
-            phaseOutputs: Object.entries(localPhaseOutputs).map(([phase, { label, text }]) => ({ phase, label, text })),
+            phaseOutputs: Object.entries(localPhaseOutputs).map(([phase, { label, text }]) => ({
+              phase,
+              label,
+              text,
+            })),
             usage,
           });
           setLiveStepLogs([]);
@@ -513,14 +544,11 @@ export function useChatStream(): UseChatStreamReturn {
           useAppStore.getState().triggerReload();
         } else {
           setAgentStatus("error");
-          addMessage({
-            id: `msg-err-${Date.now()}`,
-            role: "assistant",
+          updateMessage(botMsgId, {
             content: i18n.t('chat.error.emptyResponse', {
               provider: providerLabel,
               model: cfg.model || i18n.t('ai.notConfiguredShort'),
             }),
-            timestamp: Date.now(),
           });
         }
       } catch (e: any) {
@@ -528,20 +556,28 @@ export function useChatStream(): UseChatStreamReturn {
         abortRef.current = null;
         if (e?.name === "AbortError") {
           setAgentStatus("idle");
+          // 中断された生成: プレースホルダーに注記を残す（部分ログは保存済み）
+          if (activeBotMsgId) {
+            const cur = useAppStore.getState().messages.find((m) => m.id === activeBotMsgId);
+            if (cur && !cur.content) {
+              updateMessage(activeBotMsgId, {
+                content: i18n.t("chat.error.generationInterrupted"),
+              });
+            }
+          }
           onComplete?.();
           return;
         }
         console.error("[chat] Generation error:", e);
         setAgentStatus("error");
-        addMessage({
-          id: `msg-err-${Date.now()}`,
-          role: "assistant",
-          content: i18n.t('chat.error.generic', {
-            errMsg: e?.message || String(e),
-            hint: getErrorHint(cfg?.provider, cfg, e),
-          }),
-          timestamp: Date.now(),
-        });
+        if (activeBotMsgId) {
+          updateMessage(activeBotMsgId, {
+            content: i18n.t('chat.error.generic', {
+              errMsg: e?.message || String(e),
+              hint: getErrorHint(cfg?.provider, cfg, e),
+            }),
+          });
+        }
       }
 
       onComplete?.();
