@@ -565,33 +565,123 @@ function patchViteConfigForDotDeskspawn(projectDir: string) {
   }
 }
 
-function stopWorkspaceDevServer() {
-  if (workspaceDevProcess) {
-    console.log('[devserver] Stopping workspace dev server...');
-    workspaceDevProcess.kill('SIGTERM');
-    // Also kill any child processes
-    try { process.kill(-workspaceDevProcess.pid!, 'SIGTERM'); } catch {}
-    workspaceDevProcess = null;
-    workspaceDevReady = false;
+// ── Windows-aware process tree kill ─────────────────────────────────────────
+// Windows では child.kill('SIGTERM') は直接の子（bun.exe）しか殺せず、detached:true で
+// 起動した vite 本体（node.exe）は orphan 化する。process.kill(-pid) も Windows では
+// 負PIDが無効でthrowするため、必ず platform 分岐して taskkill /T /F を使う。
+function killProcessTree(pid: number) {
+  if (!pid) return;
+  // 自分自身を kill しない防御（netstat/lsof が自分の LISTENING を拾った場合など）
+  if (pid === process.pid) {
+    console.warn(`[kill] Refusing to kill self (PID ${pid})`);
+    return;
+  }
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 5000, stdio: 'pipe' });
+    } else {
+      try { process.kill(-pid, 'SIGTERM'); } catch { /* already gone */ }
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+  } catch {
+    // 既に死んでいる/権限なし — 無害
   }
 }
 
+/** ポートを掴むプロセスを特定してツリーごと殺す。 */
+function killPortOwner(port: number, label: string) {
+  if (process.platform !== 'win32') {
+    try {
+      const pid = execSync(`lsof -ti:${port} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim();
+      if (pid) {
+        console.log(`[${label}] Killing orphan PID ${pid} holding port ${port}...`);
+        execSync(`kill -9 ${pid} 2>/dev/null`, { timeout: 3000 });
+      }
+    } catch { /* no orphan */ }
+    return;
+  }
+  try {
+    // -p tcp を付けると [::1] (IPv6) の LISTENING 行が出力されない → 付けない
+    const out = execSync('netstat -ano', { encoding: 'utf-8', timeout: 5000 });
+    const re = new RegExp(`:${port}\\s`);
+    const pids = new Set<number>();
+    for (const line of out.split(/\r?\n/)) {
+      if (!/LISTENING/.test(line) || !re.test(line)) continue;
+      const cols = line.trim().split(/\s+/);
+      const pid = parseInt(cols[cols.length - 1], 10);
+      if (!isNaN(pid)) pids.add(pid);
+    }
+    for (const pid of pids) {
+      console.log(`[${label}] Killing orphan PID ${pid} holding port ${port}...`);
+      killProcessTree(pid);
+    }
+  } catch { /* no orphan */ }
+}
+
 /**
- * Kill any orphan process that might be holding the workspace dev port,
+ * ポート帯 [start, start+count) を掴むプロセスを一括掃除する。
+ *
+ * ⚠️ 注意: このポート帯は DeskSpawn 専用とみなして LISTENING 中のプロセスを
+ * 無差別に kill する（Windows では orphan 化した vite を特定できないため）。
+ * 他アプリが同じポート帯を使っている場合は巻き込まれる可能性がある。
+ */
+function killPortOwnersInBand(startPort: number, count: number, label: string) {
+  if (process.platform !== 'win32') {
+    for (let p = startPort; p < startPort + count; p++) killPortOwner(p, label);
+    return;
+  }
+  try {
+    const out = execSync('netstat -ano', { encoding: 'utf-8', timeout: 5000 });
+    const ports = Array.from({ length: count }, (_, i) => startPort + i);
+    const re = new RegExp(`:(?:${ports.join('|')})\\s`);
+    const pids = new Set<number>();
+    for (const line of out.split(/\r?\n/)) {
+      if (!/LISTENING/.test(line) || !re.test(line)) continue;
+      const cols = line.trim().split(/\s+/);
+      const pid = parseInt(cols[cols.length - 1], 10);
+      if (!isNaN(pid)) pids.add(pid);
+    }
+    for (const pid of pids) {
+      console.log(`[${label}] Killing orphan PID ${pid} holding dev port...`);
+      killProcessTree(pid);
+    }
+  } catch { /* no orphan */ }
+}
+
+/** kill後、ポートが応答しなくなるまでポーリング（Windowsは解放にラグがある）。 */
+async function waitForPortFree(port: number, timeoutMs = 4000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    let responding = false;
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      try {
+        const res = await fetch(`http://${host}:${port}/`, { signal: AbortSignal.timeout(400) });
+        if (res) { responding = true; break; }
+      } catch { /* not responding */ }
+    }
+    if (!responding) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
+
+function stopWorkspaceDevServer() {
+  if (workspaceDevProcess && workspaceDevProcess.pid) {
+    console.log('[devserver] Stopping workspace dev server (tree kill)...');
+    killProcessTree(workspaceDevProcess.pid);
+  }
+  // 旧残骸がポート帯を掴んだままにならないよう一括掃除（5174〜5179）
+  killPortOwnersInBand(WORKSPACE_DEV_PORT, 6, 'devserver');
+  workspaceDevProcess = null;
+  workspaceDevReady = false;
+}
+
+/**
+ * Kill any orphan process that might be holding the workspace dev ports,
  * e.g. from a previous Tauri session that didn't clean up.
  */
 function killOrphanDevServer() {
-  try {
-    const pid = execSync(`lsof -ti:${WORKSPACE_DEV_PORT} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim();
-    if (pid) {
-      console.log(`[devserver] Killing orphan process (PID: ${pid}) on port ${WORKSPACE_DEV_PORT}...`);
-      execSync(`kill -9 ${pid} 2>/dev/null`, { timeout: 3000 });
-      // Give the port time to be released
-      execSync(`sleep 0.5`);
-    }
-  } catch {
-    // No orphan process — good
-  }
+  killPortOwnersInBand(WORKSPACE_DEV_PORT, 6, 'devserver');
 }
 
 // ── Generated-app API server (full-stack, ADR-010) ─────────────────────────
@@ -607,11 +697,12 @@ let apiReady = false;
 
 function stopApiServer() {
   if (apiProcess && apiProcess.pid) {
-    try {
-      process.kill(-apiProcess.pid, 'SIGTERM');
-    } catch { /* already gone */ }
-    apiProcess = null;
+    console.log('[apiserver] Stopping API server (tree kill)...');
+    killProcessTree(apiProcess.pid);
   }
+  // 旧残骸がAPIポート帯を掴んだままにならないよう一括掃除（4174〜4184）
+  killPortOwnersInBand(API_DESIRED_PORT, API_MAX_FALLBACK + 1, 'apiserver');
+  apiProcess = null;
   apiReady = false;
 }
 
@@ -651,6 +742,7 @@ async function startApiServer(dir: string): Promise<number> {
       detached: true,
       env: { ...process.env, PORT: String(port), NODE_ENV: 'development' },
     });
+    let childAlive = true;
     child.stdout?.on('data', (d: Buffer) => console.log(`[apiserver] ${d.toString().trim()}`));
     child.stderr?.on('data', (d: Buffer) => {
       const msg = d.toString();
@@ -658,20 +750,23 @@ async function startApiServer(dir: string): Promise<number> {
       // Port-in-use detection: Bun prints EADDRINUSE on stderr.
       if (/EADDRINUSE|Address already in use|listen EADDRINUSE/.test(msg)) {
         child.kill('SIGTERM');
-        apiProcess = null;
+        childAlive = false;
         return;
       }
     });
     child.on('exit', (code) => {
+      childAlive = false;
       if (apiProcess === child) {
         console.log(`[apiserver] Exited with code ${code}`);
         apiReady = false;
       }
     });
 
-    // Wait for readiness via HTTP polling (health endpoint).
-    const ready = await waitForApiPort(port, 5000);
-    if (ready) {
+    // 子が死んだポート（EADDRINUSE等）は残骸扱いせず採用しない。
+    // 旧API残骸が応答しても childAlive=false なら次へ進む。
+    const exited = new Promise<boolean>((resolve) => child.once('exit', () => resolve(false)));
+    const ready = await Promise.race([waitForApiPort(port, 5000), exited]);
+    if (ready && childAlive) {
       apiProcess = child;
       apiActualPort = port;
       apiReady = true;
@@ -679,8 +774,8 @@ async function startApiServer(dir: string): Promise<number> {
       patchViteConfigApiProxy(dir, port);
       return port;
     }
-    // Not ready — likely port conflict; kill and try next.
-    try { child.kill('SIGTERM'); } catch { /* noop */ }
+    // Not ready — likely port conflict; kill tree and try next.
+    killProcessTree(child.pid ?? 0);
     await new Promise((r) => setTimeout(r, 300));
   }
   console.error('[apiserver] Failed to start API server after fallback attempts');
@@ -711,9 +806,13 @@ function waitForApiPort(port: number, timeoutMs: number): Promise<boolean> {
   });
 }
 
-function startWorkspaceDevServer(dir: string) {
+async function startWorkspaceDevServer(dir: string) {
   stopWorkspaceDevServer();
   killOrphanDevServer();
+  // Windows は taskkill 後のポート解放にラグがある → 解放を待ってから起動
+  await waitForPortFree(WORKSPACE_DEV_PORT);
+  // 起動前に既応答ポートをベースライン記録（旧残骸をポーリングで拾わない）
+  await recordBaselineDevPorts();
 
   console.log(`[devserver] Starting dev server in ${dir}...`);
   workspaceDevReady = false;
@@ -1923,11 +2022,25 @@ async function checkDevServerPort(port: number): Promise<boolean> {
   return false;
 }
 
+/** 起動前に応答していたポート（旧残骸等）を記録し、ポーリングで除外する。 */
+let baselineDevPorts: Set<number> = new Set();
+
+async function recordBaselineDevPorts() {
+  baselineDevPorts = new Set();
+  for (let port = WORKSPACE_DEV_PORT; port <= WORKSPACE_DEV_PORT + 5; port++) {
+    if (await checkDevServerPort(port)) baselineDevPorts.add(port);
+  }
+  if (baselineDevPorts.size > 0) {
+    console.log(`[devserver] Baseline ports already in use (excluded): ${[...baselineDevPorts].join(', ')}`);
+  }
+}
+
 /** Wait until workspaceDevReady or timeout (ms). */
 function waitForDevServer(timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const start = Date.now();
     const timer = setInterval(async () => {
+      // stdout の Local: パース成功を最優先（実際に起動した新プロセスのポート）
       if (workspaceDevReady) {
         clearInterval(timer);
         resolve(true);
@@ -1936,7 +2049,9 @@ function waitForDevServer(timeoutMs: number): Promise<boolean> {
       // 保険: 出力パースに依存せず、実際にポートが開いたかHTTPポーリングで確認
       // （vite の stdout は Windows パイプでチャンク分割され「Local:」行の
       //   正規表現パースが失敗することがあるため。ポートもフォールバックでずれる）
+      // 起動前から応答していたポート（旧残骸）は除外し、新プロセスのポートだけ採用する
       for (let port = WORKSPACE_DEV_PORT; port <= WORKSPACE_DEV_PORT + 5; port++) {
+        if (baselineDevPorts.has(port)) continue;
         if (await checkDevServerPort(port)) {
           workspaceDevActualPort = port;
           workspaceDevReady = true;
@@ -1982,7 +2097,7 @@ app.post('/api/preview/start', async (req, res) => {
     // フルスタック生成アプリ（ADR-010）: Hono API を先に起動し、
     // 実ポートを vite.config.ts の /api proxy にパッチしてから vite を起動。
     await startApiServer(dir);
-    startWorkspaceDevServer(dir);
+    await startWorkspaceDevServer(dir);
 
     const ready = await waitForDevServer(30_000);
     if (!ready) {
