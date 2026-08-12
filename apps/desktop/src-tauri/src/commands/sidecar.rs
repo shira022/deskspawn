@@ -259,6 +259,33 @@ impl SidecarManager {
             }
         }
 
+        // Windows: SIGTERM 相当が無いため、ツリーごと taskkill /T /F で終了する。
+        // sidecar が spawn した vite（detached の bun/node）も一緒に死に、
+        // アプリ終了後にポートを掴んだまま残る orphan 化を防ぐ（実績 2026-08-12）。
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("taskkill")
+                .args(["/PID", &pid.to_string(), "/T", "/F"])
+                .status();
+            match status {
+                Ok(_) => log::info!("Sent taskkill /T /F to sidecar (PID: {})", pid),
+                Err(e) => log::warn!("Failed to taskkill sidecar (PID: {}): {}", pid, e),
+            }
+            // taskkill は同期的に完了する。監視スレッドが立てる terminated フラグを待つ。
+            let deadline =
+                std::time::Instant::now() + Duration::from_secs(GRACEFUL_STOP_TIMEOUT_SECS);
+            loop {
+                if self.terminated.load(Ordering::SeqCst) {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    log::warn!("Sidecar (PID: {}) did not exit after taskkill", pid);
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
+
         // Force kill (SIGKILL) via CommandChild as fallback
         if let Ok(mut guard) = self.process.lock() {
             if let Some(child) = guard.take() {
