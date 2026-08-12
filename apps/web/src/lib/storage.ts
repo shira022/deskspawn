@@ -141,6 +141,20 @@ export async function deleteApiKey(provider: string): Promise<void> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("delete_api_key", { provider });
+    // Also clean up any legacy IndexedDB copy (fallback leftovers from when
+    // the keychain was unavailable — bugfix 2026-08-12).
+    try {
+      const db = await openDB();
+      const tx = db.transaction("settings", "readwrite");
+      const store = tx.objectStore("settings");
+      await new Promise<void>((resolve, reject) => {
+        const req = store.delete(apiKeyStorageKey(provider));
+        req.onsuccess = () => resolve();
+        req.onerror = () => reject(req.error);
+      });
+    } catch {
+      // IndexedDB not available / nothing to clean
+    }
     return;
   } catch {
     // Not in Tauri environment
@@ -382,6 +396,11 @@ export async function deleteApp(id: string): Promise<void> {
  * Each generated app stores its data in a database named `deskspawn_app_{appId}`.
  */
 export async function deleteAppDatabase(appId: string): Promise<void> {
+  // C8 (web-storage audit 2026-08-12): on desktop the host origin has no such
+  // IndexedDB database (generated apps live as real files) — skip the no-op.
+  if (typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__)) {
+    return;
+  }
   const dbName = `deskspawn_app_${appId}`;
   await new Promise<void>((resolve, reject) => {
     const req = indexedDB.deleteDatabase(dbName);
