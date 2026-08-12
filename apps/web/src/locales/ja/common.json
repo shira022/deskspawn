@@ -281,6 +281,7 @@
     "appNamePlaceholder": "例: タスク管理アプリ",
     "templateReact": "React + Vite + Tailwind CSS のテンプレートを使用",
     "templateIndexedDB": "データは IndexedDB（ブラウザ内蔵DB）に自動保存",
+    "templateSQLite": "データはローカル SQLite（bun:sqlite）に自動保存",
     "templateAutoBackup": "変更は自動でバックアップされます",
     "templateShare": "他のユーザーとアプリを共有するにはエクスポート/インポート",
     "creating": "作成中...",
