@@ -13,7 +13,7 @@
 
 import { listAppFiles, writeAppFile, appFileExists } from "./storage-opfs";
 
-const API_BASE = "/api/app-files";
+const API_BASE = "/api/project-files";
 
 interface AppFilesResponse {
   files: Record<string, string>;

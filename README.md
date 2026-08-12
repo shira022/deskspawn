@@ -169,7 +169,7 @@ deskspawn/                          # pnpm workspace root
 | Concern | Where it lives | Notes |
 |---|---|---|
 | **UI & AI chat flow** | `apps/web/src/**` | The desktop app **imports this code directly** via the `@` alias (`apps/desktop/vite.config.ts` → `webSrc`). Both the web demo and the desktop app run the exact same files — do not "fix the desktop by editing `apps/desktop/src`" for UI/AI logic; edit `apps/web/src`. |
-| Desktop entry + IPC | `apps/desktop/src/` | Only 6 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `lib/ipc.ts` (Tauri bridge), `lib/services.ts`, `lib/storage-desktop.ts`. |
+| Desktop entry + IPC | `apps/desktop/src/` | Only 4 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `lib/ipc.ts` (Tauri bridge — `getSidecarPort` is the only live wrapper), `lib/services.ts`. |
 | Rust backend | `apps/desktop/src-tauri/` | Storage, sidecar lifecycle, security server. |
 | Standalone AI server | `apps/desktop/sidecar/` | Bun-bundled Node server: OpenAI-compatible `/v1` proxy (CORS workaround), `/api/models`, preview server. Its `providers.ts` mirrors `apps/web/src/engine/providers.ts` but is **not** on the current chat path. |
 | Model resolution (OpenAI/Anthropic/etc.) | `apps/web/src/engine/providers.ts` | **The single source of truth** for which API each provider uses. Also mirrored in `apps/desktop/sidecar/src/providers.ts` (legacy path). |

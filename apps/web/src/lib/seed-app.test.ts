@@ -51,7 +51,7 @@ describe("seedAppFromFilesystem", () => {
     const result = await seedAppFromFilesystem(appId);
 
     expect(result).toEqual({ seeded: 2, skipped: 0 });
-    expect(mockFetch).toHaveBeenCalledWith(`/api/app-files/${appId}`);
+    expect(mockFetch).toHaveBeenCalledWith(`/api/project-files/${appId}`);
     expect(mockStorageOpfs.writeAppFile).toHaveBeenCalledTimes(2);
     expect(mockStorageOpfs.writeAppFile).toHaveBeenCalledWith(
       appId,
@@ -208,7 +208,7 @@ describe("seedAppFromWorkspace", () => {
     const result = await seedAppFromWorkspace(appId);
 
     expect(result).toEqual({ seeded: 2, skipped: 0 });
-    expect(mockFetch).toHaveBeenCalledWith("/api/app-files/_workspace_?type=workspace");
+    expect(mockFetch).toHaveBeenCalledWith("/api/project-files/_workspace_?type=workspace");
     expect(mockStorageOpfs.writeAppFile).toHaveBeenCalledTimes(2);
   });
 

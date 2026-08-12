@@ -39,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { Separator } from "@/components/ui/separator";
 import { SettingsDialog } from "@/components/settings/SettingsDialog";
 import { AiConfigDialog } from "@/components/settings/AiConfigDialog";
+import { isDesktopEnv } from "@/lib/platform";
 import type { ProviderKind, ThemeMode } from "@/types";
 import { providerLabels } from "@/lib/constants";
 import { loadProviderConfig } from "@/lib/storage";
@@ -191,6 +192,9 @@ export function MainLayout() {
         <div className="flex items-center gap-2">
           <button
             onClick={() => {
+              // C4 (web-storage audit 2026-08-12): the desktop entry ignores
+              // the route key — only the web app navigates back to landing.
+              if (isDesktopEnv()) return;
               localStorage.setItem("deskspawn_route", "/");
               window.location.reload();
             }}
