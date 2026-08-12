@@ -153,6 +153,7 @@ pub fn run() {
             commands::apps::list_app_files,
             commands::apps::read_app_file,
             commands::apps::write_app_file,
+            commands::apps::delete_app_file,
             commands::apps::write_app_files,
             commands::apps::get_chat_history,
             commands::apps::save_chat_messages,

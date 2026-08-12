@@ -1023,6 +1023,109 @@ app.post('/projects/switch', (req, res) => {
   }
 });
 
+// ── Checkpoints (real files under <app>/.deskspawn/checkpoints/) ─────────────
+// Desktop persistence for the frontend checkpoint system. Previously the
+// frontend wrote full file snapshots into WebView IndexedDB on every AI run
+// (web-storage audit 2026-08-12) — now the sidecar owns them as real files.
+
+function resolveAppDir(appId: string): string {
+  return path.join(PROJECTS_DIR, appId);
+}
+
+// Create a checkpoint for an app
+app.post('/api/checkpoints', async (req, res) => {
+  try {
+    const { appId, checkpointId } = req.body || {};
+    if (!appId) {
+      res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
+      return;
+    }
+    const dir = resolveAppDir(appId);
+    if (!fs.existsSync(dir)) {
+      res.status(404).json({ error: 'App directory not found', errorCode: 'APP_DIR_NOT_FOUND' });
+      return;
+    }
+    const id = await executors.createCheckpoint(dir, checkpointId);
+    res.json({ id });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_CREATE_FAILED' });
+  }
+});
+
+// Restore an app from a checkpoint
+app.post('/api/checkpoints/restore', async (req, res) => {
+  try {
+    const { appId, checkpointId } = req.body || {};
+    if (!appId || !checkpointId) {
+      res.status(400).json({ error: 'appId and checkpointId are required', errorCode: 'PARAMS_REQUIRED' });
+      return;
+    }
+    const dir = resolveAppDir(appId);
+    if (!fs.existsSync(dir)) {
+      res.status(404).json({ error: 'App directory not found', errorCode: 'APP_DIR_NOT_FOUND' });
+      return;
+    }
+    await executors.restoreCheckpoint(dir, checkpointId);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_RESTORE_FAILED' });
+  }
+});
+
+// List checkpoints for an app (newest first)
+app.get('/api/checkpoints', (req, res) => {
+  try {
+    const appId = String(req.query.appId || '');
+    if (!appId) {
+      res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
+      return;
+    }
+    const dir = resolveAppDir(appId);
+    if (!fs.existsSync(dir)) {
+      res.status(404).json({ error: 'App directory not found', errorCode: 'APP_DIR_NOT_FOUND' });
+      return;
+    }
+    const checkpoints = executors.listCheckpoints(dir);
+    res.json({ checkpoints });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_LIST_FAILED' });
+  }
+});
+
+// Delete checkpoints newer than keepId (keep from keepId and older)
+app.post('/api/checkpoints/delete-after', (req, res) => {
+  try {
+    const { appId, keepId } = req.body || {};
+    if (!appId || !keepId) {
+      res.status(400).json({ error: 'appId and keepId are required', errorCode: 'PARAMS_REQUIRED' });
+      return;
+    }
+    const dir = resolveAppDir(appId);
+    executors.deleteCheckpointsAfter(dir, keepId);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_DELETE_AFTER_FAILED' });
+  }
+});
+
+// Delete ALL checkpoints for an app (app deletion)
+app.delete('/api/checkpoints', (req, res) => {
+  try {
+    const appId = String(req.query.appId || '');
+    if (!appId) {
+      res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
+      return;
+    }
+    const checkpointsDir = path.join(resolveAppDir(appId), '.deskspawn', 'checkpoints');
+    if (fs.existsSync(checkpointsDir)) {
+      fs.rmSync(checkpointsDir, { recursive: true, force: true });
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_DELETE_ALL_FAILED' });
+  }
+});
+
 // Delete a project
 app.delete('/projects/:id', (req, res) => {
   try {

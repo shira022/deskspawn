@@ -15,6 +15,7 @@ import {
 } from "@/lib/storage-opfs";
 import { saveChatHistory as saveChatToStorage } from "@/lib/storage";
 import type { Artifact, FileAction, DiffAction, TemplateAction } from "@deskspawn/ai-core";
+import { isDesktopEnv } from "@/lib/platform";
 
 // ── App ID management ──────────────────────────────────────────────────────
 
@@ -304,12 +305,36 @@ interface CheckpointData {
 const CHECKPOINTS_KEY = "deskspawn_checkpoints";
 
 /**
+ * チェックポイント API 呼び出し（デスクトップ: sidecar 実ファイル保存）。
+ * Web では使用しない。
+ */
+async function checkpointApi<T>(path: string, init?: RequestInit): Promise<T> {
+  const { sidecarFetch } = await import("@/lib/sidecar");
+  const res = await sidecarFetch(path, init);
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Checkpoint API ${res.status}: ${body}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+/**
  * チェックポイントをメモリに作成する。
- * ファイル一覧のスナップショットをIndexedDBに保存する。
+ * デスクトップ: sidecar が実ファイル（<app>/.deskspawn/checkpoints/<id>/）に保存。
+ * Web: ファイル一覧のスナップショットを IndexedDB に保存。
  */
 export async function createCheckpoint(appId: string, checkpointId?: string): Promise<string> {
   const pid = appId || getAppId();
   if (!pid) throw new Error("No app selected.");
+
+  if (isDesktopEnv()) {
+    const data = await checkpointApi<{ id: string }>("/api/checkpoints", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ appId: pid, checkpointId }),
+    });
+    return data.id;
+  }
 
   const id = checkpointId || crypto.randomUUID();
   const files = await listAppFiles(pid);
@@ -343,6 +368,15 @@ export async function restoreCheckpoint(appId: string, checkpointId: string): Pr
   const pid = appId || getAppId();
   if (!pid) throw new Error("No app selected.");
 
+  if (isDesktopEnv()) {
+    await checkpointApi("/api/checkpoints/restore", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ appId: pid, checkpointId }),
+    });
+    return;
+  }
+
   const { getSetting } = await import("@/lib/storage");
   const checkpoints = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
   const cp = checkpoints[checkpointId] as CheckpointData | undefined;
@@ -373,6 +407,14 @@ export async function restoreCheckpoint(appId: string, checkpointId: string): Pr
  * チェックポイント一覧を取得する（アプリスコープ）。
  */
 export async function listCheckpoints(appId: string): Promise<Array<{ id: string; createdAt: Date }>> {
+  if (isDesktopEnv()) {
+    const data = await checkpointApi<{
+      checkpoints: Array<{ id: string; createdAt: string }>;
+    }>(`/api/checkpoints?appId=${encodeURIComponent(appId)}`);
+    return data.checkpoints
+      .map((cp) => ({ id: cp.id, createdAt: new Date(cp.createdAt) }))
+      .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime());
+  }
   const { getSetting } = await import("@/lib/storage");
   const checkpoints = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
   return Object.values(checkpoints)
@@ -385,6 +427,14 @@ export async function listCheckpoints(appId: string): Promise<Array<{ id: string
  * 指定したチェックポイントより後のものを削除する（アプリスコープ）。
  */
 export async function deleteCheckpointsAfter(appId: string, keepCheckpointId: string): Promise<void> {
+  if (isDesktopEnv()) {
+    await checkpointApi("/api/checkpoints/delete-after", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ appId, keepId: keepCheckpointId }),
+    });
+    return;
+  }
   const { getSetting, setSetting } = await import("@/lib/storage");
   const checkpoints = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
   const all = Object.entries(checkpoints)
@@ -405,6 +455,12 @@ export async function deleteCheckpointsAfter(appId: string, keepCheckpointId: st
  * 指定したアプリの全チェックポイントを削除する（アプリ削除時に呼ぶ）。
  */
 export async function deleteAppCheckpoints(appId: string): Promise<void> {
+  if (isDesktopEnv()) {
+    await checkpointApi(`/api/checkpoints?appId=${encodeURIComponent(appId)}`, {
+      method: "DELETE",
+    });
+    return;
+  }
   const { getSetting, setSetting } = await import("@/lib/storage");
   const checkpoints = (await getSetting<Record<string, CheckpointData>>(CHECKPOINTS_KEY)) || {};
   let changed = false;
