@@ -43,7 +43,7 @@ vi.mock("@/engine/tool-executors", () => {
   const fns = {
     setAppId: vi.fn(),
     listCheckpoints: vi.fn().mockResolvedValue([]),
-    persistChatHistory: vi.fn().mockResolvedValue(undefined),
+    persistChatHistory: vi.fn().mockResolvedValue(true),
     loadChatHistory: vi.fn().mockResolvedValue([]),
   };
   Object.assign(mockEngineFns, fns);

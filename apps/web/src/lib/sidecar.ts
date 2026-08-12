@@ -59,3 +59,23 @@ export async function sidecarFetch(
   }
   return fetch(`${sidecarBase()}${path}`, { ...init, headers });
 }
+
+/**
+ * AI SDK の fetch オプションとして渡すラッパー（H1）。
+ *
+ * デスクトップで custom プロバイダーがサイドカープロキシ（/v1/*）を
+ * 呼ぶ際、AI SDK の素の fetch には X-DeskSpawn-Token が付かず
+ * サイドカー自身が 401 Unauthorized を返す（実績 2026-08-07 / 08-10）。
+ * createOpenAICompatible({ fetch: sidecarFetchWithToken }) で注入する。
+ */
+export async function sidecarFetchWithToken(
+  input: RequestInfo | URL,
+  init?: RequestInit,
+): Promise<Response> {
+  const headers = new Headers(init?.headers);
+  const token = await getSidecarToken();
+  if (token) {
+    headers.set("X-DeskSpawn-Token", token);
+  }
+  return fetch(input, { ...init, headers });
+}

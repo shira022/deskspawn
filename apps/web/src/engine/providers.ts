@@ -14,7 +14,7 @@ import { createAzure } from '@ai-sdk/azure';
 import { createVertex } from '@ai-sdk/google-vertex/edge';
 import type { LanguageModel } from 'ai';
 import type { ProviderConfig } from "@deskspawn/ai-core";
-import { sidecarBase } from "@/lib/sidecar";
+import { sidecarBase, sidecarFetchWithToken } from "@/lib/sidecar";
 
 export function getModel(config: ProviderConfig): LanguageModel {
   const { provider, model, apiKey, customEndpoint } = config;
@@ -91,6 +91,9 @@ export function getModel(config: ProviderConfig): LanguageModel {
         name: 'custom-provider',
         baseURL: isDesktop ? `${sidecarBase()}/v1` : customEndpoint,
         apiKey,
+        // H1: サイドカープロキシには X-DeskSpawn-Token 必須（無いと401）。
+        // Web（素のfetch）ではトークン不要なので undefined のまま。
+        fetch: isDesktop ? sidecarFetchWithToken : undefined,
       });
       return client.chatModel(model) as unknown as LanguageModel;
     }

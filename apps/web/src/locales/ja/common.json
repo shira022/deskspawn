@@ -205,6 +205,8 @@
       "noAppSelected": "⚠️ アプリが選択されていません。ツールバーの「{{newAppLabel}}」からアプリを作成するか、アプリ履歴から選択してください。",
       "apiKeyRequiredDetailed": "⚠️ {{provider}} には API キーが必要です。\nツールバーの「{{modelLabel}}」→「APIキー設定」から設定してください。",
       "emptyResponse": "⚠️ AIが空のレスポンスを返しました。モデルの設定を確認するか、もう一度試してみてください。\n\nプロバイダー: {{provider}}\nモデル: {{model}}\n\nツールバーのモデル名をクリックして設定を確認してください。",
+      "generationInterrupted": "⚠️ 生成が中断されました（途中までのログは保存されています）。",
+      "saveFailedBanner": "⚠️ チャット履歴の保存に失敗しました。アプリを再起動すると表示されない場合があります。",
       "invalidApiKey": "APIキーが無効か未設定です。ツールバーの「APIキー設定」から確認してください。",
       "generic": "⚠️ エラーが発生しました: {{errMsg}}\n\n{{hint}}",
       "providerConfigError": "⚠️ {{provider}} の設定が不完全です。\n\n{{detail}}\n\nツールバーのモデル名をクリックして設定を確認してください。",
