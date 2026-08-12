@@ -17,6 +17,7 @@ import * as executors from './tool-executors.js';
 import { getModelsForProvider } from './models-fetcher.js';
 import { takeScreenshot } from './screenshot.js';
 import { runWithTriage, getPhaseLabel } from './orchestrator.js';
+import { createSerialQueue } from './install-queue.js';
 import { initMCPClients, getMCPTools, closeMCPClients } from './mcp-client.js';
 // preview import removed — no longer needed (no Tauri backend)
 
@@ -877,7 +878,24 @@ async function startWorkspaceDevServer(dir: string) {
   });
 }
 
-function installDeps(dir: string): Promise<void> {
+/**
+ * bun install はグローバルキャッシュ（%USERPROFILE%\.bun）を共有するため、
+ * 並行実行するとロック競合で失敗する（実績 2026-08-12: アプリ連続作成時に
+ * 「npm install exited with code 1」が発生）。直列キューで同時実行を防ぐ。
+ */
+const enqueueInstall = createSerialQueue();
+
+/** install 本体（直列キュー経由で呼ばれる）。失敗時は一度だけリトライする。 */
+async function runInstall(dir: string): Promise<void> {
+  try {
+    await spawnInstall(dir);
+  } catch (e) {
+    console.warn(`[projects] install failed, retrying once: ${e instanceof Error ? e.message : e}`);
+    await spawnInstall(dir);
+  }
+}
+
+function spawnInstall(dir: string): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log(`[projects] Installing dependencies in ${dir}...`);
     // Host has no npm — use Bun (absolute path, shell:false).
@@ -898,6 +916,10 @@ function installDeps(dir: string): Promise<void> {
     });
     child.on('error', reject);
   });
+}
+
+function installDeps(dir: string): Promise<void> {
+  return enqueueInstall(() => runInstall(dir));
 }
 
 // ── Project Management Endpoints ─────────────────────────────────────────────
@@ -2281,4 +2303,35 @@ startServer(DESIRED_PORT).then(() => {
 }).catch((err) => {
   console.error('[sidecar] Failed to start HTTP server:', err);
   process.exit(1);
+});
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Tauri がアプリ終了時に sidecar を終了する際、プレビューの vite（detached で
+// 起動した bun/node）は orphan 化してポートを掴んだまま残る（実績 2026-08-12）。
+// ここでツリーごと掃除してから終了する。Windows で TerminateProcess される場合は
+// このハンドラは発火しないため、Rust 側（sidecar.rs graceful_kill）で
+// taskkill /T /F を使うこと（下記 Rust 修正と対で機能する）。
+function cleanupPreviewServers() {
+  try {
+    if (workspaceDevProcess?.pid) killProcessTree(workspaceDevProcess.pid);
+    if (apiProcess?.pid) killProcessTree(apiProcess.pid);
+    killPortOwnersInBand(WORKSPACE_DEV_PORT, 6, 'shutdown');
+    killPortOwnersInBand(API_DESIRED_PORT, API_MAX_FALLBACK + 1, 'shutdown');
+  } catch (e) {
+    console.warn('[shutdown] preview cleanup failed:', e);
+  }
+}
+
+process.on('SIGTERM', () => {
+  console.log('[shutdown] SIGTERM received, cleaning up previews...');
+  cleanupPreviewServers();
+  process.exit(0);
+});
+process.on('SIGINT', () => {
+  console.log('[shutdown] SIGINT received, cleaning up previews...');
+  cleanupPreviewServers();
+  process.exit(0);
+});
+process.on('exit', () => {
+  cleanupPreviewServers();
 });
