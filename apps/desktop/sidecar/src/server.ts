@@ -571,6 +571,11 @@ function patchViteConfigForDotDeskspawn(projectDir: string) {
 // 負PIDが無効でthrowするため、必ず platform 分岐して taskkill /T /F を使う。
 function killProcessTree(pid: number) {
   if (!pid) return;
+  // 自分自身を kill しない防御（netstat/lsof が自分の LISTENING を拾った場合など）
+  if (pid === process.pid) {
+    console.warn(`[kill] Refusing to kill self (PID ${pid})`);
+    return;
+  }
   try {
     if (process.platform === 'win32') {
       execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 5000, stdio: 'pipe' });
@@ -613,7 +618,13 @@ function killPortOwner(port: number, label: string) {
   } catch { /* no orphan */ }
 }
 
-/** ポート帯 [start, start+count) を掴むプロセスを一括掃除する。 */
+/**
+ * ポート帯 [start, start+count) を掴むプロセスを一括掃除する。
+ *
+ * ⚠️ 注意: このポート帯は DeskSpawn 専用とみなして LISTENING 中のプロセスを
+ * 無差別に kill する（Windows では orphan 化した vite を特定できないため）。
+ * 他アプリが同じポート帯を使っている場合は巻き込まれる可能性がある。
+ */
 function killPortOwnersInBand(startPort: number, count: number, label: string) {
   if (process.platform !== 'win32') {
     for (let p = startPort; p < startPort + count; p++) killPortOwner(p, label);
@@ -689,8 +700,8 @@ function stopApiServer() {
     console.log('[apiserver] Stopping API server (tree kill)...');
     killProcessTree(apiProcess.pid);
   }
-  // 旧残骸がAPIポート帯を掴んだままにならないよう一括掃除（4174〜4183）
-  killPortOwnersInBand(API_DESIRED_PORT, API_MAX_FALLBACK, 'apiserver');
+  // 旧残骸がAPIポート帯を掴んだままにならないよう一括掃除（4174〜4184）
+  killPortOwnersInBand(API_DESIRED_PORT, API_MAX_FALLBACK + 1, 'apiserver');
   apiProcess = null;
   apiReady = false;
 }
