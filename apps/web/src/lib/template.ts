@@ -196,7 +196,7 @@ export default defineConfig({
  */
 const SERVER_TS = `import { Hono } from "hono";
 import { cors } from "hono/cors";
-import { openDb, getItems, addItem, deleteItem } from "./lib/db";
+import { openDb, getAll, getById, create, update, remove, clear } from "./lib/db";
 
 // DATABASE_URL abstraction: default to ./data/app.db; override via env
 // (e.g. DATABASE_URL=file:./other.db or a hosted libsql URL in the future).
@@ -207,19 +207,48 @@ app.use("/api/*", cors());
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 
-// ── Example CRUD (items) ────────────────────────────────────────────
-// AI agents: keep the shape simple — id (integer), title, done.
-app.get("/api/items", (c) => c.json(getItems(db)));
-app.post("/api/items", async (c) => {
-  const { title } = await c.req.json();
-  if (!title || typeof title !== "string") {
-    return c.json({ error: "title is required" }, 400);
-  }
-  return c.json(addItem(db, title), 201);
+// ── 汎用コレクション CRUD (ADR-010) ──────────────────────────────
+// フロントエンドは @/lib/storage (StorageAdapter) 経由でアクセスする。
+// コレクション名は任意 (例: "items", "todos", "notes")。ドキュメントは
+// { id: string, ... } の JSON として SQLite (bun:sqlite) に保存される。
+
+app.get("/api/data/:collection", (c) => {
+  return c.json(getAll(db, c.req.param("collection")));
 });
-app.delete("/api/items/:id", async (c) => {
-  const id = Number(c.req.param("id"));
-  deleteItem(db, id);
+
+app.get("/api/data/:collection/:id", (c) => {
+  const doc = getById(db, c.req.param("collection"), c.req.param("id"));
+  if (!doc) return c.json({ error: "Not found" }, 404);
+  return c.json(doc);
+});
+
+app.post("/api/data/:collection", async (c) => {
+  const collection = c.req.param("collection");
+  const doc = await c.req.json();
+  if (!doc || typeof doc.id !== "string" || !doc.id) {
+    return c.json({ error: "doc.id (string) is required" }, 400);
+  }
+  return c.json(create(db, collection, doc), 201);
+});
+
+app.put("/api/data/:collection/:id", async (c) => {
+  const collection = c.req.param("collection");
+  const id = c.req.param("id");
+  const patch = await c.req.json();
+  try {
+    return c.json(update(db, collection, id, patch));
+  } catch {
+    return c.json({ error: "Not found" }, 404);
+  }
+});
+
+app.delete("/api/data/:collection/:id", (c) => {
+  remove(db, c.req.param("collection"), c.req.param("id"));
+  return c.body(null, 204);
+});
+
+app.delete("/api/data/:collection", (c) => {
+  clear(db, c.req.param("collection"));
   return c.body(null, 204);
 });
 
@@ -230,59 +259,87 @@ export default {
   fetch: app.fetch,
 };
 `;
-
-/**
- * Desktop db.ts — thin bun:sqlite helper layer (ADR-010).
- * All SQL lives here so a future Drizzle migration touches only this file.
- */
 const DB_TS = `import { Database } from "bun:sqlite";
 import { mkdirSync } from "fs";
 import path from "path";
 
-export interface Item {
-  id: number;
-  title: string;
-  done: number;
-}
-
+// DB path comes from DATABASE_URL (defaults to ./data/app.db).
 const DB_URL = process.env.DATABASE_URL || "file:./data/app.db";
 const dbPath = DB_URL.replace(/^file:/, "");
 
+// ── 汎用コレクションストア ────────────────────────────────────────
+// 全コレクションを1テーブル (entries) で管理する。各ドキュメントは
+// JSON 文字列として data カラムに保存。将来 Drizzle 移行時はこの
+// ファイルの関数群だけを置き換える (ADR-010)。
+
 export function openDb(): Database {
-  // Ensure the data directory exists (default: ./data/)
   const dir = path.dirname(path.resolve(dbPath));
   mkdirSync(dir, { recursive: true });
   const db = new Database(path.resolve(dbPath));
-  db.exec(\`CREATE TABLE IF NOT EXISTS items (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    done INTEGER NOT NULL DEFAULT 0
-  )\`);
+  db.query("CREATE TABLE IF NOT EXISTS entries ("
+    + "id TEXT PRIMARY KEY,"
+    + " collection TEXT NOT NULL,"
+    + " data TEXT NOT NULL,"
+    + " created_at TEXT NOT NULL,"
+    + " updated_at TEXT NOT NULL)").run();
+  db.query("CREATE INDEX IF NOT EXISTS idx_entries_collection ON entries(collection)").run();
   return db;
 }
 
-export function getItems(db: Database): Item[] {
-  return db.query("SELECT * FROM items ORDER BY id DESC").all() as Item[];
+export function getAll<T = Record<string, unknown>>(db: Database, collection: string): T[] {
+  const rows = db
+    .query("SELECT data FROM entries WHERE collection = ? ORDER BY created_at DESC")
+    .all(collection) as { data: string }[];
+  return rows.map((r) => JSON.parse(r.data) as T);
 }
 
-export function addItem(db: Database, title: string): Item {
-  const res = db.query("INSERT INTO items (title) VALUES (?)").run(title);
-  const id = Number(res.lastInsertRowid);
-  return { id, title, done: 0 };
+export function getById<T = Record<string, unknown>>(db: Database, collection: string, id: string): T | null {
+  const row = db
+    .query("SELECT data FROM entries WHERE collection = ? AND id = ?")
+    .get(collection, id) as { data: string } | null;
+  return row ? (JSON.parse(row.data) as T) : null;
 }
 
-export function deleteItem(db: Database, id: number): void {
-  db.query("DELETE FROM items WHERE id = ?").run(id);
+export function create<T = Record<string, unknown>>(
+  db: Database,
+  collection: string,
+  doc: T & { id: string; created_at: string; updated_at: string },
+): T {
+  db.query(
+    "INSERT INTO entries (id, collection, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?)",
+  ).run(doc.id, collection, JSON.stringify(doc), doc.created_at, doc.updated_at);
+  return doc;
+}
+
+export function update<T = Record<string, unknown>>(
+  db: Database,
+  collection: string,
+  id: string,
+  patch: Partial<T>,
+): T {
+  const existing = getById<T & { id: string; created_at: string; updated_at: string }>(
+    db,
+    collection,
+    id,
+  );
+  if (!existing) throw new Error("Not found");
+  const updated = { ...existing, ...patch, id, updated_at: new Date().toISOString() };
+  db.query("UPDATE entries SET data = ?, updated_at = ? WHERE id = ? AND collection = ?")
+    .run(JSON.stringify(updated), updated.updated_at, id, collection);
+  return updated;
+}
+
+export function remove(db: Database, collection: string, id: string): void {
+  db.query("DELETE FROM entries WHERE collection = ? AND id = ?").run(collection, id);
+}
+
+export function clear(db: Database, collection: string): void {
+  db.query("DELETE FROM entries WHERE collection = ?").run(collection);
 }
 `;
-
-/**
- * Desktop server test — Hono's app.request() enables tests without a server
- * (quality loop, ADR-012 / P5).
- */
 const SERVER_TEST_TS = `import { describe, expect, it } from "vitest";
 import { Hono } from "hono";
-import { openDb, getItems, addItem, type Item } from "./lib/db";
+import { openDb, getAll, create, clear } from "./lib/db";
 
 // In-memory DB for tests (DATABASE_URL=:memory: keeps the filesystem clean).
 process.env.DATABASE_URL = ":memory:";
@@ -290,46 +347,65 @@ const db = openDb();
 
 function buildApp() {
   const app = new Hono();
-  app.get("/api/items", (c) => c.json(getItems(db)));
-  app.post("/api/items", async (c) => {
-    const { title } = await c.req.json();
-    if (!title || typeof title !== "string") {
-      return c.json({ error: "title is required" }, 400);
+  app.get("/api/data/:collection", (c) => c.json(getAll(db, c.req.param("collection"))));
+  app.post("/api/data/:collection", async (c) => {
+    const doc = await c.req.json();
+    if (!doc || typeof doc.id !== "string" || !doc.id) {
+      return c.json({ error: "doc.id (string) is required" }, 400);
     }
-    return c.json(addItem(db, title), 201);
+    return c.json(create(db, c.req.param("collection"), doc), 201);
+  });
+  app.delete("/api/data/:collection", (c) => {
+    clear(db, c.req.param("collection"));
+    return c.body(null, 204);
   });
   return app;
 }
 
-describe("items API", () => {
-  it("returns empty list initially", async () => {
-    const res = await buildApp().request("/api/items");
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual([]);
-  });
+describe("generated app API (ADR-010)", () => {
+  it("creates and lists docs via /api/data/:collection", async () => {
+    const app = buildApp();
+    const now = new Date().toISOString();
+    const doc = { id: "1", title: "hello", created_at: now, updated_at: now };
 
-  it("adds an item", async () => {
-    const res = await buildApp().request("/api/items", {
+    const createRes = await app.request("/api/data/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ title: "hello" }),
+      body: JSON.stringify(doc),
     });
-    expect(res.status).toBe(201);
-    const item = (await res.json()) as Item;
-    expect(item.title).toBe("hello");
+    expect(createRes.status).toBe(201);
+
+    const listRes = await app.request("/api/data/items");
+    const list = await listRes.json();
+    expect(list).toHaveLength(1);
+    expect(list[0].title).toBe("hello");
   });
 
-  it("rejects missing title with 400", async () => {
-    const res = await buildApp().request("/api/items", {
+  it("returns 400 when doc.id is missing", async () => {
+    const app = buildApp();
+    const res = await app.request("/api/data/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({}),
+      body: JSON.stringify({ title: "no id" }),
     });
     expect(res.status).toBe(400);
   });
+
+  it("clears the collection", async () => {
+    const app = buildApp();
+    const now = new Date().toISOString();
+    await app.request("/api/data/items", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: "1", title: "x", created_at: now, updated_at: now }),
+    });
+    const del = await app.request("/api/data/items", { method: "DELETE" });
+    expect(del.status).toBe(204);
+    const listRes = await app.request("/api/data/items");
+    expect(await listRes.json()).toHaveLength(0);
+  });
 });
 `;
-
 const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
   <rect width="100" height="100" rx="20" fill="#6366f1"/>
   <polygon points="56,12 20,54 46,54 40,88 78,40 52,40" fill="white"/>
@@ -338,7 +414,23 @@ const FAVICON_SVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 10
 const VITE_ENV_DTS = `/// <reference types="vite/client" />
 `;
 
-const STORAGE_TS = `// ============================================================
+/**
+ * Storage adapter factory (frontend storage.ts).
+ *
+ * Web:   IndexedDB 実装 (storage-idb.ts) を返す。
+ *        DB はブラウザ内に保存される（デモ/Web版用）。
+ * Desktop: Hono API 実装 (storage-api.ts) を返す (ADR-010)。
+ *        DB は生成アプリ自身の Hono バックエンド + bun:sqlite
+ *        （ローカル実ファイル、./data/app.db）に保存される。
+ */
+function getStorageTs(impl: "idb" | "api"): string {
+  const adapterFactory =
+    impl === "api"
+      ? `      const { ApiAdapter } = await import('./storage-api');
+      _instance = new ApiAdapter();`
+      : `      const { IndexedDBAdapter } = await import('./storage-idb');
+      _instance = await IndexedDBAdapter.create(APP_ID);`;
+  return `// ============================================================
 // Storage Adapter Interface
 // ============================================================
 //
@@ -366,8 +458,7 @@ export function getStorage(): StorageAdapter {
   // 未初期化の場合は自動で初期化を開始する
   if (!_initPromise) {
     _initPromise = (async () => {
-      const { IndexedDBAdapter } = await import('./storage-idb');
-      _instance = await IndexedDBAdapter.create(APP_ID);
+${adapterFactory}
       return _instance!;
     })();
   }
@@ -378,14 +469,14 @@ export function getStorage(): StorageAdapter {
 export async function initStorage(): Promise<StorageAdapter> {
   if (_instance) return _instance;
   if (!_initPromise) {
-    const { IndexedDBAdapter } = await import('./storage-idb');
-    _instance = await IndexedDBAdapter.create(APP_ID);
+${adapterFactory}
   } else {
     _instance = await _initPromise;
   }
   return _instance!;
 }
 `;
+}
 
 const STORAGE_IDB_TS = `// ============================================================
 // IndexedDB Storage Adapter (browser-only, no sidecar dependency)
@@ -529,6 +620,81 @@ async function ensureCollectionInternal(db: IDBDatabase, collection: string): Pr
 }
 `;
 
+/**
+ * Desktop storage adapter — talks to the generated app's own Hono API
+ * (src/server.ts), which persists to a local SQLite file via bun:sqlite
+ * (ADR-010). Zero browser storage involved.
+ */
+const STORAGE_API_TS = `// ============================================================
+// Hono API Storage Adapter (desktop, ADR-010) — bun:sqlite backend
+// ============================================================
+//
+// Pre-installed API-backed implementation of the StorageAdapter interface.
+// AI agents: Import via @/lib/storage - do NOT modify this file.
+//
+// Persistence goes through the generated app's own Hono API
+// (src/server.ts -> src/lib/db.ts), which stores data in a local
+// SQLite file on disk (bun:sqlite, ./data/app.db by default).
+//
+// ============================================================
+
+import type { StorageAdapter } from './storage';
+
+export class ApiAdapter implements StorageAdapter {
+  private dataPath(collection: string, id?: string): string {
+    return '/api/data/' + collection + (id ? '/' + id : '');
+  }
+
+  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(path, {
+      headers: { 'Content-Type': 'application/json' },
+      ...init,
+    });
+    if (!res.ok) {
+      let msg = 'API error ' + res.status;
+      try {
+        const body = await res.json();
+        if (body && body.error) msg = body.error;
+      } catch { /* ignore */ }
+      throw new Error(msg);
+    }
+    if (res.status === 204) return undefined as T;
+    return res.json() as Promise<T>;
+  }
+
+  async getAll<T extends { id: string }>(collection: string): Promise<T[]> {
+    return this.request<T[]>(this.dataPath(collection));
+  }
+
+  async getById<T extends { id: string }>(collection: string, id: string): Promise<T | null> {
+    return this.request<T | null>(this.dataPath(collection, id));
+  }
+
+  async create<T extends { id: string }>(collection: string, item: Omit<T, 'id' | 'created_at' | 'updated_at'>): Promise<T> {
+    const now = new Date().toISOString();
+    const doc = { ...item, id: crypto.randomUUID(), created_at: now, updated_at: now } as T;
+    return this.request<T>(this.dataPath(collection), {
+      method: 'POST',
+      body: JSON.stringify(doc),
+    });
+  }
+
+  async update<T extends { id: string }>(collection: string, id: string, item: Partial<Omit<T, 'id'>>): Promise<T> {
+    return this.request<T>(this.dataPath(collection, id), {
+      method: 'PUT',
+      body: JSON.stringify(item),
+    });
+  }
+
+  async remove(collection: string, id: string): Promise<void> {
+    await this.request<void>(this.dataPath(collection, id), { method: 'DELETE' });
+  }
+
+  async clear(collection: string): Promise<void> {
+    await this.request<void>(this.dataPath(collection), { method: 'DELETE' });
+  }
+}
+`;
 const APP_ID_TS_PREFIX = `// ============================================================
 // App ID \\u2014 injected by DeskSpawn at app creation time.
 // DO NOT MODIFY: Uniquely identifies this app's IndexedDB.
@@ -831,8 +997,15 @@ export function getTemplateFiles(
     },
     { path: "public/favicon.svg", content: FAVICON_SVG },
     { path: "src/vite-env.d.ts", content: VITE_ENV_DTS },
-    { path: "src/lib/storage.ts", content: STORAGE_TS },
-    { path: "src/lib/storage-idb.ts", content: STORAGE_IDB_TS },
+    // storage.ts: desktop は Hono API + SQLite 実装 (storage-api.ts) を、
+    // web は IndexedDB 実装 (storage-idb.ts) を使う (ADR-010)。
+    {
+      path: "src/lib/storage.ts",
+      content: getStorageTs(isDesktop ? "api" : "idb"),
+    },
+    ...(isDesktop
+      ? [{ path: "src/lib/storage-api.ts", content: STORAGE_API_TS }]
+      : [{ path: "src/lib/storage-idb.ts", content: STORAGE_IDB_TS }]),
     { path: "src/lib/app-id.ts", content: APP_ID_TS_PREFIX + "__DESKSPAWN_APP_ID__" + APP_ID_TS_SUFFIX },
     { path: "src/main.tsx", content: MAIN_TSX },
     { path: "src/index.css", content: INDEX_CSS },
