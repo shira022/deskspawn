@@ -18,6 +18,7 @@ import { listApps, saveApp } from "@/lib/storage";
 import { setAppId } from "@/engine/tool-executors";
 import { writeAppFiles, writeAppFile } from "@/lib/storage-opfs";
 import { getTemplateFiles } from "@/lib/template";
+import { isDesktopEnv } from "@/lib/platform";
 
 interface NewAppDialogProps {
   open: boolean;
@@ -90,7 +91,12 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
       setSelectedFile(null);
 
       // Copy template files into the new app (real dir on desktop)
-      await writeAppFiles(realAppId, getTemplateFiles(settings.language));
+      // ADR-010: desktop はフルスタックテンプレート（Hono + bun:sqlite）を
+      // 使う。isDesktop を渡さないと Web版（IndexedDB）が常に選ばれる。
+      await writeAppFiles(
+        realAppId,
+        getTemplateFiles(settings.language, isDesktopEnv()),
+      );
 
       // Write the actual app ID so the generated app uses the correct DB name
       await writeAppFile(realAppId, "src/lib/app-id.ts",
@@ -155,7 +161,8 @@ export const APP_ID = "${realAppId}";
           <div className="rounded-lg border bg-muted/30 p-3">
             <p className="text-xs text-muted-foreground space-y-1">
               <span>{t('app.templateReact')}</span><br />
-              <span>{t('app.templateIndexedDB')}</span><br />
+              {/* Desktop: フルスタックテンプレート (Hono + SQLite, ADR-010) / Web: IndexedDB */}
+              <span>{isDesktopEnv() ? t('app.templateSQLite') : t('app.templateIndexedDB')}</span><br />
               <span>{t('app.templateAutoBackup')}</span><br />
               <span>{t('app.templateShare')}</span>
             </p>

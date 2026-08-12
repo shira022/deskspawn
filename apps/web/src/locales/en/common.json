@@ -281,6 +281,7 @@
     "appNamePlaceholder": "e.g. Task Manager",
     "templateReact": "Uses React + Vite + Tailwind CSS template",
     "templateIndexedDB": "Data is automatically saved to IndexedDB (browser built-in DB)",
+    "templateSQLite": "Data is automatically saved to local SQLite (bun:sqlite)",
     "templateAutoBackup": "Changes are automatically backed up",
     "templateShare": "Export/Import to share apps with others",
     "creating": "Creating...",
