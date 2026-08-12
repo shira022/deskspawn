@@ -1,8 +1,25 @@
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 /// Default storage method when none is specified (backward compat).
 fn default_storage_method() -> String {
     "keychain".to_string()
+}
+
+// ── Per-Provider Config (ADR: multi-provider settings in config.json) ─────────
+
+/// Settings for a single provider, stored under `providers.<name>` in config.json.
+/// Mirrors `StoredProviderConfig` in apps/web/src/lib/storage.ts.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderConfig {
+    pub model: String,
+    #[serde(default)]
+    pub custom_endpoint: Option<String>,
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default)]
+    pub max_steps: Option<u32>,
 }
 
 // ── AI Configuration ──────────────────────────────────────────────────────────
@@ -23,6 +40,9 @@ pub struct AiConfig {
     pub max_tokens: Option<u32>,
     #[serde(default)]
     pub max_steps: Option<u32>,
+    /// Region for the current provider (stored per-provider in `providers` too).
+    #[serde(default)]
+    pub region: Option<String>,
     /// True when the API key is stored (keychain or file).
     /// The frontend uses this flag instead of the actual key value.
     #[serde(default)]
@@ -31,6 +51,38 @@ pub struct AiConfig {
     /// (encrypted credentials.json in config directory).
     #[serde(default = "default_storage_method")]
     pub storage_method: String,
+    /// Per-provider settings map (multi-provider support). The flat fields
+    /// above mirror the last-saved provider for backward compatibility.
+    #[serde(default)]
+    pub providers: HashMap<String, ProviderConfig>,
+    /// The most recently used provider.
+    #[serde(default)]
+    pub last_provider: Option<String>,
+    /// The currently open app (UI state persisted so the app reopens where
+    /// the user left off — was WebView localStorage `deskspawn_current_app`).
+    #[serde(default)]
+    pub current_app: Option<String>,
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            provider: String::new(),
+            api_key: String::new(),
+            model: String::new(),
+            custom_endpoint: None,
+            api_version: None,
+            temperature: 0.0,
+            max_tokens: None,
+            max_steps: None,
+            region: None,
+            api_key_configured: false,
+            storage_method: default_storage_method(),
+            providers: HashMap::new(),
+            last_provider: None,
+            current_app: None,
+        }
+    }
 }
 
 // ── Environment Check ─────────────────────────────────────────────────────────

@@ -28,6 +28,8 @@ vi.mock("@/lib/storage", () => {
     hasApiKey: vi.fn().mockResolvedValue(false),
     saveLastProvider: vi.fn().mockResolvedValue(undefined),
     loadLastProvider: vi.fn().mockResolvedValue(null),
+    saveCurrentAppId: vi.fn().mockResolvedValue(undefined),
+    loadCurrentAppId: vi.fn().mockResolvedValue(null),
     listApps: vi.fn().mockResolvedValue([]),
     deleteProviderConfig: vi.fn().mockResolvedValue(undefined),
     hasProviderConfig: vi.fn().mockResolvedValue(false),
@@ -540,14 +542,10 @@ describe("useAppStore — initialize()", () => {
     expect(useAppStore.getState().apps).toEqual(storedApps);
   });
 
-  it("loads current app from localStorage and fetches checkpoints", async () => {
+  it("loads current app and fetches checkpoints", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue(null);
     mockStorageFns.listApps.mockResolvedValue([]);
-
-    const mockGetItem = vi.mocked(localStorage.getItem);
-    // initialize() reads localStorage.getItem("deskspawn_current_app")
-    // SETTINGS_KEY is already read during store creation (beforeAll)
-    mockGetItem.mockReturnValueOnce(JSON.stringify("app-loaded"));
+    mockStorageFns.loadCurrentAppId.mockResolvedValue("app-loaded");
 
     await useAppStore.getState().initialize();
 

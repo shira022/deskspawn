@@ -1,5 +1,5 @@
 use crate::engine::workspace;
-use crate::models::config::AiConfig;
+use crate::models::config::{AiConfig, ProviderConfig};
 use std::fs;
 use std::path::PathBuf;
 
@@ -207,6 +207,34 @@ fn read_existing_config() -> Option<AiConfig> {
     serde_json::from_str(&content).ok()
 }
 
+/// Write the AI config to disk with restrictive permissions (Unix only).
+fn write_config(config: &AiConfig) -> Result<(), String> {
+    let path = config_file_path()?;
+    let json = serde_json::to_string_pretty(config)
+        .map_err(|e| format!("Failed to serialize config: {e}"))?;
+
+    // Restrictive permissions on config directory (Unix only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if let Some(parent) = path.parent() {
+            let _ = fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
+        }
+    }
+
+    fs::write(&path, &json).map_err(|e| format!("Failed to write config file: {e}"))?;
+
+    // Restrictive permissions on config file (Unix only)
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    log::info!("AI config saved to {}", path.display());
+    Ok(())
+}
+
 // ── Sidecar push ──────────────────────────────────────────────────────────────
 
 /// Push the API key to the sidecar's in-memory store.
@@ -331,7 +359,6 @@ pub struct SaveKeyResult {
 ///     delete all stored keys — user removed the key
 #[tauri::command]
 pub fn save_ai_config(config: AiConfig) -> Result<SaveKeyResult, String> {
-    let path = config_file_path()?;
     let dest_method = if config.storage_method.is_empty() {
         "keychain"
     } else {
@@ -399,30 +426,23 @@ pub fn save_ai_config(config: AiConfig) -> Result<SaveKeyResult, String> {
     if !actual_method.is_empty() {
         json_config.api_key_configured = true;
     }
-
-    let json = serde_json::to_string_pretty(&json_config)
-        .map_err(|e| format!("Failed to serialize config: {}", e))?;
-
-    // Restrictive permissions on config directory (Unix only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Some(parent) = path.parent() {
-            let _ = fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
-        }
+    // Multi-provider: keep the existing map and upsert the current provider so
+    // per-provider settings survive provider switching.
+    if let Some(existing_cfg) = existing.as_ref() {
+        json_config.providers = existing_cfg.providers.clone();
     }
+    json_config.providers.insert(
+        json_config.provider.clone(),
+        ProviderConfig {
+            model: json_config.model.clone(),
+            custom_endpoint: json_config.custom_endpoint.clone(),
+            region: json_config.region.clone(),
+            max_steps: json_config.max_steps,
+        },
+    );
+    json_config.last_provider = Some(json_config.provider.clone());
 
-    fs::write(&path, &json)
-        .map_err(|e| format!("Failed to write config file: {}", e))?;
-
-    // Restrictive permissions on config file (Unix only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-
-    log::info!("AI config saved to {}", path.display());
+    write_config(&json_config)?;
 
     // サイドカーへ同期（キー + customEndpoint）。x-upstream 廃止後は
     // ここで設定した storedCustomEndpoint が /v1 プロキシの上流になる。
@@ -499,13 +519,22 @@ pub fn save_api_key(provider: String, api_key: String) -> Result<SaveKeyResult, 
 }
 
 /// API キーを読み込む（デスクトップ: OS キーチェーン → credentials.json）。
+///
+/// 2026-08-12: 指定 storage_method で読めない場合、逆メソッドも試す。
+/// （save_api_key が file フォールバック時に storage_method を更新しないため、
+/// キーチェーン利用不可環境では credentials.json のキーが読み戻せないバグの修正）
 #[tauri::command]
 pub fn load_api_key(provider: String) -> Result<Option<String>, String> {
     let method = read_existing_config()
         .map(|c| c.storage_method)
         .filter(|m| !m.is_empty())
         .unwrap_or_else(|| "keychain".to_string());
-    Ok(load_key_from_storage(&provider, &method))
+    let key = load_key_from_storage(&provider, &method);
+    if key.is_some() {
+        return Ok(key);
+    }
+    let alt = if method == "keychain" { "file" } else { "keychain" };
+    Ok(load_key_from_storage(&provider, alt))
 }
 
 /// API キーを削除する（keychain と credentials.json の両方）。
@@ -514,4 +543,58 @@ pub fn delete_api_key(provider: String) -> Result<(), String> {
     delete_key_from_storage(&provider, "keychain");
     delete_key_from_storage(&provider, "file");
     Ok(())
+}
+
+// ── Per-provider config (multi-provider support in config.json) ───────────────
+
+/// Save per-provider settings (model/customEndpoint/region/maxSteps) to config.json.
+///
+/// Desktop storage for `provider_config_{provider}` (previously IndexedDB — see
+/// web-storage audit 2026-08-12). The flat fields mirror the saved provider so
+/// existing readers (sidecar push, legacy config consumers) keep working.
+#[tauri::command]
+pub fn save_provider_config(provider: String, config: ProviderConfig) -> Result<(), String> {
+    let mut existing = read_existing_config().unwrap_or_default();
+    existing.providers.insert(provider.clone(), config.clone());
+    existing.last_provider = Some(provider.clone());
+    existing.provider = provider.clone();
+    existing.model = config.model;
+    existing.custom_endpoint = config.custom_endpoint.clone();
+    existing.region = config.region.clone();
+    existing.max_steps = config.max_steps;
+    write_config(&existing)
+}
+
+/// Load per-provider settings for the given provider.
+#[tauri::command]
+pub fn load_provider_config(provider: String) -> Result<Option<ProviderConfig>, String> {
+    Ok(read_existing_config().and_then(|c| c.providers.get(&provider).cloned()))
+}
+
+/// Save the most recently used provider name.
+#[tauri::command]
+pub fn save_last_provider(provider: String) -> Result<(), String> {
+    let mut existing = read_existing_config().unwrap_or_default();
+    existing.last_provider = Some(provider);
+    write_config(&existing)
+}
+
+/// Load the most recently used provider name.
+#[tauri::command]
+pub fn load_last_provider() -> Result<Option<String>, String> {
+    Ok(read_existing_config().and_then(|c| c.last_provider))
+}
+
+/// Save the currently open app id (was WebView localStorage).
+#[tauri::command]
+pub fn save_current_app(app_id: String) -> Result<(), String> {
+    let mut existing = read_existing_config().unwrap_or_default();
+    existing.current_app = Some(app_id);
+    write_config(&existing)
+}
+
+/// Load the currently open app id.
+#[tauri::command]
+pub fn load_current_app() -> Result<Option<String>, String> {
+    Ok(read_existing_config().and_then(|c| c.current_app))
 }
