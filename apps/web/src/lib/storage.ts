@@ -170,12 +170,38 @@ export async function saveProviderConfig(
   provider: string,
   config: StoredProviderConfig,
 ): Promise<void> {
+  // Desktop: persist to config.json via Rust IPC (multi-provider map).
+  // Web: IndexedDB (fallback when not in a Tauri environment).
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("save_provider_config", { provider, config });
+    return;
+  } catch {
+    // Not in Tauri environment — use IndexedDB (Web)
+  }
   await setSetting(providerConfigKey(provider), config);
 }
 
 export async function loadProviderConfig(
   provider: string,
 ): Promise<StoredProviderConfig | null> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const cfg = await invoke<StoredProviderConfig | null>("load_provider_config", {
+      provider,
+    });
+    if (cfg) return cfg;
+    // Desktop but not yet in config.json: migrate the legacy IndexedDB value
+    // once (idempotent — after this, config.json is the source of truth).
+    const legacy = await getSetting<StoredProviderConfig>(providerConfigKey(provider));
+    if (legacy?.model) {
+      await invoke("save_provider_config", { provider, config: legacy }).catch(() => {});
+      return legacy;
+    }
+    return null;
+  } catch {
+    // Not in Tauri environment
+  }
   const cfg = await getSetting<StoredProviderConfig>(providerConfigKey(provider));
   return cfg ?? null;
 }
@@ -202,10 +228,32 @@ export async function hasProviderConfig(provider: string): Promise<boolean> {
 // which one to load on startup).
 
 export async function saveLastProvider(provider: string): Promise<void> {
+  // Desktop: persist to config.json via Rust IPC.
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("save_last_provider", { provider });
+    return;
+  } catch {
+    // Not in Tauri environment — use IndexedDB (Web)
+  }
   await setSetting("last_provider", provider);
 }
 
 export async function loadLastProvider(): Promise<string | null> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const p = await invoke<string | null>("load_last_provider");
+    if (p) return p;
+    // Desktop but not yet in config.json: migrate the legacy IndexedDB value.
+    const legacy = await getSetting<string>("last_provider");
+    if (legacy) {
+      await invoke("save_last_provider", { provider: legacy }).catch(() => {});
+      return legacy;
+    }
+    return null;
+  } catch {
+    // Not in Tauri environment
+  }
   const p = await getSetting<string>("last_provider");
   return p ?? null;
 }
