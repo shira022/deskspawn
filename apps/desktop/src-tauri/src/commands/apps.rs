@@ -186,6 +186,26 @@ pub fn read_app_file(app_id: String, path: String) -> Result<String, String> {
     fs::read_to_string(&target).map_err(|e| format!("Failed to read file: {}", e))
 }
 
+/// Delete a file from an app directory (path-traversal safe).
+///
+/// C1 fix (web-storage audit 2026-08-12): the frontend's desktop `deleteAppFile`
+/// used to write an empty string instead of deleting, which left "deleted"
+/// files as 0-byte files. Idempotent: missing file is not an error.
+#[tauri::command]
+pub fn delete_app_file(app_id: String, path: String) -> Result<(), String> {
+    validate_app_id(&app_id)?;
+    let dir = workspace::app_dir(&app_id)?;
+    let target = dir.join(&path);
+    if !security::is_path_safe(&dir, &target) {
+        return Err("Path traversal detected".to_string());
+    }
+    if !target.is_file() {
+        return Ok(());
+    }
+    fs::remove_file(&target).map_err(|e| format!("Failed to delete file: {}", e))?;
+    Ok(())
+}
+
 /// Write a file into an app directory (path-traversal safe, creates parents).
 #[tauri::command]
 pub fn write_app_file(app_id: String, path: String, content: String) -> Result<(), String> {

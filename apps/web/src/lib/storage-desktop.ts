@@ -129,6 +129,11 @@ export async function writeAppFileDesktop(
   await tauriInvoke("write_app_file", { appId, path, content });
 }
 
+/** Delete a single app file (real deletion — C1 fix 2026-08-12). */
+export async function deleteAppFileDesktop(appId: string, path: string): Promise<void> {
+  await tauriInvoke("delete_app_file", { appId, path });
+}
+
 /** Write multiple files in one IPC round trip. Returns count written. */
 export async function writeAppFilesDesktop(
   appId: string,
