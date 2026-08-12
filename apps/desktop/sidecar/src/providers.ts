@@ -28,7 +28,12 @@ export function getModel(config: ProviderConfig): LanguageModel {
         );
       }
       const client = createOpenAI({ apiKey, baseURL: customEndpoint });
-      return client.chat(model) as unknown as LanguageModel;
+      // GPT-5 系モデルは Chat Completions API で function tools + reasoning の併用が
+      // 許可されていない（例: "Function tools with reasoning_effort are not supported
+      // for gpt-5.6-luna in /v1/chat/completions"）。そのため GPT-5 系は
+      // Responses API（/v1/responses）を使う。それ以外のモデルは後方互換のため chat() のまま。
+      const isGpt5 = model.startsWith('gpt-5');
+      return (isGpt5 ? client.responses(model) : client.chat(model)) as unknown as LanguageModel;
     }
 
     case 'anthropic': {

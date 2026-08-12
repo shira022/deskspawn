@@ -4,6 +4,7 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 vi.mock("@ai-sdk/openai", () => ({
   createOpenAI: vi.fn(() => ({
     chat: vi.fn((modelId: string) => ({ provider: "openai", modelId })),
+    responses: vi.fn((modelId: string) => ({ provider: "openai-responses", modelId })),
   })),
 }));
 
@@ -82,6 +83,26 @@ describe("getModel", () => {
       apiKey: "sk-test",
       baseURL: undefined,
     });
+  });
+
+  it('uses Responses API for gpt-5 family models (function tools + reasoning)', () => {
+    const config: ProviderConfig = {
+      provider: "openai",
+      model: "gpt-5.6-luna",
+      apiKey: "sk-test",
+    };
+    const model = getModel(config) as any;
+    expect(model).toEqual({ provider: "openai-responses", modelId: "gpt-5.6-luna" });
+  });
+
+  it('uses Responses API for gpt-5 codex models', () => {
+    const config: ProviderConfig = {
+      provider: "openai",
+      model: "gpt-5-codex",
+      apiKey: "sk-test",
+    };
+    const model = getModel(config) as any;
+    expect(model).toEqual({ provider: "openai-responses", modelId: "gpt-5-codex" });
   });
 
   it('creates an anthropic model', () => {
