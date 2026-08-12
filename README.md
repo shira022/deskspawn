@@ -141,19 +141,21 @@ pnpm install
 ```
 deskspawn/                          # pnpm workspace root
 ├── apps/
-│   ├── web/                        # Web demo (Vite + React, Cloudflare Pages)
-│   │   ├── src/                    # Main app — shared with desktop via @ alias
-│   │   │   ├── engine/             # Multi-agent AI pipeline
-│   │   │   ├── lib/                # Utilities, storage, preview, i18n
+│   ├── web/                        # Shared frontend — powers BOTH the web demo
+│   │   │                           # (Cloudflare Pages) and the desktop app's UI
+│   │   ├── src/                    # ⭐ Main app code (see "Who uses what" below)
+│   │   │   ├── engine/             # Multi-agent AI pipeline (providers, orchestrator, tools)
+│   │   │   ├── hooks/              # useChatStream — the main AI chat flow
+│   │   │   ├── lib/                # Utilities, storage, preview, i18n, sidecar client
 │   │   │   ├── store/              # Zustand state
 │   │   │   ├── components/         # UI components
 │   │   │   └── routes/             # Landing page + app routing
 │   │   ├── public/                 # Static assets + _headers
 │   │   └── locales/                # i18n translations (ja/en)
-│   └── desktop/                    # Tauri v2 desktop app
-│       ├── src/                    # Thin entry + platform services
+│   └── desktop/                    # Tauri v2 desktop app — thin wrapper over web/src
+│       ├── src/                    # Entry point + platform services only (6 files)
 │       ├── src-tauri/              # Rust backend (storage, sidecar, IPC)
-│       └── sidecar/                # Bun-bundled AI engine (preview + AI proxy)
+│       └── sidecar/                # Bun-bundled Node server (AI proxy, preview, MCP)
 ├── packages/
 │   ├── ui/                         # Shared UI primitives
 │   ├── ai-core/                    # Shared AI pipeline types
@@ -161,6 +163,21 @@ deskspawn/                          # pnpm workspace root
 ├── docs/                           # Documentation + ADRs
 └── pnpm-workspace.yaml
 ```
+
+#### Who uses what (read this before editing)
+
+| Concern | Where it lives | Notes |
+|---|---|---|
+| **UI & AI chat flow** | `apps/web/src/**` | The desktop app **imports this code directly** via the `@` alias (`apps/desktop/vite.config.ts` → `webSrc`). Both the web demo and the desktop app run the exact same files — do not "fix the desktop by editing `apps/desktop/src`" for UI/AI logic; edit `apps/web/src`. |
+| Desktop entry + IPC | `apps/desktop/src/` | Only 6 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `lib/ipc.ts` (Tauri bridge), `lib/services.ts`, `lib/storage-desktop.ts`. |
+| Rust backend | `apps/desktop/src-tauri/` | Storage, sidecar lifecycle, security server. |
+| Standalone AI server | `apps/desktop/sidecar/` | Bun-bundled Node server: OpenAI-compatible `/v1` proxy (CORS workaround), `/api/models`, preview server. Its `providers.ts` mirrors `apps/web/src/engine/providers.ts` but is **not** on the current chat path. |
+| Model resolution (OpenAI/Anthropic/etc.) | `apps/web/src/engine/providers.ts` | **The single source of truth** for which API each provider uses. Also mirrored in `apps/desktop/sidecar/src/providers.ts` (legacy path). |
+| Shared primitives | `packages/ui`, `packages/ai-core` | True shared packages (not aliased). |
+
+> 💡 **Rule of thumb:** if it's UI, chat, or AI provider logic, it lives in
+> `apps/web/src` and is shared with the desktop app via the `@` alias.
+> `apps/desktop/src` only contains the desktop-specific entry & platform glue.
 
 ---
 
@@ -220,3 +237,10 @@ This project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
 - 📥 ダウンロード: [GitHub Releases](https://github.com/shira022/deskspawn/releases)
 - 🌐 ブラウザで試す: [deskspawn.pages.dev](https://deskspawn.pages.dev)
 - 📖 ドキュメント: [Getting Started](docs/getting-started.md) / [Installation](docs/installation.md) / [Spec](docs/spec.md)
+
+**開発者向けメモ（コード構成）:** UI・チャット・AIプロバイダー解決の実体は
+`apps/web/src/` にあり、**デスクトップアプリも同じコードを `@` alias 経由で
+import しています**（`apps/desktop/vite.config.ts` の `webSrc`）。デスクトップの
+UIやAIロジックを直したい場合は `apps/desktop/src` ではなく `apps/web/src` を
+編集してください。`apps/desktop/src` はエントリポイントとWindows固有の
+サービス登録（6ファイル）だけです。詳細は README の **Project Structure** を参照。
