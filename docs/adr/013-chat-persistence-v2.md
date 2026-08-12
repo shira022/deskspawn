@@ -16,10 +16,10 @@ accepted
 ## Decision
 
 1. **スキーマv2**: `chat_messages` に `client_id TEXT UNIQUE`（フロントの `msg-…` ID）+ `payload TEXT`（メッセージオブジェクト全体の JSON）を追加。v1→v2 は `PRAGMA table_info` による列チェック + `ALTER TABLE` + バックフィル（既存行は `legacy-<id>` 形式の client_id）で自動移行。payload NULL の行はフォールバック表示（既存データを維持）
-2. **保存APIは全件置換（原子的）**: `append_chat_message` を廃止 → `save_chat_messages(app_id, Vec<ChatMessage>)` を新設。フロントの `message.id` を `client_id` として `INSERT … ON CONFLICT(client_id) DO UPDATE`（実質は DELETE+INSERT の置換）。編集・再生成・truncate 時の重複 append バグも同時に解消
-3. **D2（逐次保存）**: 生成開始時に空のアシスタントプレースホルダー（`msg-bot-${Date.now()}`）を保存 → ステップログ/フェーズ詳細を `updateMessage` のたびに逐次 upsert → 完了・空レスポンス・Abort・エラー時に最終化。途中でアプリが閉じても途中まで残る
+2. **保存APIは全件置換（原子的）**: `append_chat_message` を廃止 → `save_chat_messages(app_id, Vec<ChatMessage>)` を新設。トランザクション内で `DELETE` + `INSERT … ON CONFLICT(app_id, client_id) DO UPDATE` を実行。フロントが同一 `client_id` を配列内で重複送信しても UNIQUE 制約違反にならず最後の行が勝つ（2026-08 レビュー指摘対応）。編集・再生成・truncate 時の重複 append バグも同時に解消
+3. **D2（逐次保存）**: 生成開始時に空のアシスタントプレースホルダー（`newMessageId("msg-bot")` = `msg-bot-<randomUUID>`。同一ミリ秒内の連続生成でも衝突しない）を保存 → ステップログ/フェーズ詳細を `updateMessage` のたびに逐次 upsert → 完了・空レスポンス・Abort・エラー時に最終化。途中でアプリが閉じても途中まで残る。復元時に content が空のまま残った行は「生成が中断されました」表示にフォールバック（空の吹き出しを出さない）
 4. **エラー可視化**: `persistChatHistory` は boolean を返し、失敗時は `saveFailed` フラグ + UI の琥珀色バナーで表示（握りつぶし廃止）
-5. **フロント保存の直列化**: 保存キューで並行 write を防止（IndexedDB 側も同様）
+5. **フロント保存の直列化**: 保存キューで並行 write を防止（IndexedDB 側も同様）。加えて `persistChatHistory` は前回保存成功時と同一内容のスナップショットをキャッシュし、**同一内容の連続保存（同一ステートでの updateMessage 多重呼び出し等）は書き込み自体をスキップ**して無駄な全件置換コストを抑制（保存失敗時はキャッシュしないため必ず再試行される）
 
 ## Consequences
 - ✅ 再起動後もチャット全文・フェーズ詳細（4フェーズ）・ステップログ・usage が復元される（実機 E2E 実証済み）

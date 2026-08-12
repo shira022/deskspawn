@@ -135,7 +135,12 @@ pub async fn save_messages(
         let client_id = m.client_id.as_deref().unwrap_or("");
         sqlx::query(
             "INSERT INTO chat_messages (app_id, client_id, role, content, payload, created_at)
-             VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))",
+             VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))
+             ON CONFLICT(app_id, client_id) DO UPDATE SET
+               role = excluded.role,
+               content = excluded.content,
+               payload = excluded.payload,
+               created_at = excluded.created_at",
         )
         .bind(app_id)
         .bind(client_id)
@@ -350,6 +355,45 @@ mod tests {
         let db_path = workspace::app_chat_db_path("app-test").unwrap();
         assert!(db_path.exists(), "chat.db must exist on disk");
 
+        std::env::remove_var("DESKSPAWN_ROOT");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn duplicate_client_id_is_upserted_not_rejected() {
+        // フロントが同一 client_id を2回送っても UNIQUE 制約違反にならず、
+        // 最後の行が勝つ（ADR-013 の ON CONFLICT 仕様）。
+        let _guard = test_env_lock();
+        let (pool, tmp) = open_test_db("dup").await;
+
+        save_messages(
+            &pool,
+            "app-test",
+            &[
+                ChatMessageRow {
+                    client_id: Some("msg-dup".into()),
+                    role: "user".into(),
+                    content: "first".into(),
+                    payload: None,
+                    created_at: None,
+                },
+                ChatMessageRow {
+                    client_id: Some("msg-dup".into()),
+                    role: "user".into(),
+                    content: "second (last wins)".into(),
+                    payload: None,
+                    created_at: None,
+                },
+            ],
+        )
+        .await
+        .unwrap();
+
+        let loaded = load_messages(&pool, "app-test").await.unwrap();
+        assert_eq!(loaded.len(), 1, "duplicate client_id must collapse to one row");
+        assert_eq!(loaded[0].content, "second (last wins)");
+
+        close(pool).await;
         std::env::remove_var("DESKSPAWN_ROOT");
         let _ = std::fs::remove_dir_all(&tmp);
     }

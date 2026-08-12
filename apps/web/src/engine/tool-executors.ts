@@ -968,15 +968,30 @@ function elementLabel(el: Element): string {
 // ── Chat History ───────────────────────────────────────────────────────────────
 
 /**
+ * 直近に保存成功した (appId, メッセージ内容) のスナップショット。
+ * 内容が完全に同一の連続保存（例: 同一ステートでの updateMessage 多重呼び出し）を
+ * スキップし、無駄な全件置換（JSON.stringify + IPC + DELETE/INSERT）を防ぐ。
+ * 保存失敗時はキャッシュを更新しないため、次回必ず再試行される。
+ */
+let lastSavedSnapshot: { appId: string; snapshot: string } | null = null;
+
+/**
  * チャット履歴を永続化する（Web: IndexedDB / Desktop: SQLite via Rust）。
  *
  * エラーは握りつぶさず false を返す（呼び出し側が UI に保存失敗を表示できる）。
  * Desktop の書き込みは enqueueWrite により直列化されるため、
  * addMessage/updateMessage の連続呼び出しでも lost-update が起きない。
+ * 内容が前回保存時と同一の場合は書き込み自体をスキップする（重複保存の抑制）。
  */
 export async function persistChatHistory(appId: string, messages: any[]): Promise<boolean> {
+  // 同一内容の連続保存はスキップ（stepLogs 更新の多重化で同内容が来ることがある）
+  const snapshot = JSON.stringify(messages);
+  if (lastSavedSnapshot && lastSavedSnapshot.appId === appId && lastSavedSnapshot.snapshot === snapshot) {
+    return true;
+  }
   try {
     await saveChatToStorage(appId, messages);
+    lastSavedSnapshot = { appId, snapshot };
     return true;
   } catch (e) {
     console.error("[persistChatHistory] Failed to save chat history:", e);

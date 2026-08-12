@@ -9,6 +9,7 @@ import { PhaseDetailPanel } from "@/components/chat/PhaseDetailPanel";
 import { MessageSquare, Bot, Loader2, ChevronDown, ChevronLeft, ChevronRight, History, Clock, Search, X, WifiOff, AlertTriangle } from "lucide-react";
 import type { ChatMessage as ChatMessageType } from "@/types";
 import { getMessageCountForCheckpoint, restoreCheckpoint } from "@/lib/checkpoint-utils";
+import { newMessageId } from "@/lib/ids";
 import { useChatStream } from "@/hooks/useChatStream";
 import { previewManager } from "@/lib/preview";
 import type { PreviewStatus } from "@/lib/preview";
@@ -198,7 +199,7 @@ export function ChatPanel() {
           console.warn("[chat] Failed to restore checkpoint:", e);
           setWorkspaceReady(true);
           addMessage({
-            id: `msg-err-${Date.now()}`,
+            id: newMessageId("msg-err"),
             role: "assistant",
             content: t('chat.checkpointRestoreFailed', { error: e instanceof Error ? e.message : String(e) }),
             timestamp: Date.now(),
@@ -237,7 +238,7 @@ export function ChatPanel() {
           console.warn("[chat] Failed to restore checkpoint:", e);
           setWorkspaceReady(true);
           addMessage({
-            id: `msg-err-${Date.now()}`,
+            id: newMessageId("msg-err"),
             role: "assistant",
             content: t('chat.checkpointRestoreFailed', { error: e instanceof Error ? e.message : String(e) }),
             timestamp: Date.now(),

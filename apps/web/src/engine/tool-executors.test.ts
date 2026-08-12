@@ -291,11 +291,45 @@ describe("persistChatHistory", () => {
   });
 
   it("returns false (does not throw) when storage save fails", async () => {
+    // 内容は直前のテストと異なるものにする（同一内容はスキップされるため）
     vi.mocked(saveChatHistory).mockRejectedValue(new Error("disk full"));
 
-    const ok = await persistChatHistory("app-1", [{ role: "user", content: "Hello" }]);
+    const ok = await persistChatHistory("app-1", [{ role: "user", content: "Hello-fail" }]);
 
     expect(ok).toBe(false);
+  });
+
+  it("skips saving when content is identical to the last successful save", async () => {
+    vi.mocked(saveChatHistory).mockResolvedValue(undefined);
+
+    const messages = [{ role: "user", content: "dup-check" }];
+    await persistChatHistory("app-dup", messages);
+    await persistChatHistory("app-dup", messages);
+
+    expect(saveChatHistory).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves again when content changed", async () => {
+    vi.mocked(saveChatHistory).mockResolvedValue(undefined);
+
+    await persistChatHistory("app-dup", [{ role: "user", content: "v1" }]);
+    await persistChatHistory("app-dup", [{ role: "user", content: "v2" }]);
+
+    expect(saveChatHistory).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache failed saves (retries on next call)", async () => {
+    vi.mocked(saveChatHistory)
+      .mockRejectedValueOnce(new Error("disk full"))
+      .mockResolvedValueOnce(undefined);
+
+    const messages = [{ role: "user", content: "retry-check" }];
+    const first = await persistChatHistory("app-retry", messages);
+    const second = await persistChatHistory("app-retry", messages);
+
+    expect(first).toBe(false);
+    expect(second).toBe(true);
+    expect(saveChatHistory).toHaveBeenCalledTimes(2);
   });
 });
 

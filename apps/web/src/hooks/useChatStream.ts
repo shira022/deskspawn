@@ -11,6 +11,7 @@ import { useAppStore } from "@/store/useAppStore";
 import type { ChatMessage, StepLogEntry, TokenUsage } from "@/types";
 import { providerLabels } from "@/lib/constants";
 import { isDesktopEnv } from "@/lib/platform";
+import { newMessageId } from "@/lib/ids";
 import { getModel } from "@/engine/providers";
 import { runWithTriage } from "@/engine/orchestrator";
 import { tools } from "@/engine/tools";
@@ -154,7 +155,7 @@ export function useChatStream(): UseChatStreamReturn {
       // Validate config
       if (!cfg) {
         addMessage({
-          id: `msg-err-${Date.now()}`,
+          id: newMessageId("msg-err"),
           role: "assistant",
           content: i18n.t('chat.error.aiNotConfiguredDetailed', { notConfiguredLabel: i18n.t('ai.notConfiguredShort') }),
           timestamp: Date.now(),
@@ -166,7 +167,7 @@ export function useChatStream(): UseChatStreamReturn {
 
       if (!pid) {
         addMessage({
-          id: `msg-err-${Date.now()}`,
+          id: newMessageId("msg-err"),
           role: "assistant",
           content: i18n.t('chat.error.noAppSelected', { newAppLabel: i18n.t('app.newApp') }),
           timestamp: Date.now(),
@@ -181,7 +182,7 @@ export function useChatStream(): UseChatStreamReturn {
 
       if (cfg.provider !== "ollama" && !apiKey) {
         addMessage({
-          id: `msg-err-${Date.now()}`,
+          id: newMessageId("msg-err"),
           role: "assistant",
           content: i18n.t('chat.error.apiKeyRequiredDetailed', {
             provider: providerLabels[cfg.provider as keyof typeof providerLabels] || cfg.provider,
@@ -212,7 +213,7 @@ export function useChatStream(): UseChatStreamReturn {
         const configIssue = getProviderConfigIssue(cfg, providerLabel);
         if (configIssue) {
           addMessage({
-            id: `msg-err-${Date.now()}`,
+            id: newMessageId("msg-err"),
             role: "assistant",
             content: i18n.t('chat.error.providerConfigError', { provider: providerLabel, detail: configIssue }),
             timestamp: Date.now(),
@@ -372,7 +373,7 @@ export function useChatStream(): UseChatStreamReturn {
        * 「AI応答が保存されない」データ欠落の根本対策）。
        * 以降、このメッセージを updateMessage で更新していく。
        */
-      const botMsgId = `msg-bot-${Date.now()}`;
+      const botMsgId = newMessageId("msg-bot");
       addMessage({
         id: botMsgId,
         role: "assistant",
