@@ -258,6 +258,51 @@ export async function loadLastProvider(): Promise<string | null> {
   return p ?? null;
 }
 
+// ── Current App (B4: was localStorage `deskspawn_current_app`) ────────────────
+
+export async function saveCurrentAppId(appId: string | null): Promise<void> {
+  // Desktop: persist to config.json via Rust IPC.
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    if (appId) {
+      await invoke("save_current_app", { appId });
+    }
+    return;
+  } catch {
+    // Not in Tauri environment — use localStorage (Web)
+  }
+  if (appId) {
+    localStorage.setItem("deskspawn_current_app", JSON.stringify(appId));
+  } else {
+    localStorage.removeItem("deskspawn_current_app");
+  }
+}
+
+export async function loadCurrentAppId(): Promise<string | null> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const id = await invoke<string | null>("load_current_app");
+    if (id) return id;
+    // Desktop but not yet in config.json: migrate the legacy localStorage value.
+    const legacy = localStorage.getItem("deskspawn_current_app");
+    if (legacy) {
+      const parsed = JSON.parse(legacy) as string;
+      await invoke("save_current_app", { appId: parsed }).catch(() => {});
+      return parsed;
+    }
+    return null;
+  } catch {
+    // Not in Tauri environment
+  }
+  const stored = localStorage.getItem("deskspawn_current_app");
+  if (!stored) return null;
+  try {
+    return JSON.parse(stored) as string;
+  } catch {
+    return stored;
+  }
+}
+
 // ── App Operations ────────────────────────────────────────────────────────
 
 /**

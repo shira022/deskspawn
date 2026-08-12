@@ -36,7 +36,7 @@ import type {
   Toast,
 } from "@/types";
 import { DEFAULT_SETTINGS } from "@/types";
-import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, listApps, type ApiKeyStorageMethod } from "@/lib/storage";
+import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, saveCurrentAppId, loadCurrentAppId, listApps, type ApiKeyStorageMethod } from "@/lib/storage";
 import { setAppId, listCheckpoints as engineListCheckpoints, persistChatHistory, loadChatHistory } from "@/engine/tool-executors";
 import { SETTINGS_KEY } from "@/lib/constants";
 import { setModelCostCache, clearModelCostCache } from "@/lib/cost";
@@ -243,9 +243,8 @@ export const useAppStore = create<Store>((set, get) => ({
 
         // Load current app
         try {
-          const stored = localStorage.getItem("deskspawn_current_app");
-          if (stored) {
-            const pid = JSON.parse(stored);
+          const pid = await loadCurrentAppId();
+          if (pid) {
             set({ currentAppId: pid });
             setAppId(pid);
             // Load checkpoints
@@ -422,7 +421,7 @@ export const useAppStore = create<Store>((set, get) => ({
     set({ currentAppId: id });
     if (id) {
       setAppId(id);
-      localStorage.setItem("deskspawn_current_app", JSON.stringify(id));
+      void saveCurrentAppId(id);
       // Load checkpoints for this app
       get().fetchCheckpoints();
       // Auto-seed: if the app has no source files in OPFS, try to
@@ -448,7 +447,7 @@ export const useAppStore = create<Store>((set, get) => ({
         }
       }, 500);
     } else {
-      localStorage.removeItem("deskspawn_current_app");
+      void saveCurrentAppId(null);
     }
   },
   apps: [],

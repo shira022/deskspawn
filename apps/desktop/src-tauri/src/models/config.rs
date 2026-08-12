@@ -58,6 +58,10 @@ pub struct AiConfig {
     /// The most recently used provider.
     #[serde(default)]
     pub last_provider: Option<String>,
+    /// The currently open app (UI state persisted so the app reopens where
+    /// the user left off — was WebView localStorage `deskspawn_current_app`).
+    #[serde(default)]
+    pub current_app: Option<String>,
 }
 
 impl Default for AiConfig {
@@ -76,6 +80,7 @@ impl Default for AiConfig {
             storage_method: default_storage_method(),
             providers: HashMap::new(),
             last_provider: None,
+            current_app: None,
         }
     }
 }

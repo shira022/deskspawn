@@ -584,3 +584,17 @@ pub fn save_last_provider(provider: String) -> Result<(), String> {
 pub fn load_last_provider() -> Result<Option<String>, String> {
     Ok(read_existing_config().and_then(|c| c.last_provider))
 }
+
+/// Save the currently open app id (was WebView localStorage).
+#[tauri::command]
+pub fn save_current_app(app_id: String) -> Result<(), String> {
+    let mut existing = read_existing_config().unwrap_or_default();
+    existing.current_app = Some(app_id);
+    write_config(&existing)
+}
+
+/// Load the currently open app id.
+#[tauri::command]
+pub fn load_current_app() -> Result<Option<String>, String> {
+    Ok(read_existing_config().and_then(|c| c.current_app))
+}
