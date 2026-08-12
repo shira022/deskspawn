@@ -243,7 +243,7 @@ pub fn write_app_files(
     Ok(written)
 }
 
-/// Load chat history for an app from its SQLite DB (ADR-009).
+/// Load chat history for an app from its SQLite DB (ADR-009 / ADR-013).
 #[tauri::command]
 pub async fn get_chat_history(app_id: String) -> Result<Vec<ChatMessage>, String> {
     validate_app_id(&app_id)?;
@@ -251,38 +251,67 @@ pub async fn get_chat_history(app_id: String) -> Result<Vec<ChatMessage>, String
     let rows = crate::engine::storage::load_messages(&pool, &app_id).await?;
     let msgs = rows
         .into_iter()
-        .map(|(id, role, content, created_at)| ChatMessage {
-            id,
-            role,
-            content,
-            created_at,
+        .map(|r| ChatMessage {
+            client_id: r.client_id,
+            role: r.role,
+            content: r.content,
+            payload: r.payload,
+            created_at: r.created_at,
         })
         .collect();
     crate::engine::storage::close(pool).await;
     Ok(msgs)
 }
 
-/// Append a chat message to the app's SQLite DB (ADR-009).
+/// Replace-all save of an app's complete chat history (atomic, ADR-013).
+///
+/// The frontend passes every message it currently holds; Rust deletes and
+/// re-inserts within a single transaction. `payload` carries the full
+/// frontend message object (stepLogs / phaseOutputs / usage / checkpointId /
+/// timestamp) as JSON so a reload restores the chat exactly as rendered.
 #[tauri::command]
-pub async fn append_chat_message(
+pub async fn save_chat_messages(
     app_id: String,
-    role: String,
-    content: String,
-) -> Result<i64, String> {
+    messages: Vec<ChatMessageInput>,
+) -> Result<(), String> {
     validate_app_id(&app_id)?;
+    let rows: Vec<crate::engine::storage::ChatMessageRow> = messages
+        .into_iter()
+        .map(|m| crate::engine::storage::ChatMessageRow {
+            client_id: Some(m.client_id),
+            role: m.role,
+            content: m.content,
+            payload: m.payload,
+            created_at: m.created_at,
+        })
+        .collect();
     let pool = crate::engine::storage::open_chat_db(&app_id).await?;
-    let id = crate::engine::storage::append_message(&pool, &app_id, &role, &content).await?;
+    crate::engine::storage::save_messages(&pool, &app_id, &rows).await?;
     crate::engine::storage::close(pool).await;
-    Ok(id)
+    Ok(())
 }
 
-/// Chat message shape returned to the frontend.
+/// Chat message shape returned to the frontend (v2: includes client_id + payload).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
-    pub id: i64,
+    /// Frontend message id (`msg-…`); backfilled `legacy-<id>` for v1 rows.
+    pub client_id: Option<String>,
     pub role: String,
     pub content: String,
-    pub created_at: String,
+    /// Full frontend message object as JSON (stepLogs / phaseOutputs / usage / …).
+    pub payload: Option<String>,
+    /// DB timestamp; None for new rows written by the frontend (payload has the real timestamp).
+    pub created_at: Option<String>,
+}
+
+/// Input shape for `save_chat_messages`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChatMessageInput {
+    pub client_id: String,
+    pub role: String,
+    pub content: String,
+    pub payload: Option<String>,
+    pub created_at: Option<String>,
 }
 
 fn ensure_dir_exists(dir: &Path) -> Result<(), String> {
@@ -796,4 +825,64 @@ mod tests {
 fn get_chat_history_sync(app_id: &str) -> Result<Vec<ChatMessage>, String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(get_chat_history(app_id.to_string()))
+}
+
+#[cfg(test)]
+mod chat_save_tests {
+    use super::*;
+
+    #[test]
+    fn save_and_load_chat_messages_roundtrip() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = std::env::temp_dir().join(format!("deskspawn-chatcmd-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        std::env::set_var("DESKSPAWN_ROOT", &tmp);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let meta = create_app("Chat".to_string()).unwrap();
+        let msgs = vec![
+            ChatMessageInput {
+                client_id: "msg-a".into(),
+                role: "user".into(),
+                content: "hello".into(),
+                payload: Some(r#"{"id":"msg-a","role":"user","content":"hello","timestamp":1}"#.into()),
+                created_at: None,
+            },
+            ChatMessageInput {
+                client_id: "msg-b".into(),
+                role: "assistant".into(),
+                content: "hi".into(),
+                payload: Some(
+                    r#"{"id":"msg-b","role":"assistant","content":"hi","stepLogs":[{"step":1,"toolName":"read_file","status":"success"}]}"#
+                        .into(),
+                ),
+                created_at: None,
+            },
+        ];
+        rt.block_on(save_chat_messages(meta.id.clone(), msgs)).unwrap();
+
+        let loaded = get_chat_history_sync(&meta.id).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].client_id.as_deref(), Some("msg-a"));
+        assert!(loaded[1].payload.as_deref().unwrap().contains("stepLogs"));
+
+        // Replace-all: saving one message drops the previous two.
+        rt.block_on(save_chat_messages(
+            meta.id.clone(),
+            vec![ChatMessageInput {
+                client_id: "msg-c".into(),
+                role: "user".into(),
+                content: "only".into(),
+                payload: Some(r#"{"id":"msg-c","role":"user","content":"only"}"#.into()),
+                created_at: None,
+            }],
+        ))
+        .unwrap();
+        let after = get_chat_history_sync(&meta.id).unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].client_id.as_deref(), Some("msg-c"));
+
+        std::env::remove_var("DESKSPAWN_ROOT");
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

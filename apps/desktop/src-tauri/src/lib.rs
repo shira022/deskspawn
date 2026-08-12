@@ -155,7 +155,7 @@ pub fn run() {
             commands::apps::write_app_file,
             commands::apps::write_app_files,
             commands::apps::get_chat_history,
-            commands::apps::append_chat_message,
+            commands::apps::save_chat_messages,
             commands::apps::export_app_zip,
             commands::apps::import_app_zip,
             // Environment check commands

@@ -146,43 +146,81 @@ export function isDesktopStorageActive(): boolean {
   return isDesktopRuntime();
 }
 
-// ── Chat History (persisted per-app in SQLite via Rust IPC, ADR-009) ──────
+// ── Chat History (per-app SQLite via Rust IPC, ADR-009 / ADR-013) ──────────
+//
+// v2 (ADR-013): the FULL frontend message object (stepLogs, phaseOutputs,
+// usage, checkpointId, timestamp) is stored as a JSON `payload` column so a
+// reload restores the chat exactly as the UI rendered it. Writes are
+// replace-all (the frontend sends its complete message list) and serialized
+// through a promise queue so overlapping add/update calls cannot race.
 
-/** Chat message shape returned by the Rust backend. */
-export interface ChatMessage {
-  id: number;
+/** Chat message row shape returned by the Rust backend. */
+export interface ChatMessageRow {
+  client_id: string | null;
   role: string;
   content: string;
-  created_at: string;
+  payload: string | null;
+  created_at: string | null;
 }
 
-/** Load chat history from the app's SQLite DB (Rust side). */
+/** Serialized write queue — guarantees replace-all saves cannot interleave. */
+let writeQueue: Promise<unknown> = Promise.resolve();
+function enqueueWrite<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeQueue.then(fn, fn);
+  writeQueue = run.then(
+    () => undefined,
+    () => undefined,
+  );
+  return run;
+}
+
+/** Load chat history from the app's SQLite DB (full fidelity). */
 export async function getChatHistoryDesktop(appId: string): Promise<any[]> {
   try {
-    const msgs = await tauriInvoke<ChatMessage[]>("get_chat_history", { appId });
-    return msgs.map((m) => ({ role: m.role, content: m.content }));
+    const rows = await tauriInvoke<ChatMessageRow[]>("get_chat_history", { appId });
+    return rows.map((m) => {
+      if (m.payload) {
+        try {
+          const parsed = JSON.parse(m.payload);
+          if (parsed && typeof parsed === "object" && typeof parsed.role === "string") {
+            return parsed;
+          }
+        } catch {
+          // Fall through to the column-based reconstruction below.
+        }
+      }
+      // Legacy v1 row (no payload): reconstruct a minimal frontend message.
+      return {
+        id: m.client_id ?? `legacy-${m.created_at ?? Date.now()}`,
+        role: m.role,
+        content: m.content,
+        timestamp: (m.created_at ? Date.parse(m.created_at) : NaN) || Date.now(),
+      };
+    });
   } catch (e) {
-    console.warn("[storage-desktop] get_chat_history failed:", e);
+    console.error("[storage-desktop] get_chat_history failed:", e);
     return [];
   }
 }
 
-/** Append the latest chat message to the app's SQLite DB (Rust side). */
+/** Replace-all save of the app's complete chat history (atomic on the Rust side). */
 export async function saveChatHistoryDesktop(
   appId: string,
   messages: any[],
 ): Promise<void> {
-  try {
-    // Persist incrementally: the last message is the new one.
-    const last = messages[messages.length - 1];
-    if (last && typeof last.role === "string" && typeof last.content === "string") {
-      await tauriInvoke("append_chat_message", {
-        appId,
-        role: last.role,
-        content: last.content,
-      });
-    }
-  } catch (e) {
-    console.warn("[storage-desktop] append_chat_message failed:", e);
-  }
+  const input = messages
+    .filter((m) => m && typeof m.role === "string")
+    .map((m) => ({
+      client_id:
+        typeof m.id === "string" && m.id.length > 0
+          ? m.id
+          : `msg-${typeof m.timestamp === "number" ? m.timestamp : Date.now()}`,
+      role: m.role,
+      content: typeof m.content === "string" ? m.content : "",
+      payload: JSON.stringify(m),
+      created_at: undefined,
+    }));
+  return enqueueWrite(async () => {
+    await tauriInvoke("save_chat_messages", { appId, messages: input });
+  });
 }

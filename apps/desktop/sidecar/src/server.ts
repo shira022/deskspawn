@@ -1096,18 +1096,22 @@ app.post('/chat/history', (req, res) => {
   }
 });
 
-// ── API key management (from Rust backend, never from frontend) ───────────────
+// ── API key management (from Rust backend + frontend config sync) ─────────────
 
-/** API key held in process memory (set via POST /api/config from Rust only). */
+/** API key held in process memory (set via POST /api/config). */
 let storedApiKey: string | undefined;
 
 /** Custom endpoint held in process memory (set via POST /api/config). */
 let storedCustomEndpoint: string | undefined;
 
 /**
- * Receive API key from the Rust backend (after keychain save or on startup).
+ * Receive API key / custom endpoint from the Rust backend (after keychain save
+ * or on startup) and from the frontend config sync (useAppStore
+ * pushAiConfigToSidecar — H1: デスクトップの AI 設定をサイドカーへ push して
+ * NO_UPSTREAM / 401 を防ぐ)。
  * The key is stored only in process memory — never written to disk.
- * The frontend NEVER has access to this endpoint.
+ * This endpoint is protected by the X-DeskSpawn-Token auth middleware above,
+ * so only the WebView (via Rust IPC token) can reach it.
  */
 app.post('/api/config', (req, res) => {
   const { apiKey, customEndpoint } = req.body || {};

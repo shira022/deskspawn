@@ -205,6 +205,8 @@
       "noAppSelected": "⚠️ No app is selected. Create an app from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
       "apiKeyRequiredDetailed": "⚠️ {{provider}} requires an API key.\nConfigure it from \"{{modelLabel}}\" → \"API Key Settings\" in the toolbar.",
       "emptyResponse": "⚠️ AI returned an empty response. Please check your model settings and try again.\n\nProvider: {{provider}}\nModel: {{model}}\n\nClick the model name in the toolbar to check settings.",
+      "generationInterrupted": "⚠️ Generation was interrupted (partial logs have been saved).",
+      "saveFailedBanner": "⚠️ Failed to save chat history. It may not appear after restarting the app.",
       "invalidApiKey": "The API key is invalid or not configured. Check it from \"API Key Settings\" in the toolbar.",
       "generic": "⚠️ An error occurred: {{errMsg}}\n\n{{hint}}",
       "providerConfigError": "⚠️ {{provider}} configuration is incomplete.\n\n{{detail}}\n\nClick the model name in the toolbar to check settings.",
