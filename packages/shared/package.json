@@ -11,7 +11,7 @@
     "@ai-sdk/anthropic": "^4.0.27",
     "@ai-sdk/azure": "^3.0.74",
     "@ai-sdk/google": "^3.0.80",
-    "@ai-sdk/google-vertex": "^5.0.38",
+    "@ai-sdk/google-vertex": "^5.0.48",
     "@ai-sdk/openai": "^3.0.68",
     "@ai-sdk/openai-compatible": "^2.0.48",
     "@deskspawn/ai-core": "workspace:*",
@@ -43,11 +43,11 @@
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
+    "@testing-library/user-event": "^14.6.3",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "fake-indexeddb": "^6.2.5",
-    "happy-dom": "^20.10.6",
+    "happy-dom": "^20.11.2",
     "jsdom": "^29.1.1",
     "typescript": "~5.6.3",
     "vitest": "^4.1.9"
