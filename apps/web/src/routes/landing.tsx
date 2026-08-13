@@ -7,10 +7,10 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Separator } from "@/components/ui/separator";
-import { SETTINGS_KEY } from "@/lib/constants";
+import { Button } from "@deskspawn/shared/components/ui/button";
+import { Badge } from "@deskspawn/shared/components/ui/badge";
+import { Separator } from "@deskspawn/shared/components/ui/separator";
+import { SETTINGS_KEY } from "@deskspawn/shared/lib/constants";
 import {
   Sparkles,
   ArrowRight,

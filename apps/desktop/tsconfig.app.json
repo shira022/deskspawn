@@ -17,8 +17,9 @@
     "noFallthroughCasesInSwitch": true,
     "baseUrl": ".",
     "paths": {
-      "@/*": ["../../apps/web/src/*"]
+      "@/*": ["./src/*"],
+      "@deskspawn/shared/*": ["../../packages/shared/src/*"]
     }
   },
-  "include": ["src", "../../apps/web/src"]
+  "include": ["src"]
 }

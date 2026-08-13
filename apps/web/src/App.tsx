@@ -1,9 +1,9 @@
 import { Component, type ReactNode, useEffect, useCallback } from "react";
 import { useTranslation } from "react-i18next";
-import { useAppStore } from "@/store/useAppStore";
-import { MainLayout } from "@/components/layout/MainLayout";
-import { ToastContainer } from "@/components/ui/toast";
-import { Button } from "@/components/ui/button";
+import { useAppStore } from "@deskspawn/shared/store/useAppStore";
+import { MainLayout } from "@deskspawn/shared/components/layout/MainLayout";
+import { ToastContainer } from "@deskspawn/shared/components/ui/toast";
+import { Button } from "@deskspawn/shared/components/ui/button";
 import { AlertTriangle, RefreshCw, Loader2 } from "lucide-react";
 
 // ── ErrorBoundary ────────────────────────────────────────────────────────────

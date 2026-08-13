@@ -43,6 +43,7 @@
     "zod": "^4.4.3",
     "zustand": "^5.0.14",
     "@deskspawn/ai-core": "workspace:*",
+    "@deskspawn/shared": "workspace:*",
     "@deskspawn/ui": "workspace:*"
   },
   "devDependencies": {
