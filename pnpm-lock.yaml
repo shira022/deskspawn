@@ -12,15 +12,33 @@ importers:
 
   .:
     devDependencies:
+      '@eslint/js':
+        specifier: ^10.0.1
+        version: 10.0.1(eslint@10.8.0(jiti@2.7.0))
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
+      eslint:
+        specifier: ^10.8.0
+        version: 10.8.0(jiti@2.7.0)
+      eslint-plugin-react-hooks:
+        specifier: ^7.1.1
+        version: 7.1.1(eslint@10.8.0(jiti@2.7.0))
+      eslint-plugin-react-refresh:
+        specifier: ^0.5.3
+        version: 0.5.3(eslint@10.8.0(jiti@2.7.0))
+      typescript-eslint:
+        specifier: ^8.61.1
+        version: 8.65.0(eslint@10.8.0(jiti@2.7.0))(typescript@5.6.3)
 
   apps/desktop:
     dependencies:
       '@deskspawn/ai-core':
         specifier: workspace:*
         version: link:../../packages/ai-core
+      '@deskspawn/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@deskspawn/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -173,6 +191,9 @@ importers:
       '@deskspawn/ai-core':
         specifier: workspace:*
         version: link:../../packages/ai-core
+      '@deskspawn/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@deskspawn/ui':
         specifier: workspace:*
         version: link:../../packages/ui
@@ -324,6 +345,136 @@ importers:
         version: 5.6.3
 
   packages/config: {}
+
+  packages/shared:
+    dependencies:
+      '@ai-sdk/amazon-bedrock':
+        specifier: ^4.0.117
+        version: 4.0.139(zod@4.4.3)
+      '@ai-sdk/anthropic':
+        specifier: ^4.0.27
+        version: 4.0.27(zod@4.4.3)
+      '@ai-sdk/azure':
+        specifier: ^3.0.74
+        version: 3.0.92(zod@4.4.3)
+      '@ai-sdk/google':
+        specifier: ^3.0.80
+        version: 3.0.99(zod@4.4.3)
+      '@ai-sdk/google-vertex':
+        specifier: ^5.0.38
+        version: 5.0.38(zod@4.4.3)
+      '@ai-sdk/openai':
+        specifier: ^3.0.68
+        version: 3.0.87(zod@4.4.3)
+      '@ai-sdk/openai-compatible':
+        specifier: ^2.0.48
+        version: 2.0.62(zod@4.4.3)
+      '@deskspawn/ai-core':
+        specifier: workspace:*
+        version: link:../ai-core
+      '@deskspawn/ui':
+        specifier: workspace:*
+        version: link:../ui
+      '@radix-ui/react-slot':
+        specifier: ^1.3.3
+        version: 1.3.3(@types/react@18.3.31)(react@18.3.1)
+      '@tauri-apps/api':
+        specifier: ^2.0.0
+        version: 2.11.1
+      '@webcontainer/api':
+        specifier: ^1.6.4
+        version: 1.6.4
+      ai:
+        specifier: ^6.0.198
+        version: 6.0.234(zod@4.4.3)
+      class-variance-authority:
+        specifier: ^0.7.1
+        version: 0.7.1
+      clsx:
+        specifier: ^2.1.1
+        version: 2.1.1
+      flag-icons:
+        specifier: ^7.5.0
+        version: 7.5.0
+      hono:
+        specifier: ^4.9.1
+        version: 4.13.1
+      html2canvas:
+        specifier: ^1.4.1
+        version: 1.4.1
+      i18next:
+        specifier: ^26.3.1
+        version: 26.3.6(typescript@5.6.3)
+      i18next-browser-languagedetector:
+        specifier: ^8.2.1
+        version: 8.2.1
+      jszip:
+        specifier: ^3.10.1
+        version: 3.10.1
+      lucide-react:
+        specifier: ^0.468.0
+        version: 0.468.0(react@18.3.1)
+      pixelmatch:
+        specifier: ^7.2.0
+        version: 7.2.0
+      react:
+        specifier: ^18.3.1
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.3.1
+        version: 18.3.1(react@18.3.1)
+      react-i18next:
+        specifier: ^17.0.8
+        version: 17.0.11(i18next@26.3.6(typescript@5.6.3))(react-dom@18.3.1(react@18.3.1))(react@18.3.1)(typescript@5.6.3)
+      react-markdown:
+        specifier: ^10.1.0
+        version: 10.1.0(@types/react@18.3.31)(react@18.3.1)
+      react-resizable-panels:
+        specifier: ^4.11.2
+        version: 4.12.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      remark-gfm:
+        specifier: ^4.0.1
+        version: 4.0.1
+      tailwind-merge:
+        specifier: ^2.6.0
+        version: 2.6.1
+      zod:
+        specifier: ^4.4.3
+        version: 4.4.3
+      zustand:
+        specifier: ^5.0.14
+        version: 5.0.14(@types/react@18.3.31)(react@18.3.1)(use-sync-external-store@1.6.0(react@18.3.1))
+    devDependencies:
+      '@testing-library/jest-dom':
+        specifier: ^6.9.1
+        version: 6.10.0(@testing-library/dom@10.4.1)
+      '@testing-library/react':
+        specifier: ^16.3.2
+        version: 16.3.2(@testing-library/dom@10.4.1)(@types/react-dom@18.3.7(@types/react@18.3.31))(@types/react@18.3.31)(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@testing-library/user-event':
+        specifier: ^14.6.1
+        version: 14.6.1(@testing-library/dom@10.4.1)
+      '@types/react':
+        specifier: ^18.3.12
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.3.1
+        version: 18.3.7(@types/react@18.3.31)
+      fake-indexeddb:
+        specifier: ^6.2.5
+        version: 6.2.5
+      happy-dom:
+        specifier: ^20.10.6
+        version: 20.11.1
+      jsdom:
+        specifier: ^29.1.1
+        version: 29.1.1
+      typescript:
+        specifier: ~5.6.3
+        version: 5.6.3
+      vitest:
+        specifier: ^4.1.9
+        version: 4.1.10(@opentelemetry/api@1.9.1)(@types/node@25.9.5)(@vitest/coverage-v8@4.1.10)(happy-dom@20.11.1)(jsdom@29.1.1)(msw@2.15.0(@types/node@25.9.5)(typescript@5.6.3))(vite@6.4.3(@types/node@25.9.5)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.9))
 
   packages/ui:
     dependencies:
@@ -2485,6 +2636,10 @@ packages:
 
   hermes-parser@0.25.1:
     resolution: {integrity: sha512-6pEjquH3rqaI6cYAXYPcz9MS4rY6R4ngRgrgfDshRptUZIc3lw0MCIJIGDj9++mfySOuPTHB4nrSW99BCvOPIA==}
+
+  hono@4.13.1:
+    resolution: {integrity: sha512-kdJoFVv2xmayw6cY09H7AbMJMt8Jn5jdlEdXsP7AGBdF2DIptVlKlOLKXP41yPip4/a3yQPv9gVcJYI8YY04dw==}
+    engines: {node: '>=16.9.0'}
 
   html-encoding-sniffer@6.0.0:
     resolution: {integrity: sha512-CV9TW3Y3f8/wT0BRFc1/KAVQ3TUHiXmaAb6VW9vtiMFf7SLoMd1PdAc4W3KFOFETBJUb90KatHqlsZMWV+R9Gg==}
@@ -5781,6 +5936,8 @@ snapshots:
   hermes-parser@0.25.1:
     dependencies:
       hermes-estree: 0.25.1
+
+  hono@4.13.1: {}
 
   html-encoding-sniffer@6.0.0:
     dependencies:

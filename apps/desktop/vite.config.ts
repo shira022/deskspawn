@@ -4,7 +4,6 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
-const webSrc = path.resolve(__dirname, "../../apps/web/src");
 const SETTINGS_KEY = "deskspawn_settings";
 
 export default defineConfig({
@@ -26,7 +25,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": webSrc,
+      "@deskspawn/shared": path.resolve(__dirname, "../../packages/shared/src"),
     },
   },
   clearScreen: false,

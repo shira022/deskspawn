@@ -26,7 +26,9 @@ jobs:
         with:
           node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
-      - run: pnpm --filter web exec tsc --noEmit
+      # tsconfig.json は solution 構成 (files:[] + references) のため、-b なしの tsc は
+      # 何もチェックしない no-op になる。tsc -b で apps/web + packages/shared を型チェックする。
+      - run: pnpm --filter web exec tsc -b --noEmit
 
   frontend-test:
     runs-on: ubuntu-latest

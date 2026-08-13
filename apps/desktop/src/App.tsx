@@ -6,8 +6,8 @@
  */
 
 import React, { useEffect } from "react";
-import { MainLayout } from "@/components/layout/MainLayout";
-import { useAppStore } from "@/store/useAppStore";
+import { MainLayout } from "@deskspawn/shared/components/layout/MainLayout";
+import { useAppStore } from "@deskspawn/shared/store/useAppStore";
 import { registerDesktopServices } from "./lib/services";
 
 // Register Desktop services once at module level

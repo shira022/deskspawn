@@ -74,6 +74,7 @@ const targets = [
   ['Cargo.lock (deskspawn-desktop)', cargoLockVersion()],
   ['packages/ai-core', pkgVersion('packages/ai-core/package.json')],
   ['packages/config', pkgVersion('packages/config/package.json')],
+  ['packages/shared', pkgVersion('packages/shared/package.json')],
   ['packages/ui', pkgVersion('packages/ui/package.json')],
 ];
 
