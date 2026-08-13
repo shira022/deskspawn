@@ -141,22 +141,16 @@ pnpm install
 ```
 deskspawn/                          # pnpm workspace root
 ├── apps/
-│   ├── web/                        # Shared frontend — powers BOTH the web demo
-│   │   │                           # (Cloudflare Pages) and the desktop app's UI
-│   │   ├── src/                    # ⭐ Main app code (see "Who uses what" below)
-│   │   │   ├── engine/             # Multi-agent AI pipeline (providers, orchestrator, tools)
-│   │   │   ├── hooks/              # useChatStream — the main AI chat flow
-│   │   │   ├── lib/                # Utilities, storage, preview, i18n, sidecar client
-│   │   │   ├── store/              # Zustand state
-│   │   │   ├── components/         # UI components
-│   │   │   └── routes/             # Landing page + app routing
+│   ├── web/                        # Web demo (Cloudflare Pages) — thin entry over packages/shared
+│   │   ├── src/                    # Web-only entry: main.tsx, App.tsx, index.css, routes/, test/
 │   │   ├── public/                 # Static assets + _headers
-│   │   └── locales/                # i18n translations (ja/en)
-│   └── desktop/                    # Tauri v2 desktop app — thin wrapper over web/src
-│       ├── src/                    # Entry point + platform services only (6 files)
+│   └── desktop/                    # Tauri v2 desktop app — thin wrapper over packages/shared
+│       ├── src/                    # Entry point + platform services only (5 files)
 │       ├── src-tauri/              # Rust backend (storage, sidecar, IPC)
 │       └── sidecar/                # Bun-bundled Node server (AI proxy, preview, MCP)
 ├── packages/
+│   ├── shared/                     # ⭐ Shared app code (see "Who uses what" below)
+│   │   └── src/                    # engine/ hooks/ lib/ store/ components/ locales/ types/
 │   ├── ui/                         # Shared UI primitives
 │   ├── ai-core/                    # Shared AI pipeline types
 │   └── config/                     # Shared TS config
@@ -168,16 +162,18 @@ deskspawn/                          # pnpm workspace root
 
 | Concern | Where it lives | Notes |
 |---|---|---|
-| **UI & AI chat flow** | `apps/web/src/**` | The desktop app **imports this code directly** via the `@` alias (`apps/desktop/vite.config.ts` → `webSrc`). Both the web demo and the desktop app run the exact same files — do not "fix the desktop by editing `apps/desktop/src`" for UI/AI logic; edit `apps/web/src`. |
-| Desktop entry + IPC | `apps/desktop/src/` | Only 4 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `lib/ipc.ts` (Tauri bridge — `getSidecarPort` is the only live wrapper), `lib/services.ts`. |
+| **UI & AI chat flow** | `packages/shared/src/**` | The single source of truth. Both `apps/web` and `apps/desktop` import it directly via the `@deskspawn/shared` alias. Do NOT edit code under `apps/web/src` (except `main.tsx`/`App.tsx`/`routes/`) to fix shared UI/AI logic — edit `packages/shared/src`. |
+| Web entry + routing | `apps/web/src/` | Only `main.tsx`, `App.tsx`, `index.css`, `routes/`, `test/`. Everything else lives in `packages/shared`. |
+| Desktop entry + IPC | `apps/desktop/src/` | Only 5 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `lib/ipc.ts` (Tauri bridge — `getSidecarPort` is the only live wrapper), `lib/services.ts`. |
 | Rust backend | `apps/desktop/src-tauri/` | Storage, sidecar lifecycle, security server. |
-| Standalone AI server | `apps/desktop/sidecar/` | Bun-bundled Node server: OpenAI-compatible `/v1` proxy (CORS workaround), `/api/models`, preview server. Its `providers.ts` mirrors `apps/web/src/engine/providers.ts` but is **not** on the current chat path. |
-| Model resolution (OpenAI/Anthropic/etc.) | `apps/web/src/engine/providers.ts` | **The single source of truth** for which API each provider uses. Also mirrored in `apps/desktop/sidecar/src/providers.ts` (legacy path). |
+| Standalone AI server | `apps/desktop/sidecar/` | Bun-bundled Node server: OpenAI-compatible `/v1` proxy (CORS workaround), `/api/models`, preview server. Its `providers.ts` mirrors `packages/shared/src/engine/providers.ts` but is **not** on the current chat path. |
+| Model resolution (OpenAI/Anthropic/etc.) | `packages/shared/src/engine/providers.ts` | **The single source of truth** for which API each provider uses. Also mirrored in `apps/desktop/sidecar/src/providers.ts` (legacy path). |
 | Shared primitives | `packages/ui`, `packages/ai-core` | True shared packages (not aliased). |
 
 > 💡 **Rule of thumb:** if it's UI, chat, or AI provider logic, it lives in
-> `apps/web/src` and is shared with the desktop app via the `@` alias.
-> `apps/desktop/src` only contains the desktop-specific entry & platform glue.
+> `packages/shared/src` and is imported by both apps via the `@deskspawn/shared`
+> alias. `apps/web/src` and `apps/desktop/src` only contain platform entry &
+> glue code.
 
 ---
 
@@ -239,8 +235,10 @@ This project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
 - 📖 ドキュメント: [Getting Started](docs/getting-started.md) / [Installation](docs/installation.md) / [Spec](docs/spec.md)
 
 **開発者向けメモ（コード構成）:** UI・チャット・AIプロバイダー解決の実体は
-`apps/web/src/` にあり、**デスクトップアプリも同じコードを `@` alias 経由で
-import しています**（`apps/desktop/vite.config.ts` の `webSrc`）。デスクトップの
-UIやAIロジックを直したい場合は `apps/desktop/src` ではなく `apps/web/src` を
-編集してください。`apps/desktop/src` はエントリポイントとWindows固有の
-サービス登録（6ファイル）だけです。詳細は README の **Project Structure** を参照。
+`packages/shared/src/` にあり、**Web 版もデスクトップアプリも同じコードを
+`@deskspawn/shared` alias 経由で import しています**。共有UIやAIロジックを
+直したい場合は `apps/web/src` や `apps/desktop/src` ではなく
+`packages/shared/src` を編集してください。`apps/web/src` は Web 専用の
+エントリ（main.tsx・App.tsx・routes）だけ、`apps/desktop/src` はデスクトップの
+エントリとWindows固有のサービス登録（5ファイル）だけです。詳細は README の
+**Project Structure** を参照。

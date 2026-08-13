@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@deskspawn/ai-core": "workspace:*",
+    "@deskspawn/shared": "workspace:*",
     "@deskspawn/ui": "workspace:*",
     "@tauri-apps/api": "^2.0.0",
     "flag-icons": "^7.5.0",

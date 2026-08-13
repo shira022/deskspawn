@@ -19,7 +19,9 @@ jobs:
         with:
           node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
-      - run: pnpm --filter web exec eslint .
+      # eslint.config.js はリポジトリルートにあり、packages/shared も lint 対象。
+      # web フィルタ経由だと shared が対象外になるためルートで実行する。
+      - run: pnpm exec eslint .
 
   test-node:
     name: Unit tests (node)

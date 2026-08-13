@@ -9,4 +9,4 @@
  * to the web app's service registration.
  */
 
-export { registerWebServices as registerDesktopServices } from "@/lib/services/index";
+export { registerWebServices as registerDesktopServices } from "@deskspawn/shared/lib/services/index";

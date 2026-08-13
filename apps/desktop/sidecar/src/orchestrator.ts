@@ -277,7 +277,7 @@ export async function runPhase(
   let allResultText = '';
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
-  let roundMessages = [...messages];
+  const roundMessages = [...messages];
 
   try {
     do {
@@ -441,7 +441,7 @@ export async function runPipeline(
   const phases: Phase[] = ['planner', 'coder', 'verifier', 'visual_qa'];
   let planContext: string | undefined;
   let accumulatedText = '';
-  let totalUsage: Usage = { inputTokens: 0, outputTokens: 0 };
+  const totalUsage: Usage = { inputTokens: 0, outputTokens: 0 };
 
   for (const phase of phases) {
     hooks?.onPhaseStart?.(phase);
