@@ -14,6 +14,10 @@
  * Only outbound communication is to AI provider APIs and CDNs.
  */
 
+import type { AppSettings } from "../types";
+import { DEFAULT_SETTINGS } from "../types";
+import { SETTINGS_KEY } from "./constants";
+
 // ── Constants ────────────────────────────────────────────────────────────────
 
 const DB_NAME = "deskspawn";
@@ -318,7 +322,6 @@ export async function loadCurrentAppId(): Promise<string | null> {
 }
 
 // ── App Operations ────────────────────────────────────────────────────────
-
 /**
  * Desktop uses real files via Rust IPC (ADR-008); Web uses IndexedDB.
  * The desktop adapter is imported lazily so the web bundle stays unaffected.
@@ -454,4 +457,54 @@ export async function getStorageStats(): Promise<{
 }> {
   const apps = (await listApps()).length;
   return { apps, chatMessages: 0 };
+}
+
+// ── UI Settings (was localStorage `deskspawn_settings`) ───────────────────────
+//
+// Desktop persists settings (language/theme/fontSize/simpleMode) to
+// config.json via Rust IPC (2026-08-15); Web keeps localStorage. Same
+// invoke-first-fallback + lazy idempotent migration pattern as current_app
+// (B4). `null` = never saved (first run) — the desktop app then shows the
+// language-select screen.
+
+export async function saveSettingsDesktop(settings: AppSettings): Promise<void> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    await invoke("save_settings", { settings });
+    return;
+  } catch {
+    // Not in Tauri environment — use localStorage (Web)
+  }
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+export async function loadSettingsDesktop(): Promise<AppSettings | null> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const s = await invoke<AppSettings | null>("load_settings");
+    if (s) return { ...DEFAULT_SETTINGS, ...s };
+    // Desktop but no settings in config.json yet: migrate the legacy
+    // localStorage value once, then persist to config.json.
+    const legacy = localStorage.getItem(SETTINGS_KEY);
+    if (legacy) {
+      try {
+        const parsed = JSON.parse(legacy) as Partial<AppSettings>;
+        const merged = { ...DEFAULT_SETTINGS, ...parsed };
+        await invoke("save_settings", { settings: merged }).catch(() => {});
+        return merged;
+      } catch {
+        /* malformed legacy value — treat as first run */
+      }
+    }
+    return null; // first run: language not chosen yet
+  } catch {
+    // Not in Tauri environment
+  }
+  const raw = localStorage.getItem(SETTINGS_KEY);
+  if (!raw) return null;
+  try {
+    return { ...DEFAULT_SETTINGS, ...(JSON.parse(raw) as Partial<AppSettings>) };
+  } catch {
+    return null;
+  }
 }

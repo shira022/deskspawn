@@ -27,6 +27,16 @@
  *   DESKSPAWN_API_KEY=sk-... DESKSPAWN_E2E_REAL=1 pnpm test:e2e
  *
  * APIキーは環境変数からのみ取得する (テストファイルへの直書き禁止)。
+ *
+ * ⚠️⚠️ 警告: このテストは実データを削除する ⚠️⚠️
+ *   beforeAll と afterAll で `reset_app_data`（Rust IPC）を実行し、
+ *   アプリレジストリ・生成アプリ・チャット履歴・UI設定（言語/テーマ等）を
+ *   全て削除する。実行は **開発環境限定**:
+ *     - 環境変数 DESKSPAWN_TEST_RESET=1 が必要（未設定では拒否・誤爆防止）
+ *     - APIキー（OSキーチェーン）とAIプロバイダー設定は削除されない
+ *   このリポジトリで E2E を回す前に、開発機の実データを失ってよいか
+ *   確認すること（エージェントは AGENTS.md の注意事項も参照）。
+ *   実行時は必ず開発環境（WSL staging ビルド）で行う。
  */
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
 
@@ -56,26 +66,40 @@ test.beforeAll(async () => {
   page = ctx.pages()[0];
   await page.bringToFront();
 
-  // 前回実行の状態が残っていると各テストの前提（フレッシュ状態）が崩れる。
-  // ローカルストレージをクリアし、デスクトップのルート設定だけ再適用して
-  // 毎回クリーンな状態から開始する（E2Eの再現性確保）。
-  await page.evaluate(() => {
-    localStorage.clear();
-    localStorage.setItem('deskspawn_route', '/app');
+  // ⚠️ ここで実データ（アプリ/設定/チャット履歴）を削除する。
+  // reset_app_data はデバッグビルド + DESKSPAWN_TEST_RESET=1 の時のみ動作する
+  // E2E 専用コマンド（開発環境限定・誤爆防止ガード付き）。APIキー
+  // （OSキーチェーン）とAIプロバイダー設定は削除されない。
+  // ヘッダコメントと AGENTS.md の警告を確認すること。
+  await page.evaluate(() => localStorage.clear());
+  await page.evaluate(async () => {
+    const internals = (window as unknown as {
+      __TAURI_INTERNALS__?: {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+      };
+    }).__TAURI_INTERNALS__;
+    if (internals) {
+      try {
+        await internals.invoke('reset_app_data');
+      } catch (e) {
+        console.error('reset_app_data failed (non-Tauri/CDP environment?):', e);
+      }
+    }
   });
+  await page.evaluate(() => localStorage.setItem('deskspawn_route', '/app'));
   await page.reload();
-  await page.waitForTimeout(1000);
+  await page.waitForTimeout(2000);
 
-  // 初回起動時は言語選択画面（LanguageSelect）が表示される。
-  // データクリーンアップ後など新規環境では必ず通るため、日本語を選択して
-  // メイン画面に進む（クリーンな環境でのE2E再現性のため）。
+  // クリア後は初回起動（言語未設定）のため言語選択画面が表示される
+  // （デスクトップ実装 2026-08-15: config.json に settings が無い場合のみ）。
+  // 日本語を選択してメイン画面に進む。
   const langJapanese = page.getByRole('button', { name: /日本語/ });
   if (await langJapanese.isVisible().catch(() => false)) {
     await langJapanese.click();
     await page.waitForTimeout(800);
   }
 
-  // 言語選択後はランディングページが表示される（「今すぐ始める」/「使ってみる」）。
+  // ランディングページ（Web 版のみ・デスクトップでは表示されない）。
   // 新規環境では必ず通るため、メイン画面まで進める。
   const startBtn = page.getByRole('button', { name: '今すぐ始める' });
   const tryBtn = page.getByRole('button', { name: '使ってみる' });
@@ -89,6 +113,23 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
+  // テストが作成したアプリを実データに残さない（後片付け）。次回実行も
+  // 同じクリーン状態から始められる。⚠️ 開発環境の実データも削除される
+  // （beforeAll と同じガード: デバッグビルド + DESKSPAWN_TEST_RESET=1）。
+  await page.evaluate(async () => {
+    const internals = (window as unknown as {
+      __TAURI_INTERNALS__?: {
+        invoke: (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
+      };
+    }).__TAURI_INTERNALS__;
+    if (internals) {
+      try {
+        await internals.invoke('reset_app_data');
+      } catch (e) {
+        console.error('reset_app_data (afterAll) failed:', e);
+      }
+    }
+  });
   await browser.close();
 });
 
@@ -174,6 +215,15 @@ async function fillModel(page: Page, model: string) {
 }
 
 // ── テスト ─────────────────────────────────────────────────────────────────
+
+test('00: 初期状態 — クリア後は「アプリ未選択」のガイドが表示される', async () => {
+  // beforeAll の reset_app_data によりアプリは1つも存在しない状態から始まる。
+  // ツールバーのアプリボタンは「アプリ未選択」、チャットパネルにガイドが出る。
+  await expect(page.locator('div.flex.h-10 button').nth(1)).toContainText('アプリ未選択');
+  await expect(page.getByText(/ツールバーの「新規アプリ」からアプリを作成すると/)).toBeVisible();
+  // プレビューパネルのプレースホルダ
+  await expect(page.getByText(/アプリを選択または作成するとプレビューが表示されます/)).toBeVisible();
+});
 
 test('01: 起動画面 — タイトルと主要UIが表示される', async () => {
   await expect(page).toHaveTitle(/DeskSpawn/);
@@ -286,10 +336,189 @@ test('05: モデル設定メニュー — 現在のモデルが表示される',
   await modelBtn.click();
   await expect(popover).toBeVisible();
   await page.waitForTimeout(800); // ポップオーバーの入場アニメーション完了待ち (クリック位置安定化)
-  // 現在のモデルがセレクトの値として表示されている (option要素はhiddenのため値で検証)
-  await expect(popover.locator('select').nth(1)).toHaveValue(MODEL);
+  // 現在のモデルが表示されている。モデル一覧フェッチが成功すれば select、
+  // 失敗すれば手動入力 input（ダミーキーでは /models が 502 → input になる）。
+  // フェッチ完了前に判定すると両方とも未表示になり flaky なため、どちらかが
+  // 表示されるまで待ってから確認する（実績 2026-08-15: フェッチは最大 ~8秒）。
+  await expect
+    .poll(
+      async () =>
+        (await popover.locator('select').nth(1).count()) +
+        (await popover.getByPlaceholder(/モデル名を入力/).count()),
+      { timeout: 30_000 },
+    )
+    .toBeGreaterThan(0);
+  const modelSelect = popover.locator('select').nth(1);
+  if (await modelSelect.count()) {
+    await expect(modelSelect).toHaveValue(MODEL);
+  } else {
+    await expect(popover.getByPlaceholder(/モデル名を入力/)).toHaveValue(MODEL);
+  }
   // 後続テストのためにポップオーバーを閉じる — el.click() でReactハンドラを直接発火
   // (Playwrightのヒットテストはウィンドウ右端でflakyになるため force/座標クリックは不採用)
   await closeModelPopover(page);
   await expect(popover).toBeHidden();
+});
+
+test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガード・後片付け', async () => {
+  // テスト03 で作成したアプリ（E2E-xxx）がアプリA（現在選択中）。
+  const tb = page.locator('div.flex.h-10 button');
+  const pop = page.locator('div.absolute.left-0.top-full');
+
+  // アプリB を作成（作成後は B が選択状態になる）
+  const appB = `SPEC-B-${Date.now().toString().slice(-6)}`;
+  await page.getByRole('button', { name: '新規アプリ' }).click();
+  await page.getByPlaceholder(/例: タスク管理アプリ/).fill(appB);
+  await page.getByRole('button', { name: '作成' }).click();
+  await expect(page.locator('div.flex.h-10').getByText(appB)).toBeVisible({ timeout: 10_000 });
+
+  // A⇔B 切替: B 選択中 → AppSwitcher で A に切替 → ツールバーに反映
+  await tb.nth(1).click();
+  await page.waitForTimeout(900);
+  const rows1 = pop.locator('[role="button"]');
+  const names1 = await rows1.evaluateAll((els) =>
+    els.map((el) => el.querySelector('.font-medium')?.textContent?.trim() || ''),
+  );
+  const aIdx = names1.findIndex((n) => n && n.startsWith('E2E-'));
+  expect(aIdx).toBeGreaterThanOrEqual(0);
+  await rows1.nth(aIdx).click();
+  await page.waitForTimeout(1200);
+  await expect(page.locator('div.flex.h-10').getByText(/^E2E-/)).toBeVisible();
+
+  // もう一度 B に戻す（履歴が追従する）
+  await tb.nth(1).click();
+  await page.waitForTimeout(900);
+  const rows2 = pop.locator('[role="button"]');
+  const names2 = await rows2.evaluateAll((els) =>
+    els.map((el) => el.querySelector('.font-medium')?.textContent?.trim() || ''),
+  );
+  const bIdx = names2.findIndex((n) => n === appB);
+  expect(bIdx).toBeGreaterThanOrEqual(0);
+  await rows2.nth(bIdx).click();
+  await page.waitForTimeout(1200);
+  await expect(page.locator('div.flex.h-10').getByText(appB)).toBeVisible();
+
+  // B 選択中に A を削除（A は非選択なので削除可能）。プレビュー/チャット処理との
+  // 競合で稀に削除が失敗（「削除に失敗しました」が表示される）することがあるため、
+  // 失敗時は1回リトライする（実機では正常動作を確認済み・タイミング依存の flaky 対策）。
+  const deleteAppRow = async (label: string, matcher: (n: string) => boolean) => {
+    // プレビュー（vite dev server）がアプリのディレクトリをロックし、Windows の
+    // remove_dir_all が失敗することがあるため、削除前に全プレビューを停止する
+    // （実績 2026-08-15。アプリ側の handleDelete でも停止するが保険として二重に実行）。
+    await page.evaluate(async () => {
+      const inv = window.__TAURI_INTERNALS__.invoke;
+      const token = await inv('get_sidecar_token');
+      const port = window.__DESKSPAWN_SIDECAR_PORT__ || 3009;
+      await fetch(`http://127.0.0.1:${port}/api/preview/stop`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-DeskSpawn-Token': token },
+      }).catch(() => {});
+    });
+    await page.waitForTimeout(3000); // taskkill 完了待ち
+    for (let attempt = 0; attempt < 2; attempt++) {
+      await tb.nth(1).click();
+      await page.waitForTimeout(900);
+      const rowsN = pop.locator('[role="button"]');
+      const namesN = await rowsN.evaluateAll((els) =>
+        els.map((el) => el.querySelector('.font-medium')?.textContent?.trim() || ''),
+      );
+      const idx = namesN.findIndex(matcher);
+      expect(idx).toBeGreaterThanOrEqual(0);
+      await rowsN.nth(idx).locator('button[title="削除"]').click();
+      await expect(page.getByText('アプリを削除', { exact: true })).toBeVisible();
+      await page.getByRole('button', { name: '削除する' }).click();
+      // 削除成功 → ダイアログが閉じる。remove_dir_all は node_modules（100MB超）で
+      // 数秒〜数十秒かかることがあるため長めに待つ（実績 2026-08-15）。
+      try {
+        await expect(page.getByText('アプリを削除', { exact: true })).toBeHidden({
+          timeout: 60_000,
+        });
+      } catch {
+        // ダイアログが閉じない = 本当の削除失敗。エラー詳細を出して1回リトライ。
+        const errInfo = await page
+          .locator('text=アプリを削除')
+          .first()
+          .evaluate((el) => {
+            const e = el as HTMLElement;
+            // ダイアログコンテンツ（z-50 fixed）まで遡って全文を取得（エラー表示を含む）
+            let n: HTMLElement | null = e;
+            for (let i = 0; i < 5 && n && !n.className.toString().includes('fixed left-'); i++) {
+              n = n.parentElement;
+            }
+            return (n ? n.innerText : e.innerText).slice(0, 300).replace(/\n/g, ' | ');
+          })
+          .catch(() => '(text not found)');
+        console.log(`DELETE STATE (${label}): ${errInfo}`);
+        await page.getByRole('button', { name: 'キャンセル' }).click();
+        await expect(page.getByText('アプリを削除', { exact: true })).toBeHidden({
+          timeout: 10_000,
+        });
+        // ゾンビ backdrop（z-40）が残る場合があるため Escape + backdrop クリックで閉じる
+        await page.keyboard.press('Escape');
+        await page.waitForTimeout(1000);
+        const zb = page.locator('div.fixed.inset-0.z-40');
+        if (await zb.isVisible().catch(() => false)) {
+          await zb.click({ position: { x: 8, y: 8 } }).catch(() => {});
+          await page.waitForTimeout(500);
+        }
+        continue;
+      }
+      await page.waitForTimeout(500);
+      // 削除成功後も AppSwitcher ポップオーバー（z-40 backdrop）が残ることがあるため閉じる
+      const zb2 = page.locator('div.fixed.inset-0.z-40');
+      if (await zb2.isVisible().catch(() => false)) {
+        await zb2.click({ position: { x: 8, y: 8 } }).catch(() => {});
+        await page.waitForTimeout(500);
+      }
+      return;
+    }
+    throw new Error(`アプリ削除に失敗しました（リトライ含む）: ${label}`);
+  };
+
+  await deleteAppRow('アプリA (E2E-)', (n) => n && n.startsWith('E2E-'));
+
+  // B だけが残る。B は選択中なので削除ボタンは disabled（選択中アプリ削除ガード）。
+  // 削除確認ダイアログでポップオーバーは閉じるため、開き直して確認する。
+  await tb.nth(1).click();
+  // B の行が表示されるまで待つ（ポップオーバー再描画のタイミング差で行が
+  // 見えないことがある・実績 2026-08-15: findIndex -1 で失敗）
+  await expect
+    .poll(
+      async () => {
+        const rows = pop.locator('[role="button"]');
+        const names = await rows.evaluateAll((els) =>
+          els.map((el) => el.querySelector('.font-medium')?.textContent?.trim() || ''),
+        );
+        return names.includes(appB) ? 1 : 0;
+      },
+      { timeout: 10_000 },
+    )
+    .toBeGreaterThan(0);
+  const rows4 = pop.locator('[role="button"]');
+  const names4 = await rows4.evaluateAll((els) =>
+    els.map((el) => el.querySelector('.font-medium')?.textContent?.trim() || ''),
+  );
+  const bIdx2 = names4.findIndex((n) => n === appB);
+  expect(bIdx2).toBeGreaterThanOrEqual(0);
+  // B は選択中 → title が「削除」でなく deleteDisabledActive（削除不可の説明）になる。
+  // 両方の title にマッチさせて削除ボタンを特定する（実績 2026-08-15）。
+  const delBtn = rows4
+    .nth(bIdx2)
+    .locator(
+      'button[title="削除"], button[title="現在開いているアプリは削除できません。先に別のアプリに切り替えてください。"]',
+    )
+    .first();
+  const delDisabled = await delBtn.isDisabled();
+  expect(delDisabled).toBe(true);
+
+  // ポップオーバーを閉じる（z-40 バックドロップの el.click — ヒットテストflaky回避）
+  await page.evaluate(() => {
+    const backdrop = [...document.querySelectorAll('div')].find((d) =>
+      d.className.includes('fixed inset-0 z-40'),
+    );
+    if (backdrop) (backdrop as HTMLElement).click();
+  });
+  await page.waitForTimeout(500);
+
+  // 残ったアプリB は afterAll の reset_app_data が削除する（テスト後片付け）。
 });

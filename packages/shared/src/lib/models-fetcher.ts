@@ -233,9 +233,15 @@ async function fetchCustomModels(
     } catch {
       // サイドカー未起動などは無視（下のリクエストがエラーを返す）
     }
-    res = await sidecarFetch("/v1/models", { headers });
+    // 上流（custom endpoint）が応答しない場合、サイドカーのプロキシがハングし
+    // 「読み込み中...」が永遠に続くことがある（実績 2026-08-15）。10秒で打ち切って
+    // 手動入力モードへフォールバックさせる。
+    res = await sidecarFetch("/v1/models", {
+      headers,
+      signal: AbortSignal.timeout(10_000),
+    });
   } else {
-    res = await fetch(url, { headers });
+    res = await fetch(url, { headers, signal: AbortSignal.timeout(10_000) });
   }
   if (!res.ok) throw new Error(`Custom /models fetch failed: ${res.status}`);
   const data = (await res.json()) as CustomModelsResponse;

@@ -22,6 +22,57 @@ pub struct ProviderConfig {
     pub max_steps: Option<u32>,
 }
 
+// ── UI Settings (persisted to config.json on desktop) ─────────────────────────
+
+fn default_theme() -> String {
+    "system".to_string()
+}
+fn default_ui_font_size() -> u32 {
+    14
+}
+fn default_code_font_size() -> u32 {
+    13
+}
+fn default_language() -> String {
+    "ja".to_string()
+}
+fn default_simple_mode() -> bool {
+    true
+}
+
+/// UI settings (language, theme, font sizes, simple mode).
+///
+/// Desktop persists these to `config.json` (was WebView localStorage
+/// `deskspawn_settings` — web-storage audit 2026-08-12 follow-up). The
+/// frontend treats `None` (no `settings` key in config.json) as "first run /
+/// language not chosen yet" and shows the language-select screen on desktop.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppSettings {
+    #[serde(default = "default_theme")]
+    pub theme: String,
+    #[serde(default = "default_ui_font_size")]
+    pub ui_font_size: u32,
+    #[serde(default = "default_code_font_size")]
+    pub code_font_size: u32,
+    #[serde(default = "default_language")]
+    pub language: String,
+    #[serde(default = "default_simple_mode")]
+    pub simple_mode: bool,
+}
+
+impl Default for AppSettings {
+    fn default() -> Self {
+        Self {
+            theme: default_theme(),
+            ui_font_size: default_ui_font_size(),
+            code_font_size: default_code_font_size(),
+            language: default_language(),
+            simple_mode: default_simple_mode(),
+        }
+    }
+}
+
 // ── AI Configuration ──────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -62,6 +113,10 @@ pub struct AiConfig {
     /// the user left off — was WebView localStorage `deskspawn_current_app`).
     #[serde(default)]
     pub current_app: Option<String>,
+    /// UI settings (language/theme/font/simple mode). `None` = never saved
+    /// yet (first run) — the desktop app shows the language-select screen.
+    #[serde(default)]
+    pub settings: Option<AppSettings>,
 }
 
 impl Default for AiConfig {
@@ -81,6 +136,7 @@ impl Default for AiConfig {
             providers: HashMap::new(),
             last_provider: None,
             current_app: None,
+            settings: None,
         }
     }
 }

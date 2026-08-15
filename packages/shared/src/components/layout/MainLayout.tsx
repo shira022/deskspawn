@@ -41,8 +41,10 @@ import { SettingsDialog } from "../settings/SettingsDialog";
 import { AiConfigDialog } from "../settings/AiConfigDialog";
 import { isDesktopEnv } from "../../lib/platform";
 import type { ProviderKind, ThemeMode } from "../../types";
+import type { LanguageCode } from "../../lib/languages";
 import { providerLabels } from "../../lib/constants";
 import { loadProviderConfig } from "../../lib/storage";
+import { LanguageSelectScreen } from "../onboarding/LanguageSelectScreen";
 import { useModels } from "../../hooks/useModels";
 
 const layoutIcons: Record<string, React.ReactNode> = {
@@ -184,6 +186,24 @@ export function MainLayout() {
   );
 
   const hasToolbarModels = toolbarModels.length > 0 && !toolbarModelsLoading && !toolbarModelsError;
+
+  // 初回起動（言語未設定）: デスクトップは言語選択画面を表示する（Web 版は
+  // BootSequence が言語選択を済ませてからここに来るため、この分岐はデス
+  // クトップ専用に実質作用する — F0 / docs/user-flow-spec.md）。
+  const languageUnset = useAppStore((s) => s.languageUnset);
+
+  if (languageUnset) {
+    return (
+      <LanguageSelectScreen
+        onSelect={(code) => {
+          // 言語を保存（デスクトップ: config.json via Rust IPC / Web: localStorage）
+          // して初期化フラグを解除 → メイン画面へ。
+          updateSettings({ language: code as LanguageCode });
+          useAppStore.setState({ languageUnset: false });
+        }}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
