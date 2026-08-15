@@ -134,7 +134,7 @@ pnpm install
 | `pnpm --filter web lint` | ESLint |
 | `pnpm --filter desktop tauri dev` | Desktop app (dev mode) |
 | `pnpm --filter desktop build` | Frontend build for the desktop app |
-| `pnpm test:e2e` | Playwright end-to-end tests |
+| `pnpm test:e2e` | Playwright end-to-end tests — ⚠️ **deletes real app data** (dev-environment only; see CONTRIBUTING "E2E modes") |
 
 ### Project Structure
 

@@ -179,6 +179,9 @@ pub fn run() {
             commands::ai_config::load_last_provider,
             commands::ai_config::save_current_app,
             commands::ai_config::load_current_app,
+            commands::ai_config::save_settings,
+            commands::ai_config::load_settings,
+            commands::ai_config::reset_app_data,
             // Sidecar management commands
             commands::sidecar::restart_tauri,
             commands::sidecar::restart_sidecar,
