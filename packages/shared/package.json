@@ -11,7 +11,7 @@
     "@ai-sdk/anthropic": "^4.0.27",
     "@ai-sdk/azure": "^3.0.74",
     "@ai-sdk/google": "^3.0.80",
-    "@ai-sdk/google-vertex": "^5.0.38",
+    "@ai-sdk/google-vertex": "^5.0.53",
     "@ai-sdk/openai": "^3.0.68",
     "@ai-sdk/openai-compatible": "^2.0.48",
     "@deskspawn/ai-core": "workspace:*",
@@ -24,7 +24,7 @@
     "clsx": "^2.1.1",
     "flag-icons": "^7.5.0",
     "html2canvas": "^1.4.1",
-    "hono": "^4.9.1",
+    "hono": "^4.13.2",
     "i18next": "^26.3.1",
     "i18next-browser-languagedetector": "^8.2.1",
     "jszip": "^3.10.1",
@@ -38,16 +38,16 @@
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^2.6.0",
     "zod": "^4.4.3",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@testing-library/jest-dom": "^6.9.1",
     "@testing-library/react": "^16.3.2",
-    "@testing-library/user-event": "^14.6.1",
+    "@testing-library/user-event": "^14.6.4",
     "@types/react": "^18.3.12",
     "@types/react-dom": "^18.3.1",
     "fake-indexeddb": "^6.2.5",
-    "happy-dom": "^20.10.6",
+    "happy-dom": "^20.11.2",
     "jsdom": "^29.1.1",
     "typescript": "~5.6.3",
     "vitest": "^4.1.9"
