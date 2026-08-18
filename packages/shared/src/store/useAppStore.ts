@@ -36,9 +36,8 @@ import type {
   Toast,
 } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
-import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, saveCurrentAppId, loadCurrentAppId, listApps, type ApiKeyStorageMethod } from "../lib/storage";
+import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, saveCurrentAppId, loadCurrentAppId, saveSettingsDesktop, loadSettingsDesktop, listApps, type ApiKeyStorageMethod } from "../lib/storage";
 import { setAppId, listCheckpoints as engineListCheckpoints, persistChatHistory, loadChatHistory } from "../engine/tool-executors";
-import { SETTINGS_KEY } from "../lib/constants";
 import { setModelCostCache, clearModelCostCache } from "../lib/cost";
 import { getModelsForProvider } from "../lib/models-fetcher";
 import { seedAppFromFilesystem, seedAppFromWorkspace, hasAppFiles } from "../lib/seed-app";
@@ -170,6 +169,8 @@ interface Store {
 
   // Settings
   settings: AppSettings;
+  /** 初回起動（言語未設定）フラグ — デスクトップは言語選択画面を表示する */
+  languageUnset: boolean;
   setSettings: (settings: AppSettings) => void;
   updateSettings: (partial: Partial<AppSettings>) => void;
 
@@ -188,6 +189,7 @@ export const useAppStore = create<Store>((set, get) => ({
   phase: "ai-config",
   setPhase: (phase) => set({ phase }),
   initialized: false,
+  languageUnset: false,
   initialize: async () => {
     // 全体タイムアウト: どの処理がハングしても 10 秒で強制完了させる。
     // これにより Cloudflare 本番などで models.dev の fetch や IndexedDB が
@@ -195,6 +197,18 @@ export const useAppStore = create<Store>((set, get) => ({
     const INIT_TIMEOUT_MS = 10_000;
     const initBody = async () => {
       try {
+        // Load UI settings (desktop: config.json via IPC / web: localStorage).
+        // `null` = first run — desktop then shows the language-select screen
+        // (see MainLayout / F0 in docs/user-flow-spec.md).
+        try {
+          const loaded = await loadSettingsDesktop();
+          if (loaded) {
+            if (loaded.language) i18n.changeLanguage(loaded.language);
+            set({ settings: loaded });
+          } else {
+            set({ languageUnset: true });
+          }
+        } catch {}
         // Load AI config from per-provider storage
         const lastProvider = await loadLastProvider();
         if (lastProvider) {
@@ -496,21 +510,23 @@ export const useAppStore = create<Store>((set, get) => ({
   triggerReload: () => set((state) => ({ reloadCounter: state.reloadCounter + 1 })),
 
   // ── Settings ───────────────────────────────────────────────────────
-  settings: (() => {
-    const s = loadSettings();
-    i18n.changeLanguage(s.language);
-    return s;
-  })(),
+  // 初期値は DEFAULT_SETTINGS。実際の設定は initialize でロードする
+  // （デスクトップ: config.json / Web: localStorage）— 2026-08-15。
+  settings: DEFAULT_SETTINGS,
   setSettings: (settings) => {
-    saveSettings(settings);
     if (settings.language) i18n.changeLanguage(settings.language);
     set({ settings });
+    // 永続化は fire-and-forget（UI 応答性優先）。保存失敗は saveSettingsDesktop
+    // 内で吸収される（Tauri 環境でなければ localStorage、Rust エラー時も
+    // localStorage フォールバック・2026-08-15 レビュー指摘対応）。
+    void saveSettingsDesktop(settings);
   },
   updateSettings: (partial) => {
     set((state) => {
       const next = { ...state.settings, ...partial };
-      saveSettings(next);
       if (partial.language) i18n.changeLanguage(next.language);
+      // 同上: fire-and-forget（保存失敗は saveSettingsDesktop 内で吸収）
+      void saveSettingsDesktop(next);
       return { settings: next };
     });
   },
@@ -537,21 +553,3 @@ export const useAppStore = create<Store>((set, get) => ({
     }));
   },
 }));
-
-// ── Settings persistence ────────────────────────────────────────────────
-
-function loadSettings(): AppSettings {
-  try {
-    const raw = localStorage.getItem(SETTINGS_KEY);
-    if (raw) {
-      return { ...DEFAULT_SETTINGS, ...JSON.parse(raw) };
-    }
-  } catch {}
-  return { ...DEFAULT_SETTINGS };
-}
-
-function saveSettings(settings: AppSettings) {
-  try {
-    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-  } catch {}
-}
