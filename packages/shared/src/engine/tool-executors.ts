@@ -319,6 +319,16 @@ async function checkpointApi<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 /**
+ * プレビュー（vite dev server）を停止する（デスクトップのみ・全停止）。
+ * アプリ削除前に呼ぶ: プレビューがアプリのディレクトリをロックし、Windows の
+ * remove_dir_all が失敗するため（実績 2026-08-15・E2E で検出）。
+ */
+export async function stopAppPreviews(): Promise<void> {
+  if (!isDesktopEnv()) return;
+  await checkpointApi<{ stopped: boolean }>("/api/preview/stop", { method: "POST" });
+}
+
+/**
  * チェックポイントをメモリに作成する。
  * デスクトップ: sidecar が実ファイル（<app>/.deskspawn/checkpoints/<id>/）に保存。
  * Web: ファイル一覧のスナップショットを IndexedDB に保存。

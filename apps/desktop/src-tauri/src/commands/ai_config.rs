@@ -1,10 +1,18 @@
 use crate::engine::workspace;
-use crate::models::config::{AiConfig, ProviderConfig};
+use crate::models::config::{AiConfig, AppSettings, ProviderConfig};
 use std::fs;
 use std::path::PathBuf;
 
 /// Keyring identifiers for OS keychain storage.
-const KEYRING_SERVICE: &str = "com.deskspawn";
+///
+/// Default service: `com.deskspawn`（本番の API キー）。
+/// テスト/E2E では環境変数 `DESKSPAWN_KEYCHAIN_SERVICE` で service 名を
+/// 差し替え、本番キーチェーン ent を分離する（実績 2026-08-15・レビュー指摘対応:
+/// E2E テスト02 がダミーキーを保存すると本番 service に上書きされてしまう。
+/// E2E 実行時はこの env を `com.deskspawn.e2e` 等に設定すること）。
+fn keyring_service() -> String {
+    std::env::var("DESKSPAWN_KEYCHAIN_SERVICE").unwrap_or_else(|_| "com.deskspawn".to_string())
+}
 
 /// keychain エントリ名をプロバイダー別に分ける（openai/anthropic/google…）。
 fn keyring_user(provider: &str) -> String {
@@ -43,7 +51,7 @@ fn credentials_file_path() -> Result<PathBuf, String> {
 // ── OS Keychain helpers ───────────────────────────────────────────────────────
 
 fn save_api_key_to_keychain(api_key: &str, provider: &str) -> Result<bool, String> {
-    match keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider)) {
+    match keyring::Entry::new(&keyring_service(), &keyring_user(provider)) {
         Ok(entry) => {
             entry
                 .set_password(api_key)
@@ -64,7 +72,7 @@ fn save_api_key_to_keychain(api_key: &str, provider: &str) -> Result<bool, Strin
 /// Load the API key from the OS keychain for internal Rust use
 /// (e.g., pushing to sidecar). Returns None if unavailable.
 fn load_api_key_from_keychain(provider: &str) -> Option<String> {
-    match keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider)) {
+    match keyring::Entry::new(&keyring_service(), &keyring_user(provider)) {
         Ok(entry) => match entry.get_password() {
             Ok(password) => {
                 log::info!("API key loaded from OS keychain");
@@ -89,7 +97,7 @@ fn load_api_key_from_keychain(provider: &str) -> Option<String> {
 
 /// Delete the API key from the OS keychain.
 fn delete_api_key_from_keychain(provider: &str) {
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider)) {
+    if let Ok(entry) = keyring::Entry::new(&keyring_service(), &keyring_user(provider)) {
         if entry.delete_credential().is_ok() {
             log::info!("API key removed from OS keychain");
         }
@@ -275,11 +283,15 @@ pub fn push_api_key_to_sidecar_on_port(
         body["customEndpoint"] = serde_json::Value::String(endpoint);
     }
 
-    for attempt in 0..5 {
+    // サイドカーへの同期は「ベストエフォート」。タイムアウトは短く（2秒×2回）:
+    // サイドカーが応答しない環境では /v1/models の取得が 30 秒以上ブロックされ、
+    // モデル欄が「読み込み中...」のままになる（実績 2026-08-15）。同期に失敗しても
+    // 後続の /v1/models が 400/502 を返し、UI は手動入力モードへフォールバックする。
+    for attempt in 0..2 {
         let mut req = ureq::post(&url)
             .config()
-            .timeout_connect(Some(Duration::from_secs(5)))
-            .timeout_recv_response(Some(Duration::from_secs(5)))
+            .timeout_connect(Some(Duration::from_secs(2)))
+            .timeout_recv_response(Some(Duration::from_secs(2)))
             .build();
         // H1: サイドカー認証トークン（外部オリジンからの /api/config 改竄を防ぐ）
         if let Some(token) = crate::engine::security::auth_token() {
@@ -597,4 +609,249 @@ pub fn save_current_app(app_id: String) -> Result<(), String> {
 #[tauri::command]
 pub fn load_current_app() -> Result<Option<String>, String> {
     Ok(read_existing_config().and_then(|c| c.current_app))
+}
+
+// ── UI Settings (config.json persistence; was WebView localStorage) ───────────
+
+/// Save UI settings (language/theme/font/simple mode) to config.json.
+///
+/// Desktop persistence for `deskspawn_settings` (previously WebView
+/// localStorage — web-storage audit 2026-08-12 follow-up). Web keeps
+/// localStorage via the frontend fallback; this command is only reachable
+/// inside Tauri.
+#[tauri::command]
+pub fn save_settings(settings: AppSettings) -> Result<(), String> {
+    // 入力検証: UI 由来の値を制限し、不正な config.json（手動編集や旧版の
+    // 壊れた値）が書き込まれて以降の起動で UI が壊れるのを防ぐ
+    // （2026-08-15・レビュー指摘対応）。
+    validate_settings(&settings)?;
+    let mut existing = read_existing_config().unwrap_or_default();
+    existing.settings = Some(settings);
+    write_config(&existing)
+}
+
+/// AppSettings の値が許可範囲内かを検証する。
+/// LANGUAGES は packages/shared/src/lib/languages.ts の言語一覧と同期すること
+/// （言語追加時はここも更新）。
+fn validate_settings(s: &AppSettings) -> Result<(), String> {
+    const THEMES: [&str; 3] = ["system", "light", "dark"];
+    const LANGUAGES: [&str; 2] = ["ja", "en"];
+    const MIN_FONT_SIZE: u32 = 8;
+    const MAX_FONT_SIZE: u32 = 32;
+
+    if !THEMES.contains(&s.theme.as_str()) {
+        return Err(format!("Invalid theme: {}", s.theme));
+    }
+    if !LANGUAGES.contains(&s.language.as_str()) {
+        return Err(format!("Invalid language: {}", s.language));
+    }
+    if !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&s.ui_font_size) {
+        return Err(format!("Invalid uiFontSize: {}", s.ui_font_size));
+    }
+    if !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&s.code_font_size) {
+        return Err(format!("Invalid codeFontSize: {}", s.code_font_size));
+    }
+    Ok(())
+}
+
+/// Load UI settings from config.json. `None` = never saved yet (first run) —
+/// the desktop frontend then shows the language-select screen.
+#[tauri::command]
+pub fn load_settings() -> Result<Option<AppSettings>, String> {
+    Ok(read_existing_config().and_then(|c| c.settings))
+}
+
+/// TEST ONLY: 現在の keyring service 名を返す（E2E のキーチェーン分離ガード用）。
+/// E2E が本番キーチェーンを汚さないよう、アプリが
+/// `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` 付きで起動されているかを
+/// E2E beforeAll が検証する（2026-08-15 レビュー指摘対応）。
+#[tauri::command]
+pub fn get_keyring_service() -> Result<String, String> {
+    Ok(keyring_service())
+}
+
+/// DEV/TEST ONLY: wipe all user app data so E2E starts from a clean state.
+///
+/// Deletes:
+///   - app registry (`apps/apps.json`)
+///   - all generated app directories (`apps/app-*`, incl. their `.deskspawn/`
+///     chat DBs and checkpoints)
+///   - UI state in config.json (`settings`, `current_app`)
+/// Keeps: API keys (OS keychain / credentials.json) and AI provider config.
+///
+/// ⚠️ DANGER: this destroys real user data. Guard (required):
+///   - environment variable `DESKSPAWN_TEST_RESET=1`
+/// (No `cfg!(debug_assertions)` check: E2E runs against release-profile
+/// builds (`cargo-tauri build`), so a debug-build guard would make the
+/// command useless on the real machine. The env guard is the anti-footgun.)
+/// E2E runs this in `beforeAll` — see `e2e/desktop.spec.ts` header comment.
+#[tauri::command]
+pub fn reset_app_data() -> Result<(), String> {
+    if std::env::var("DESKSPAWN_TEST_RESET").as_deref() != Ok("1") {
+        return Err(
+            "reset_app_data requires the environment variable DESKSPAWN_TEST_RESET=1 \
+             (guards against accidental data loss; E2E must run in a dev environment only)"
+                .to_string(),
+        );
+    }
+
+    log::warn!(
+        "reset_app_data: DELETING app registry, app directories, settings, and current app. \
+         API keys in the OS keychain are kept."
+    );
+
+    // 1. Registry (apps.json)
+    let registry = workspace::apps_json_path()?;
+    if registry.exists() {
+        fs::remove_file(&registry).map_err(|e| format!("Failed to remove registry: {e}"))?;
+    }
+
+    // 2. Generated app directories (apps/app-*)
+    let apps_dir = workspace::apps_dir()?;
+    if apps_dir.exists() {
+        if let Ok(entries) = fs::read_dir(&apps_dir) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("app-") {
+                    let _ = fs::remove_dir_all(entry.path());
+                    log::info!("reset_app_data: removed app dir {name}");
+                }
+            }
+        }
+    }
+
+    // 3. UI state in config.json (settings / current_app). AI provider config
+    //    and API keys are intentionally kept (E2E AI-config tests reuse them).
+    let mut existing = read_existing_config().unwrap_or_default();
+    existing.settings = None;
+    existing.current_app = None;
+    write_config(&existing)?;
+
+    log::warn!("reset_app_data: done. All app data deleted (keychain kept).");
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn test_root(name: &str) -> std::path::PathBuf {
+        let tmp = std::env::temp_dir().join(format!(
+            "deskspawn-ai-config-{}-{}",
+            name,
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::env::set_var("DESKSPAWN_ROOT", &tmp);
+        tmp
+    }
+
+    #[test]
+    fn settings_roundtrip() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("settings-roundtrip");
+
+        // Not saved yet → None (first run / language not chosen)
+        assert!(load_settings().unwrap().is_none());
+
+        let s = AppSettings {
+            theme: "dark".into(),
+            ui_font_size: 16,
+            code_font_size: 15,
+            language: "en".into(),
+            simple_mode: false,
+        };
+        save_settings(s.clone()).unwrap();
+
+        let loaded = load_settings().unwrap().expect("settings saved");
+        assert_eq!(loaded.language, "en");
+        assert_eq!(loaded.theme, "dark");
+        assert_eq!(loaded.ui_font_size, 16);
+        assert_eq!(loaded.code_font_size, 15);
+        assert!(!loaded.simple_mode);
+
+        // Overwrite (updateSettings flow)
+        save_settings(AppSettings { language: "ja".into(), ..s }).unwrap();
+        assert_eq!(load_settings().unwrap().unwrap().language, "ja");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn save_settings_rejects_invalid_values() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("settings-validate");
+
+        let base = AppSettings::default();
+        // theme / language / font sizes の不正値は拒否
+        assert!(save_settings(AppSettings { theme: "neon".into(), ..base.clone() }).is_err());
+        assert!(save_settings(AppSettings { language: "fr".into(), ..base.clone() }).is_err());
+        assert!(save_settings(AppSettings { ui_font_size: 4, ..base.clone() }).is_err());
+        assert!(save_settings(AppSettings { code_font_size: 99, ..base.clone() }).is_err());
+        // 境界値（8 / 32）は許可
+        assert!(
+            save_settings(AppSettings { ui_font_size: 8, code_font_size: 32, ..base }).is_ok()
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn keyring_service_respects_env_override() {
+        // デフォルト（env 未設定）は本番 service
+        std::env::remove_var("DESKSPAWN_KEYCHAIN_SERVICE");
+        assert_eq!(keyring_service(), "com.deskspawn");
+        // E2E 用に env を設定すると service 名が切り替わる
+        std::env::set_var("DESKSPAWN_KEYCHAIN_SERVICE", "com.deskspawn.e2e");
+        assert_eq!(keyring_service(), "com.deskspawn.e2e");
+        std::env::remove_var("DESKSPAWN_KEYCHAIN_SERVICE");
+    }
+
+    #[test]
+    fn reset_app_data_requires_env_guard() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("reset-guard");
+
+        std::env::remove_var("DESKSPAWN_TEST_RESET");
+        let err = reset_app_data().unwrap_err();
+        assert!(
+            err.contains("DESKSPAWN_TEST_RESET"),
+            "expected env-guard error, got: {err}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn reset_app_data_cleans_apps_and_ui_state() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("reset-apps");
+        std::env::set_var("DESKSPAWN_TEST_RESET", "1");
+
+        // Setup: config.json with settings + current_app, registry, one app dir
+        save_settings(AppSettings::default()).unwrap();
+        save_current_app("app-1234567890abcdef1234567890abcdef".into()).unwrap();
+
+        let apps_json = workspace::apps_json_path().unwrap();
+        std::fs::create_dir_all(apps_json.parent().unwrap()).unwrap();
+        std::fs::write(&apps_json, "[]").unwrap();
+        let app_dir = workspace::apps_dir()
+            .unwrap()
+            .join("app-1234567890abcdef1234567890abcdef");
+        std::fs::create_dir_all(&app_dir).unwrap();
+        std::fs::write(app_dir.join("package.json"), "{}").unwrap();
+
+        reset_app_data().unwrap();
+
+        // Registry + app dirs gone, UI state (settings/current_app) cleared,
+        // AI provider config untouched (read_existing_config still parses).
+        assert!(!apps_json.exists(), "registry should be removed");
+        assert!(!app_dir.exists(), "app dir should be removed");
+        let cfg = read_existing_config().expect("config.json still exists");
+        assert!(cfg.settings.is_none());
+        assert!(cfg.current_app.is_none());
+
+        std::env::remove_var("DESKSPAWN_TEST_RESET");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }

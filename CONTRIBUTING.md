@@ -57,6 +57,28 @@ pnpm test:e2e
 
 #### E2E modes (e2e/desktop.spec.ts)
 
+> ⚠️ **WARNING: `pnpm test:e2e` deletes real data.** The suite runs the Rust
+> command `reset_app_data` in `beforeAll`/`afterAll`, which wipes the app
+> registry (`apps/apps.json`), generated app dirs (`apps/app-*` incl. chat
+> DBs/checkpoints), and UI settings (language/theme/…) on the machine where
+> the app under test stores its data. API keys (OS keychain) and AI provider
+> config are **kept**.
+>
+> **Dev environment only.** The command refuses to run unless the environment
+> variable `DESKSPAWN_TEST_RESET=1` is set (anti-footgun). Never run the
+> desktop E2E on a machine whose real DeskSpawn data matters to you. See
+> `docs/user-flow-spec.md` ("Development-only reset") for details.
+>
+> ⚠️ **Keychain isolation.** E2E `beforeAll` refuses to run unless the app was
+> launched with `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e`. This makes
+> test 02's dummy-key save land in a **separate** OS keychain service instead
+> of the production `com.deskspawn` — so your real API keys are never
+> overwritten. Launch the app under test with:
+> ```powershell
+> $env:DESKSPAWN_KEYCHAIN_SERVICE="com.deskspawn.e2e"; $env:DESKSPAWN_TEST_RESET="1"
+> & "C:\path\to\deskspawn-desktop.exe"
+> ```
+
 The desktop E2E suite runs in two modes — both default to safe values, so you can run it without any API key:
 
 | Mode | When | What it verifies |

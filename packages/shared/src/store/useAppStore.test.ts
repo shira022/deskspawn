@@ -30,6 +30,14 @@ vi.mock("../lib/storage", () => {
     loadLastProvider: vi.fn().mockResolvedValue(null),
     saveCurrentAppId: vi.fn().mockResolvedValue(undefined),
     loadCurrentAppId: vi.fn().mockResolvedValue(null),
+    saveSettingsDesktop: vi.fn().mockResolvedValue(undefined),
+    loadSettingsDesktop: vi.fn().mockResolvedValue({
+      theme: "system",
+      uiFontSize: 14,
+      codeFontSize: 13,
+      language: "ja",
+      simpleMode: true,
+    }),
     listApps: vi.fn().mockResolvedValue([]),
     deleteProviderConfig: vi.fn().mockResolvedValue(undefined),
     hasProviderConfig: vi.fn().mockResolvedValue(false),
@@ -216,14 +224,11 @@ describe("useAppStore — settings", () => {
     expect(state.settings.language).toBe("ja");
   });
 
-  it("updateSettings persists to localStorage", () => {
-    const mockSetItem = vi.mocked(localStorage.setItem);
-
+  it("updateSettings persists via saveSettingsDesktop", () => {
     useAppStore.getState().updateSettings({ theme: "light" });
 
-    expect(mockSetItem).toHaveBeenCalledWith(
-      "deskspawn_settings",
-      expect.stringContaining("light"),
+    expect(mockStorageFns.saveSettingsDesktop).toHaveBeenCalledWith(
+      expect.objectContaining({ theme: "light" }),
     );
   });
 });
@@ -560,5 +565,50 @@ describe("useAppStore — initialize()", () => {
     // Should not throw
     await expect(useAppStore.getState().initialize()).resolves.not.toThrow();
     expect(useAppStore.getState().initialized).toBe(true);
+  });
+
+  it("loads UI settings and applies the language", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue(null);
+    mockStorageFns.listApps.mockResolvedValue([]);
+    mockStorageFns.loadSettingsDesktop.mockResolvedValue({
+      theme: "dark",
+      uiFontSize: 16,
+      codeFontSize: 15,
+      language: "en",
+      simpleMode: false,
+    });
+
+    await useAppStore.getState().initialize();
+
+    const state = useAppStore.getState();
+    expect(state.settings.language).toBe("en");
+    expect(state.settings.theme).toBe("dark");
+    expect(state.languageUnset).toBe(false);
+  });
+
+  it("marks languageUnset when no settings exist (first run)", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue(null);
+    mockStorageFns.listApps.mockResolvedValue([]);
+    mockStorageFns.loadSettingsDesktop.mockResolvedValue(null);
+
+    await useAppStore.getState().initialize();
+
+    expect(useAppStore.getState().languageUnset).toBe(true);
+  });
+
+  it("persists settings via saveSettingsDesktop on setSettings", async () => {
+    const store = useAppStore.getState();
+    store.setSettings({
+      theme: "dark",
+      uiFontSize: 16,
+      codeFontSize: 15,
+      language: "en",
+      simpleMode: false,
+    });
+
+    expect(useAppStore.getState().settings.language).toBe("en");
+    expect(mockStorageFns.saveSettingsDesktop).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "en" }),
+    );
   });
 });

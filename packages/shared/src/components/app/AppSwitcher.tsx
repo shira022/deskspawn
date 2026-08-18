@@ -25,7 +25,7 @@ import {
 import type { AppMeta } from "../../types";
 import { listApps, deleteApp as deleteStoredApp, saveApp } from "../../lib/storage";
 import { deleteAppDir as deleteOpfsDir } from "../../lib/storage-opfs";
-import { setAppId, deleteAppCheckpoints } from "../../engine/tool-executors";
+import { setAppId, deleteAppCheckpoints, stopAppPreviews } from "../../engine/tool-executors";
 import { exportAppAsZip, importAppFromZip } from "../../lib/app-export";
 import { isDesktopEnv } from "../../lib/platform";
 
@@ -136,6 +136,10 @@ export function AppSwitcher({ open, onOpenChange, onNewApp }: AppSwitcherProps) 
     }
     setDeleteError("");
     try {
+      // プレビュー（vite dev server）がアプリのディレクトリをロックし、Windows の
+      // remove_dir_all が失敗することがあるため、削除前にプレビューを停止する
+      // （実績 2026-08-15・E2E で検出。停止はベストエフォート）。
+      await stopAppPreviews().catch(() => {});
       await deleteStoredApp(app.id);
       // Delete OPFS app files
       deleteOpfsDir(app.id).catch(() => {});
@@ -148,7 +152,8 @@ export function AppSwitcher({ open, onOpenChange, onNewApp }: AppSwitcherProps) 
       removeApp(app.id);
       setDeleteTarget(null);
     } catch (e: any) {
-      setDeleteError(e.message || t('app.deleteError'));
+      // Rust エラーは文字列で reject される（e.message は undefined）ため String(e) で表示する
+      setDeleteError(e?.message || String(e) || t('app.deleteError'));
     }
   };
 
