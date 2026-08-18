@@ -4,7 +4,15 @@ use std::fs;
 use std::path::PathBuf;
 
 /// Keyring identifiers for OS keychain storage.
-const KEYRING_SERVICE: &str = "com.deskspawn";
+///
+/// Default service: `com.deskspawn`（本番の API キー）。
+/// テスト/E2E では環境変数 `DESKSPAWN_KEYCHAIN_SERVICE` で service 名を
+/// 差し替え、本番キーチェーン ent を分離する（実績 2026-08-15・レビュー指摘対応:
+/// E2E テスト02 がダミーキーを保存すると本番 service に上書きされてしまう。
+/// E2E 実行時はこの env を `com.deskspawn.e2e` 等に設定すること）。
+fn keyring_service() -> String {
+    std::env::var("DESKSPAWN_KEYCHAIN_SERVICE").unwrap_or_else(|_| "com.deskspawn".to_string())
+}
 
 /// keychain エントリ名をプロバイダー別に分ける（openai/anthropic/google…）。
 fn keyring_user(provider: &str) -> String {
@@ -43,7 +51,7 @@ fn credentials_file_path() -> Result<PathBuf, String> {
 // ── OS Keychain helpers ───────────────────────────────────────────────────────
 
 fn save_api_key_to_keychain(api_key: &str, provider: &str) -> Result<bool, String> {
-    match keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider)) {
+    match keyring::Entry::new(&keyring_service(), &keyring_user(provider)) {
         Ok(entry) => {
             entry
                 .set_password(api_key)
@@ -64,7 +72,7 @@ fn save_api_key_to_keychain(api_key: &str, provider: &str) -> Result<bool, Strin
 /// Load the API key from the OS keychain for internal Rust use
 /// (e.g., pushing to sidecar). Returns None if unavailable.
 fn load_api_key_from_keychain(provider: &str) -> Option<String> {
-    match keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider)) {
+    match keyring::Entry::new(&keyring_service(), &keyring_user(provider)) {
         Ok(entry) => match entry.get_password() {
             Ok(password) => {
                 log::info!("API key loaded from OS keychain");
@@ -89,7 +97,7 @@ fn load_api_key_from_keychain(provider: &str) -> Option<String> {
 
 /// Delete the API key from the OS keychain.
 fn delete_api_key_from_keychain(provider: &str) {
-    if let Ok(entry) = keyring::Entry::new(KEYRING_SERVICE, &keyring_user(provider)) {
+    if let Ok(entry) = keyring::Entry::new(&keyring_service(), &keyring_user(provider)) {
         if entry.delete_credential().is_ok() {
             log::info!("API key removed from OS keychain");
         }
@@ -613,9 +621,37 @@ pub fn load_current_app() -> Result<Option<String>, String> {
 /// inside Tauri.
 #[tauri::command]
 pub fn save_settings(settings: AppSettings) -> Result<(), String> {
+    // 入力検証: UI 由来の値を制限し、不正な config.json（手動編集や旧版の
+    // 壊れた値）が書き込まれて以降の起動で UI が壊れるのを防ぐ
+    // （2026-08-15・レビュー指摘対応）。
+    validate_settings(&settings)?;
     let mut existing = read_existing_config().unwrap_or_default();
     existing.settings = Some(settings);
     write_config(&existing)
+}
+
+/// AppSettings の値が許可範囲内かを検証する。
+/// LANGUAGES は packages/shared/src/lib/languages.ts の言語一覧と同期すること
+/// （言語追加時はここも更新）。
+fn validate_settings(s: &AppSettings) -> Result<(), String> {
+    const THEMES: [&str; 3] = ["system", "light", "dark"];
+    const LANGUAGES: [&str; 2] = ["ja", "en"];
+    const MIN_FONT_SIZE: u32 = 8;
+    const MAX_FONT_SIZE: u32 = 32;
+
+    if !THEMES.contains(&s.theme.as_str()) {
+        return Err(format!("Invalid theme: {}", s.theme));
+    }
+    if !LANGUAGES.contains(&s.language.as_str()) {
+        return Err(format!("Invalid language: {}", s.language));
+    }
+    if !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&s.ui_font_size) {
+        return Err(format!("Invalid uiFontSize: {}", s.ui_font_size));
+    }
+    if !(MIN_FONT_SIZE..=MAX_FONT_SIZE).contains(&s.code_font_size) {
+        return Err(format!("Invalid codeFontSize: {}", s.code_font_size));
+    }
+    Ok(())
 }
 
 /// Load UI settings from config.json. `None` = never saved yet (first run) —
@@ -623,6 +659,15 @@ pub fn save_settings(settings: AppSettings) -> Result<(), String> {
 #[tauri::command]
 pub fn load_settings() -> Result<Option<AppSettings>, String> {
     Ok(read_existing_config().and_then(|c| c.settings))
+}
+
+/// TEST ONLY: 現在の keyring service 名を返す（E2E のキーチェーン分離ガード用）。
+/// E2E が本番キーチェーンを汚さないよう、アプリが
+/// `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` 付きで起動されているかを
+/// E2E beforeAll が検証する（2026-08-15 レビュー指摘対応）。
+#[tauri::command]
+pub fn get_keyring_service() -> Result<String, String> {
+    Ok(keyring_service())
 }
 
 /// DEV/TEST ONLY: wipe all user app data so E2E starts from a clean state.
@@ -730,6 +775,36 @@ mod tests {
         assert_eq!(load_settings().unwrap().unwrap().language, "ja");
 
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn save_settings_rejects_invalid_values() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("settings-validate");
+
+        let base = AppSettings::default();
+        // theme / language / font sizes の不正値は拒否
+        assert!(save_settings(AppSettings { theme: "neon".into(), ..base.clone() }).is_err());
+        assert!(save_settings(AppSettings { language: "fr".into(), ..base.clone() }).is_err());
+        assert!(save_settings(AppSettings { ui_font_size: 4, ..base.clone() }).is_err());
+        assert!(save_settings(AppSettings { code_font_size: 99, ..base.clone() }).is_err());
+        // 境界値（8 / 32）は許可
+        assert!(
+            save_settings(AppSettings { ui_font_size: 8, code_font_size: 32, ..base }).is_ok()
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn keyring_service_respects_env_override() {
+        // デフォルト（env 未設定）は本番 service
+        std::env::remove_var("DESKSPAWN_KEYCHAIN_SERVICE");
+        assert_eq!(keyring_service(), "com.deskspawn");
+        // E2E 用に env を設定すると service 名が切り替わる
+        std::env::set_var("DESKSPAWN_KEYCHAIN_SERVICE", "com.deskspawn.e2e");
+        assert_eq!(keyring_service(), "com.deskspawn.e2e");
+        std::env::remove_var("DESKSPAWN_KEYCHAIN_SERVICE");
     }
 
     #[test]
