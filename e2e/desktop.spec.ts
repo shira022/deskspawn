@@ -66,6 +66,32 @@ test.beforeAll(async () => {
   page = ctx.pages()[0];
   await page.bringToFront();
 
+  // ⚠️ キーチェーン分離のガード: E2E は本番キーチェーン（com.deskspawn）を
+  // 汚さないよう、アプリが `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` 付きで
+  // 起動されていることを確認する（2026-08-15 レビュー指摘対応）。
+  // テスト02 がダミーキーを保存しても、本番 service ではなくテスト専用
+  // service に入るため、開発機の実 API キーは上書きされない。
+  const ks = await page.evaluate(async () => {
+    const internals = (window as unknown as {
+      __TAURI_INTERNALS__?: { invoke: (c: string, a?: object) => Promise<unknown> };
+    }).__TAURI_INTERNALS__;
+    if (!internals) return '(no tauri)';
+    // 現在の keyring service 名を Rust から取得（テスト用コマンド）
+    try {
+      // eslint-disable-next-line
+      return await internals.invoke('get_keyring_service');
+    } catch {
+      return '(cmd unavailable)';
+    }
+  });
+  if (ks !== 'com.deskspawn.e2e') {
+    console.error(
+      `⚠️ キーチェーン分離ガード: keyring service = ${ks}（期待: com.deskspawn.e2e）。\n` +
+        `E2E は本番キーチェーンを汚します。アプリを \`DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e\` 付きで再起動してください。`,
+    );
+    throw new Error('KEYCHAIN ISOLATION VIOLATION: app not launched with DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e');
+  }
+
   // ⚠️ ここで実データ（アプリ/設定/チャット履歴）を削除する。
   // reset_app_data はデバッグビルド + DESKSPAWN_TEST_RESET=1 の時のみ動作する
   // E2E 専用コマンド（開発環境限定・誤爆防止ガード付き）。APIキー
@@ -141,22 +167,48 @@ test.describe.configure({ mode: 'serial' });
 async function openAiConfig() {
   // フル設定ダイアログが開いていれば何もしない (h2タイトルで判定 — ポップオーバーの同名ボタンと区別)
   if (await page.getByRole('heading', { name: 'APIキー設定' }).isVisible().catch(() => false)) return;
+  // API キー未設定時はツールバーに「AI設定画面へ」ボタンが直置きされる（reset 直後）。
+  // それがあれば直接クリックして開く（実績 2026-08-15: `APIキー未設定` + `AI設定画面へ`）。
+  // 同名ボタンが複数（ツールバー + チャットパネル）あるため .first() で極め、visible 判定で
+  // strict エラーにならないよう try で囲む。
+  try {
+    const directBtn = page.getByRole('button', { name: 'AI設定画面へ' }).first();
+    if (await directBtn.isVisible().catch(() => false)) {
+      await directBtn.click();
+      await expect(page.getByRole('heading', { name: 'APIキー設定' })).toBeVisible({ timeout: 5000 });
+      return;
+    }
+  } catch {}
   const settingsBtn = page.getByRole('button', { name: 'APIキー設定' });
   const goConfigBtn = page.getByRole('button', { name: '設定する' });
+  const popoverGoBtn = page.getByRole('button', { name: 'AI設定画面へ' }).first();
   if (await settingsBtn.isVisible().catch(() => false)) {
     // ポップオーバーが既に開いている
     await settingsBtn.click();
   } else if (await goConfigBtn.isVisible().catch(() => false)) {
     await goConfigBtn.click();
+  } else if (await popoverGoBtn.isVisible().catch(() => false)) {
+    // ポップオーバーが開いており「AI設定画面へ」ボタンがある（APIキー未設定時）
+    await popoverGoBtn.click();
   } else {
-    // ポップオーバーを開いてからボタンを押す
+    // ポップオーバーを開いてからボタンを押す（「APIキー未設定」= モデルセレクタ）
     await page.locator('div.flex.h-10 button').nth(3).click();
-    await settingsBtn.or(goConfigBtn).first().waitFor({ timeout: 5_000 });
-    if (await settingsBtn.isVisible().catch(() => false)) {
-      await settingsBtn.click();
-    } else {
-      await goConfigBtn.click();
+    // ポップオーバー内のボタン（APIキー未設定時は「AI設定画面へ」、設定済みは「APIキー設定」/「設定する」）
+    const popoverChoices = [
+      page.getByRole('button', { name: 'APIキー設定' }),
+      page.getByRole('button', { name: '設定する' }),
+      page.getByRole('button', { name: 'AI設定画面へ' }),
+    ];
+    let clicked = false;
+    for (const b of popoverChoices) {
+      try {
+        await b.first().waitFor({ timeout: 2500 });
+        await b.first().click();
+        clicked = true;
+        break;
+      } catch {}
     }
+    if (!clicked) throw new Error('openAiConfig: ポップオーバー内に設定ボタンが見つかりません');
   }
   await expect(page.getByRole('heading', { name: 'APIキー設定' })).toBeVisible();
 }
@@ -408,13 +460,18 @@ test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガ�
     await page.evaluate(async () => {
       const inv = window.__TAURI_INTERNALS__.invoke;
       const token = await inv('get_sidecar_token');
-      const port = window.__DESKSPAWN_SIDECAR_PORT__ || 3009;
+      // __DESKSPAWN_SIDECAR_PORT__ はデスクトップ起動時に注入される（main.tsx）。
+      // フォールバック値を持たない（固定の 3009 を持たせるとゾンビポートに
+      // 当たる可能性があるため・実績 2026-08-15）。
+      const port = window.__DESKSPAWN_SIDECAR_PORT__;
+      if (!port) return;
       await fetch(`http://127.0.0.1:${port}/api/preview/stop`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-DeskSpawn-Token': token },
       }).catch(() => {});
     });
     await page.waitForTimeout(3000); // taskkill 完了待ち
+    let lastErrText = '';
     for (let attempt = 0; attempt < 2; attempt++) {
       await tb.nth(1).click();
       await page.waitForTimeout(900);
@@ -448,7 +505,7 @@ test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガ�
             return (n ? n.innerText : e.innerText).slice(0, 300).replace(/\n/g, ' | ');
           })
           .catch(() => '(text not found)');
-        console.log(`DELETE STATE (${label}): ${errInfo}`);
+        lastErrText = errInfo;
         await page.getByRole('button', { name: 'キャンセル' }).click();
         await expect(page.getByText('アプリを削除', { exact: true })).toBeHidden({
           timeout: 10_000,
@@ -472,7 +529,9 @@ test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガ�
       }
       return;
     }
-    throw new Error(`アプリ削除に失敗しました（リトライ含む）: ${label}`);
+    throw new Error(
+      `アプリ削除に失敗しました（リトライ含む）: ${label} — ${lastErrText || '(ダイアログにエラー表示なし)'}`,
+    );
   };
 
   await deleteAppRow('アプリA (E2E-)', (n) => n && n.startsWith('E2E-'));

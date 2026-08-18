@@ -127,18 +127,14 @@ pub fn delete_app(app_id: String) -> Result<(), String> {
     write_registry(&apps)?;
 
     // Remove the on-disk directory (recursive, guarded to app root only).
-    // Windows ではプロセス（プレビューの vite dev server 等）終了後も
-    // ファイルハンドル解放にタイムラグがあり、remove_dir_all が
-    // "os error 32 (別のプロセスが使用中)" で失敗することがある
-    // （実績 2026-08-15・E2E で検出）。短い待機を挟んで再試行する。
+    // Windows ではプレビュー停止後やウイルススキャン（Defender 等）の
+    // リアルタイムチェックでファイルハンドル解放に数十秒かかることがあり、
+    // remove_dir_all が "os error 32（別のプロセスが使用中）" で失敗する。
+    // 指数バックオフ（1+2+4+8+16 = 最大31秒待ち）で再試行する
+    // （実績 2026-08-15・E2E で検出: 単発・固定待ちでは再現頻度が高い）。
     let dir = workspace::app_dir(&app_id)?;
     if dir.exists() {
         let mut last_err: Option<String> = None;
-        // Windows ではプレビュー停止後やウイルススキャン（Defender 等）の
-        // リアルタイムチェックでファイルハンドル解放に数十秒かかることがあり、
-        // remove_dir_all が "os error 32（別のプロセスが使用中）" で失敗する。
-        // 指数バックオフ（1+2+4+8+16 = 最大31秒待ち）で再試行する
-        // （実績 2026-08-15・E2E で検出: 単発・固定待ちでは再現頻度が高い）。
         for attempt in 0..6 {
             match fs::remove_dir_all(&dir) {
                 Ok(()) => {

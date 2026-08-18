@@ -516,12 +516,16 @@ export const useAppStore = create<Store>((set, get) => ({
   setSettings: (settings) => {
     if (settings.language) i18n.changeLanguage(settings.language);
     set({ settings });
+    // 永続化は fire-and-forget（UI 応答性優先）。保存失敗は saveSettingsDesktop
+    // 内で吸収される（Tauri 環境でなければ localStorage、Rust エラー時も
+    // localStorage フォールバック・2026-08-15 レビュー指摘対応）。
     void saveSettingsDesktop(settings);
   },
   updateSettings: (partial) => {
     set((state) => {
       const next = { ...state.settings, ...partial };
       if (partial.language) i18n.changeLanguage(next.language);
+      // 同上: fire-and-forget（保存失敗は saveSettingsDesktop 内で吸収）
       void saveSettingsDesktop(next);
       return { settings: next };
     });
