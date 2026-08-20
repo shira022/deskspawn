@@ -108,6 +108,21 @@ fn delete_api_key_from_keychain(provider: &str) {
 
 fn save_api_key_to_file(api_key: &str) -> Result<bool, String> {
     let path = credentials_file_path()?;
+    // セキュリティ: credentials.json がユーザープロファイルの外に解決されたら
+    // 拒否する (平文キーが共有ディレクトリに書かれる事故の防止)。
+    #[cfg(windows)]
+    {
+        let appdata = std::env::var("APPDATA").unwrap_or_default();
+        if !appdata.is_empty() {
+            let appdata_lower = appdata.to_lowercase();
+            if !path.to_string_lossy().to_lowercase().starts_with(&appdata_lower) {
+                return Err(format!(
+                    "Refusing to write credentials file outside user profile: {}",
+                    path.display()
+                ));
+            }
+        }
+    }
     let json = serde_json::json!({ "api_key": api_key });
     let content = serde_json::to_string_pretty(&json)
         .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
@@ -121,6 +136,29 @@ fn save_api_key_to_file(api_key: &str) -> Result<bool, String> {
         }
     }
 
+    // Windows: ファイルを「隠し属性」で作成する (ユーザープロファイル内・親DACL継承で
+    // ユーザーのみアクセス可とする防御の補助)。完全なACL制限は OS キーチェーン
+    // 利用が本筋 (file フォールバックは keychain 利用不可時の保険)。
+    #[cfg(windows)]
+    {
+        use std::io::Write;
+        use std::os::windows::fs::OpenOptionsExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .attributes(FILE_ATTRIBUTE_HIDDEN)
+            .open(&path)
+        {
+            let _ = f.write_all(content.as_bytes());
+        } else {
+            // OpenOptions 失敗時は通常書き込みにフォールバック (ユーザープロファイル内は保護済み)
+            fs::write(&path, &content)
+                .map_err(|e| format!("Failed to write credentials file: {}", e))?;
+        }
+    }
+    #[cfg(not(windows))]
     fs::write(&path, &content)
         .map_err(|e| format!("Failed to write credentials file: {}", e))?;
 

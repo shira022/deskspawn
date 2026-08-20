@@ -135,6 +135,7 @@ pnpm install
 | `pnpm --filter desktop tauri dev` | Desktop app (dev mode) |
 | `pnpm --filter desktop build` | Frontend build for the desktop app |
 | `pnpm test:e2e` | Playwright end-to-end tests — ⚠️ **deletes real app data** (dev-environment only; see CONTRIBUTING "E2E modes") |
+| `pnpm test:e2e:real` | Real-API E2E (needs `DESKSPAWN_API_KEY` + `DESKSPAWN_E2E_REAL=1` in `.env`). ⚠️ **Developer's own responsibility** — real key + cost + OS keychain save, key delete is on you. Auto-disables trace & cleans test-results. See docs/user-flow-spec.md "Real-API E2E". |
 
 ### Project Structure
 

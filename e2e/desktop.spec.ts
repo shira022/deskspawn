@@ -21,10 +21,12 @@
  *   CDP_URL                 WebView2 CDP エンドポイント (default: http://172.28.208.1:9222)
  *
  * 実APIモードの例 (OpenAI互換):
- *   DESKSPAWN_E2E_PROVIDER=custom \
- *   DESKSPAWN_E2E_ENDPOINT=https://api.example.com/v1 \
- *   DESKSPAWN_E2E_MODEL=my-model \
- *   DESKSPAWN_API_KEY=sk-... DESKSPAWN_E2E_REAL=1 pnpm test:e2e
+ *   1. cp .env.example .env   # .env は gitignore 済み・シェル履歴に残さない
+ *   2. .env に設定: DESKSPAWN_API_KEY / DESKSPAWN_E2E_REAL=1 / PROVIDER / ENDPOINT / MODEL
+ *   3. set -a; source .env; set +a; pnpm test:e2e:real
+ *      (test:e2e:real = desktop 限定 + 実行後 test-results クリーン)
+ *   ⚠️ 実API E2E は開発者自己責任 (コスト・キー保存/削除含む)。CI ではダミーのみ。
+ *   ⚠️ 実APIモードでは trace は自動オフ (playwright.config.ts) — キー/プロンプト漏洩防止。
  *
  * APIキーは環境変数からのみ取得する (テストファイルへの直書き禁止)。
  *
