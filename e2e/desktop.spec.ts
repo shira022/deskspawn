@@ -71,8 +71,10 @@ test.beforeAll(async () => {
   // ⚠️ キーチェーン分離のガード: E2E は本番キーチェーン（com.deskspawn）を
   // 汚さないよう、アプリが `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` 付きで
   // 起動されていることを確認する（2026-08-15 レビュー指摘対応）。
-  // テスト02 がダミーキーを保存しても、本番 service ではなくテスト専用
+  // テスト02 がキーを保存しても、本番 service ではなくテスト専用
   // service に入るため、開発機の実 API キーは上書きされない。
+  // 実APIモード（REAL_API=1）も同じくテスト専用キーチェーンに保存する
+  // （ADR-015: 実キー保存先は開発者委ねる。本番を汚さない方針）。
   const ks = await page.evaluate(async () => {
     const internals = (window as unknown as {
       __TAURI_INTERNALS__?: { invoke: (c: string, a?: object) => Promise<unknown> };

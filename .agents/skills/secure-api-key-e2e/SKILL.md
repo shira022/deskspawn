@@ -66,7 +66,34 @@ pnpm test:e2e:real
 
 `playwright.config.ts` は `DESKSPAWN_E2E_REAL=1` 時 **trace を自動オフ**（キー/プロンプトが trace.zip に残らない）。
 
-### 3. 後始末（開発者責任）
+### 3. 実アプリ生成のフル動作検証（開発者エージェント向け）
+
+E2E は hello 応答まで（プロバイダー疎通）だが、**実アプリの生成 → プレビュー → チェックポイント**は
+以下のスクリプトで検証する。**開発者の明示依頼時のみ実行**すること。
+
+```bash
+# デフォルト: ToDo アプリを作成（固定）
+node scripts/verify-generate-app.mjs
+
+# プロンプトを指定（開発者の要望に応じて変更可能）
+node scripts/verify-generate-app.mjs "予定管理アプリを作成"
+```
+
+出力（JSON）:
+```json
+{
+  "ok": true, "appId": "app-xxx", "appName": "Verify-123456",
+  "prompt": "ToDoアプリを作成して",
+  "aiResponded": true, "codeGenerated": true,
+  "checkpoints": 1, "previewRendered": true, "elapsedMs": 50000
+}
+```
+
+- **実行前にアプリを1インスタンスで起動**すること（多重起動はプレビュー競合で
+  「Project has no package.json」の誤エラーになる — 実績 2026-08-21）
+- 生成には数分・実コストがかかる。モデル応答が不安定な場合は再実行する。
+
+### 4. 後始末（開発者責任）
 
 1. **キーチェーンから実キーを削除**する:
    - Windows: コントロールパネル → 資格情報マネージャー → Windows 資格情報 → `com.deskspawn` エントリを削除
@@ -75,7 +102,7 @@ pnpm test:e2e:real
 3. `test-results/`・`playwright-report/` が無いことを確認（クレス が自動クリーン済み）。
 4. `.env` からキーを取り除く（不要なら .env 自体を削除）。
 
-### 4. 検証（寄生キーの監査）
+### 5. 検証（寄生キーの監査）
 
 ```bash
 # リポジトリ内に実キー形式が残っていないか
@@ -89,6 +116,14 @@ git status --short | grep -i '\.env'
 - `pnpm test:e2e`（real でない方）は web.spec.ts も実行し、CDP サーバー不在で失敗する → **実API は必ず `pnpm test:e2e:real`**。
 - credentials.json（file フォールバック）は**ユーザープロファイル内のみ**保存。プロファイル外は拒否（ADR-015）。
 - trace が `retain-on-failure` のままだと失敗時にキー/プロンプトが残る → 実API 時は config が自動オフにするが、手動実行する場合は `--trace off` を付ける。
+- **多重起動禁止**: deskspawn-desktop を2つ以上起動すると、プレビュー（サイドカー）が競合し
+  「Project has no package.json」等の誤エラーになる。必ず `Get-Process deskspawn-desktop` で
+  1つのみ確認してから実行（実績 2026-08-21）。
+- **プレビュー起動タイミング**: 生成中（package.json 未生成）にプレビュー boot が失敗しても、
+  PreviewPanel は生成完了後に**自動再試行**する（2026-08-21 修正）。それでもエラーが残る場合は
+  アプリ再起動 or プレビュー再試行ボタン。
+- **実API の応答は不安定**: モデルによって応答なし/長遅延がある（レート制限・一時不調）。
+  スクリプトがタイムアウトしたら再実行する（実コストは発生）。
 
 ## 参照
 

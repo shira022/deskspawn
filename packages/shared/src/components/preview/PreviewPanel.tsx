@@ -156,6 +156,7 @@ export function PreviewPanel() {
   const reloadCounter = useAppStore((s) => s.reloadCounter);
   const previewMaximized = useAppStore((s) => s.previewMaximized);
   const togglePreviewMaximized = useAppStore((s) => s.togglePreviewMaximized);
+  const agentStatus = useAppStore((s) => s.agentStatus);
   const [status, setStatus] = useState<PreviewStatus>("idle");
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -257,6 +258,31 @@ export function PreviewPanel() {
     document.addEventListener("visibilitychange", handleVisibilityChange);
     return () => document.removeEventListener("visibilitychange", handleVisibilityChange);
   }, [status, currentAppId]);
+
+  // 生成完了後（agentStatus: running → 非running）に、エラー状態のプレビューを
+  // 再起動する。生成中に package.json がまだ無い状態で boot が失敗しても、
+  // コード生成完了後に files が揃っていれば再試行で成功する（実績 2026-08-21:
+  // 生成中 boot → "Project has no package.json" → 完了後も自動再試行されず
+  // 残る問題があった）。
+  const prevAgentStatusRef = useRef(agentStatus);
+  useEffect(() => {
+    const wasRunning = prevAgentStatusRef.current === "running";
+    const nowRunning = agentStatus === "running";
+    prevAgentStatusRef.current = agentStatus;
+    if (!wasRunning || nowRunning) return; // 完了時のみ反応
+    if (status !== "error") return;
+    if (!currentAppId) return;
+    if (isDesktopEnv() === false) return; // Web 版は対象外（生成→WebContainer boot の既存フロー）
+
+    console.log("[preview] Generation finished, retrying preview boot...");
+    setError(null);
+    previewManager
+      .boot(currentAppId)
+      .catch((e: any) => {
+        console.error("[preview] Post-generation retry failed:", e);
+        setError(e.message || String(e));
+      });
+  }, [agentStatus, status, currentAppId]);
 
   // previewUrl 変更時 → iframe のローディング状態をリセット
   useEffect(() => {
