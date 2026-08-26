@@ -106,22 +106,41 @@ fn delete_api_key_from_keychain(provider: &str) {
 
 // ── Credentials file helpers ──────────────────────────────────────────────────
 
+/// credentials.json パスがユーザープロファイル（HOME / USERPROFILE）内かを判定する。
+///
+/// アンカーは `engine::workspace::root_dir()` と同じ `HOME`/`USERPROFILE` を使う
+/// （APPDATA ではない — 実パスは `~/deskspawn/config/credentials.json` で APPDATA 配下に
+/// 解決されないため、APPDATA 基準の旧実装では正当なパスまで拒否されていた・実績 2026-08-22）。
+/// ディレクトリ境界（`alice` vs `alice2`）と大文字小文字・区切り文字差を吸収して比較する。
+fn is_within_profile(profile: &str, path: &str) -> bool {
+    let root = profile.replace('\\', "/").trim_end_matches('/').to_lowercase();
+    if root.is_empty() {
+        // プロファイル変数が空でも DESKSPAWN_ROOT 経由でパス解決だけは成功し得るが、
+        // 平文キーのため「プロファイル内のみ」ポリシーで拒否する（安全側）。
+        return false;
+    }
+    let p = path.replace('\\', "/").to_lowercase();
+    p == root || p.starts_with(&format!("{root}/"))
+}
+
+/// 現在のユーザープロファイル（HOME/USERPROFILE）基準で `path` を検証する薄いラッパー。
+fn is_within_user_profile(path: &std::path::Path) -> bool {
+    let profile = std::env::var("HOME")
+        .or_else(|_| std::env::var("USERPROFILE"))
+        .unwrap_or_default();
+    is_within_profile(&profile, &path.to_string_lossy())
+}
+
 fn save_api_key_to_file(api_key: &str) -> Result<bool, String> {
     let path = credentials_file_path()?;
     // セキュリティ: credentials.json がユーザープロファイルの外に解決されたら
     // 拒否する (平文キーが共有ディレクトリに書かれる事故の防止)。
-    #[cfg(windows)]
-    {
-        let appdata = std::env::var("APPDATA").unwrap_or_default();
-        if !appdata.is_empty() {
-            let appdata_lower = appdata.to_lowercase();
-            if !path.to_string_lossy().to_lowercase().starts_with(&appdata_lower) {
-                return Err(format!(
-                    "Refusing to write credentials file outside user profile: {}",
-                    path.display()
-                ));
-            }
-        }
+    // Windows / Unix 両方で有効（Unix は HOME 基準・実パスは常に HOME 配下なので通常通過）。
+    if !is_within_user_profile(&path) {
+        return Err(format!(
+            "Refusing to write credentials file outside user profile: {}",
+            path.display()
+        ));
     }
     let json = serde_json::json!({ "api_key": api_key });
     let content = serde_json::to_string_pretty(&json)
@@ -782,6 +801,60 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
         tmp
+    }
+
+    // ── is_within_profile（credentials.json プロファイル内ガード）──
+
+    #[test]
+    fn within_profile_accepts_real_default_path_windows() {
+        // 実パスは ~/deskspawn/config/credentials.json（APPDATA 配下ではない）。
+        // USERPROFILE 基準なら通過する（旧 APPDATA 基準では拒否されてしまう — 実績 2026-08-22）。
+        assert!(is_within_profile(
+            r"C:\Users\alice",
+            r"C:\Users\alice\deskspawn\config\credentials.json"
+        ));
+        assert!(is_within_profile(
+            "/home/alice",
+            "/home/alice/deskspawn/config/credentials.json"
+        ));
+    }
+
+    #[test]
+    fn within_profile_rejects_appdata_and_sibling_prefix() {
+        // APPDATA は別ディレクトリ → 拒否（旧実装がこれで正当パスを誤拒否していた）
+        assert!(!is_within_profile(
+            r"C:\Users\alice\AppData\Roaming",
+            r"C:\Users\alice\deskspawn\config\credentials.json"
+        ));
+        // プレフィックスが似ていても別フォルダ（alice2）は拒否
+        assert!(!is_within_profile(
+            r"C:\Users\alice",
+            r"C:\Users\alice2\deskspawn\config\credentials.json"
+        ));
+        // 完全に別の場所も拒否
+        assert!(!is_within_profile(
+            r"C:\Users\alice",
+            r"D:\shared\credentials.json"
+        ));
+    }
+
+    #[test]
+    fn within_profile_handles_case_and_separators() {
+        // 大文字小文字・\ と / の混在を吸収して一致判定する
+        assert!(is_within_profile(
+            r"c:\users\ALICE",
+            r"C:\Users\alice\deskspawn\config\credentials.json"
+        ));
+        assert!(is_within_profile(
+            "/home/alice",
+            "/home/alice/deskspawn/config/credentials.json"
+        ));
+    }
+
+    #[test]
+    fn within_profile_empty_profile_is_rejected() {
+        // プロファイル変数が空 = 判定不能 → 安全側（拒否）
+        assert!(!is_within_profile("", "/tmp/x/credentials.json"));
     }
 
     #[test]
