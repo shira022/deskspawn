@@ -120,6 +120,18 @@ pub async fn save_messages(
     app_id: &str,
     messages: &[ChatMessageRow],
 ) -> Result<(), String> {
+    // 監査指摘対応 (2026-08-27): 空 client_id は UNIQUE(app_id, client_id) 上で
+    // 複数行が 1 行に潰れるため、トランザクション開始前にまとめて拒否する
+    // （legacy 行はマイグレーションで `legacy-<id>` に backfill 済みなので空は不正入力のみ）。
+    for m in messages {
+        if m.client_id.as_deref().unwrap_or("").is_empty() {
+            return Err(format!(
+                "save_messages: refusing empty client_id (app {app_id}). \
+                 All chat messages must carry a non-empty client_id."
+            ));
+        }
+    }
+
     let mut tx = pool
         .begin()
         .await
@@ -392,6 +404,53 @@ mod tests {
         let loaded = load_messages(&pool, "app-test").await.unwrap();
         assert_eq!(loaded.len(), 1, "duplicate client_id must collapse to one row");
         assert_eq!(loaded[0].content, "second (last wins)");
+
+        close(pool).await;
+        std::env::remove_var("DESKSPAWN_ROOT");
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[tokio::test]
+    async fn empty_client_id_is_rejected() {
+        // 監査指摘対応 (2026-08-27): 空 client_id は UNIQUE(app_id, client_id) で
+        // 複数行が 1 行に潰れるため、save_messages が Err を返すこと。
+        let _guard = test_env_lock();
+        let (pool, tmp) = open_test_db("emptyid").await;
+
+        let err = save_messages(
+            &pool,
+            "app-test",
+            &[ChatMessageRow {
+                client_id: Some(String::new()),
+                role: "user".into(),
+                content: "no id".into(),
+                payload: None,
+                created_at: None,
+            }],
+        )
+        .await
+        .unwrap_err();
+        assert!(err.contains("client_id"), "unexpected error: {err}");
+
+        // legacy v1 行相当の None も同様に拒否
+        let err2 = save_messages(
+            &pool,
+            "app-test",
+            &[ChatMessageRow {
+                client_id: None,
+                role: "assistant".into(),
+                content: "no id 2".into(),
+                payload: None,
+                created_at: None,
+            }],
+        )
+        .await
+        .unwrap_err();
+        assert!(err2.contains("client_id"), "unexpected error: {err2}");
+
+        // 検証前に DELETE が走らないため、既存行は無傷
+        let loaded = load_messages(&pool, "app-test").await.unwrap();
+        assert!(loaded.is_empty());
 
         close(pool).await;
         std::env::remove_var("DESKSPAWN_ROOT");

@@ -122,24 +122,13 @@ pub fn create_app(name: String) -> Result<AppMeta, String> {
 #[tauri::command]
 pub fn delete_app(app_id: String) -> Result<(), String> {
     validate_app_id(&app_id)?;
-    let mut apps = read_registry()?;
-    apps.retain(|p| p.id != app_id);
-    write_registry(&apps)?;
 
-    // 削除したアプリが current_app（config.json の開いているアプリ）だった場合、
-    // 幽霊参照を残さないようクリアする（実績 2026-08-21: UI の削除ガード
-    // では起きないが、直接 IPC 削除では current_app が空参照のまま残った）。
-    if crate::commands::ai_config::read_existing_config()
-        .map(|c| c.current_app.as_deref() == Some(app_id.as_str()))
-        .unwrap_or(false)
-    {
-        if let Some(mut cfg) = crate::commands::ai_config::read_existing_config() {
-            cfg.current_app = None;
-            crate::commands::ai_config::write_config(&cfg)?;
-        }
-    }
-
-    // Remove the on-disk directory (recursive, guarded to app root only).
+    // 監査指摘対応 (2026-08-27): 『レジストリ書き込み → ディレクトリ削除』を
+    // 『ディレクトリ削除 → 成功時のみレジストリ更新』に変更した。
+    // 旧順序ではレジストリだけ先に消えてディレクトリ削除が失敗すると孤児ディレクトリ
+    // （apps.json に存在しない app-*/ が残る）になった。削除失敗時はレジストリを
+    // 変更せずエラーを返す（レジストリとディスクの整合性維持）。
+    //
     // Windows ではプレビュー停止後やウイルススキャン（Defender 等）の
     // リアルタイムチェックでファイルハンドル解放に数十秒かかることがあり、
     // remove_dir_all が "os error 32（別のプロセスが使用中）" で失敗する。
@@ -166,6 +155,25 @@ pub fn delete_app(app_id: String) -> Result<(), String> {
             return Err(e);
         }
     }
+
+    // ディレクトリ削除が成功した場合のみ、レジストリから除去する。
+    let mut apps = read_registry()?;
+    apps.retain(|p| p.id != app_id);
+    write_registry(&apps)?;
+
+    // 削除したアプリが current_app（config.json の開いているアプリ）だった場合、
+    // 幽霊参照を残さないようクリアする（実績 2026-08-21: UI の削除ガード
+    // では起きないが、直接 IPC 削除では current_app が空参照のまま残った）。
+    if crate::commands::ai_config::read_existing_config()
+        .map(|c| c.current_app.as_deref() == Some(app_id.as_str()))
+        .unwrap_or(false)
+    {
+        if let Some(mut cfg) = crate::commands::ai_config::read_existing_config() {
+            cfg.current_app = None;
+            crate::commands::ai_config::write_config(&cfg)?;
+        }
+    }
+
     Ok(())
 }
 
@@ -727,7 +735,7 @@ mod tests {
         with_temp_root(|| {
             let meta = create_app("CurrentRef".to_string()).unwrap();
             // このアプリを current_app として保存
-            crate::commands::ai_config::save_current_app(meta.id.clone()).unwrap();
+            crate::commands::ai_config::save_current_app(Some(meta.id.clone())).unwrap();
             assert_eq!(
                 crate::commands::ai_config::load_current_app().unwrap().as_deref(),
                 Some(meta.id.as_str())
@@ -744,7 +752,7 @@ mod tests {
         with_temp_root(|| {
             let keep = create_app("Keep".to_string()).unwrap();
             let del = create_app("Delete".to_string()).unwrap();
-            crate::commands::ai_config::save_current_app(keep.id.clone()).unwrap();
+            crate::commands::ai_config::save_current_app(Some(keep.id.clone())).unwrap();
 
             // 別アプリを削除しても current_app は維持される
             delete_app(del.id.clone()).unwrap();

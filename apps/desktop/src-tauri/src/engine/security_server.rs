@@ -296,6 +296,27 @@ fn handle_update_workspace(
         return error(StatusCode(400), "Workspace path does not exist or is not a directory");
     }
 
+    // ワークスペース切替は ~/deskspawn 配下（またはワークスペースディレクトリ）に限定する
+    // （2026-08-27 監査指摘対応）。
+    // 任意ディレクトリへの切替を許すと、apply-artifact / run-shell / read-file が
+    // アンカーを攻撃者入力で親ディレクトリ等に化けさせ得るため、
+    // deskspawn root（root_dir() = ~/deskspawn / DESKSPAWN_ROOT）を起点として検証する。
+    let root = match crate::engine::workspace::root_dir() {
+        Ok(r) => r,
+        Err(e) => {
+            return error(
+                StatusCode(500),
+                &format!("Failed to resolve deskspawn root: {}", e),
+            );
+        }
+    };
+    if !crate::engine::security::is_path_safe(&root, &new_path) {
+        return error(
+            StatusCode(403),
+            "Workspace path must be inside the deskspawn root directory",
+        );
+    }
+
     match workspace_lock.lock() {
         Ok(mut ws) => {
             *ws = new_path;

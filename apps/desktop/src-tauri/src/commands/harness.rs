@@ -518,52 +518,6 @@ pub fn initialize_workspace(
     Ok(())
 }
 
-/// Open the workspace directory in Visual Studio Code.
-/// If `workspace_path` is provided, it takes precedence over `state.workspace_path`.
-#[tauri::command]
-pub fn open_in_vscode(
-    state: State<'_, AppState>,
-    workspace_path: Option<String>,
-) -> Result<String, String> {
-    let workspace = workspace_path
-        .as_ref()
-        .filter(|p| !p.is_empty())
-        .map(Path::new)
-        .unwrap_or(&state.workspace_path);
-    let workspace_str = workspace.to_str()
-        .ok_or_else(|| "Workspace path contains invalid characters".to_string())?;
-
-    #[cfg(target_os = "macos")]
-    {
-        use std::process::Command;
-        Command::new("open")
-            .args(["-a", "Visual Studio Code", workspace_str])
-            .spawn()
-            .map_err(|e| format!("Failed to open VS Code: {}", e))?;
-        Ok(format!("Opened VS Code for {}", workspace_str))
-    }
-
-    #[cfg(target_os = "windows")]
-    {
-        use std::process::Command;
-        Command::new("cmd")
-            .args(["/c", "code", workspace_str])
-            .spawn()
-            .map_err(|e| format!("Failed to open VS Code: {}", e))?;
-        Ok(format!("Opened VS Code for {}", workspace_str))
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        use std::process::Command;
-        Command::new("code")
-            .arg(workspace_str)
-            .spawn()
-            .map_err(|e| format!("Failed to open VS Code: {}", e))?;
-        Ok(format!("Opened VS Code for {}", workspace_str))
-    }
-}
-
 /// Copy files from a template directory to the workspace, respecting .gitignore patterns.
 fn copy_template_dir(src: &Path, dst: &Path) -> Result<(), String> {
     let entries = std::fs::read_dir(src)

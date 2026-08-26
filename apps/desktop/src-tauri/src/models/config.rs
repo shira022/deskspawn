@@ -86,6 +86,7 @@ pub struct AiConfig {
     pub custom_endpoint: Option<String>,
     #[serde(alias = "api_version")]
     pub api_version: Option<String>,
+    #[serde(default)]
     pub temperature: f64,
     #[serde(alias = "max_tokens")]
     pub max_tokens: Option<u32>,
@@ -111,7 +112,9 @@ pub struct AiConfig {
     pub last_provider: Option<String>,
     /// The currently open app (UI state persisted so the app reopens where
     /// the user left off — was WebView localStorage `deskspawn_current_app`).
-    #[serde(default)]
+    /// None の場合はシリアライズ時にキーごと除去する
+    /// （save_current_app(null) で「current_app の除去」を実現、2026-08-27 監査指摘対応）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub current_app: Option<String>,
     /// UI settings (language/theme/font/simple mode). `None` = never saved
     /// yet (first run) — the desktop app shows the language-select screen.
@@ -161,15 +164,6 @@ pub struct EnvCheckItem {
 pub struct WingetStatus {
     pub available: bool,
     pub version: Option<String>,
-    pub message: String,
-}
-
-/// Progress event emitted during winget installation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetupProgress {
-    pub package: String,
-    pub stage: String,       // "starting" | "downloading" | "installing" | "complete" | "error"
-    pub progress_percent: u8,
     pub message: String,
 }
 
@@ -252,13 +246,141 @@ pub struct ErrorInfo {
     pub line: Option<u32>,
 }
 
-// ── Spawn Config ──────────────────────────────────────────────────────────────
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpawnConfig {
-    pub app_name: String,
-    pub version: String,
-    pub window_title: String,
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn ai_config_roundtrip_uses_camel_case_and_preserves_fields() {
+        let mut providers = HashMap::new();
+        providers.insert(
+            "openai".to_string(),
+            ProviderConfig {
+                model: "gpt-4o".into(),
+                custom_endpoint: Some("http://127.0.0.1:9999/v1".into()),
+                region: None,
+                max_steps: Some(15),
+            },
+        );
+        let cfg = AiConfig {
+            provider: "openai".into(),
+            api_key: String::new(),
+            model: "gpt-4o".into(),
+            custom_endpoint: Some("http://127.0.0.1:9999/v1".into()),
+            api_version: None,
+            temperature: 0.7,
+            max_tokens: Some(4096),
+            max_steps: Some(15),
+            region: None,
+            api_key_configured: true,
+            storage_method: "file".into(),
+            providers: providers.clone(),
+            last_provider: Some("openai".into()),
+            current_app: Some("app-0123456789abcdef0123456789abcdef".into()),
+            settings: Some(AppSettings::default()),
+        };
+
+        let json = serde_json::to_string(&cfg).unwrap();
+        // camelCase でシリアライズされる（スネークケース・レガシー名が出ない）
+        assert!(json.contains("\"apiKeyConfigured\""), "json: {json}");
+        assert!(json.contains("\"storageMethod\""), "json: {json}");
+        assert!(json.contains("\"customEndpoint\""), "json: {json}");
+        assert!(json.contains("\"currentApp\""), "json: {json}");
+        assert!(!json.contains("api_key"), "no legacy snake_case key: {json}");
+
+        let back: AiConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.provider, "openai");
+        assert_eq!(back.model, "gpt-4o");
+        assert_eq!(back.temperature, 0.7);
+        assert_eq!(back.max_tokens, Some(4096));
+        assert_eq!(back.storage_method, "file");
+        assert!(back.api_key_configured);
+        assert_eq!(
+            back.current_app.as_deref(),
+            Some("app-0123456789abcdef0123456789abcdef")
+        );
+        assert_eq!(back.settings.as_ref().unwrap().language, "ja");
+        assert_eq!(
+            back.providers
+                .get("openai")
+                .unwrap()
+                .custom_endpoint
+                .as_deref(),
+            Some("http://127.0.0.1:9999/v1")
+        );
+        assert_eq!(back.providers.get("openai").unwrap().max_steps, Some(15));
+    }
+
+    #[test]
+    fn ai_config_rejects_invalid_json() {
+        assert!(serde_json::from_str::<AiConfig>("{ not valid json").is_err());
+        // 必須フィールドの型不一致（provider が数値）も拒否
+        assert!(serde_json::from_str::<AiConfig>(r#"{"provider": 42}"#).is_err());
+    }
+
+    #[test]
+    fn ai_config_applies_defaults_when_optional_fields_missing() {
+        // 旧バージョンの config.json（version フィールド等の任意フィールド欠落・
+        // api_key 平文アリ）でも必須フィールドがあればデフォルトでパースできる。
+        let json = r#"{
+            "provider": "openai",
+            "api_key": "sk-legacy",
+            "model": "gpt-4o"
+        }"#;
+        let cfg: AiConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.provider, "openai");
+        assert_eq!(cfg.api_key, "sk-legacy");
+        assert_eq!(cfg.temperature, 0.0);
+        assert!(!cfg.api_key_configured);
+        assert_eq!(cfg.storage_method, "keychain"); // default_storage_method
+        assert!(cfg.custom_endpoint.is_none());
+        assert!(cfg.max_tokens.is_none());
+        assert!(cfg.current_app.is_none());
+        assert!(cfg.settings.is_none());
+        assert!(cfg.providers.is_empty());
+    }
+
+    #[test]
+    fn ai_config_ignores_unknown_version_field() {
+        // 将来 config.json に "version" 等の未知フィールドが追加されても
+        // 無視してパースできる（前方互換）。必須フィールド（api_key）は含める。
+        let json = r#"{"provider":"anthropic","api_key":"sk-x","model":"claude","version":2}"#;
+        let cfg: AiConfig = serde_json::from_str(json).unwrap();
+        assert_eq!(cfg.provider, "anthropic");
+        assert_eq!(cfg.model, "claude");
+    }
+
+    #[test]
+    fn current_app_none_is_not_serialized() {
+        // save_current_app(None) で config.json から current_app キーが除去される
+        // （skip_serializing_if、2026-08-27 監査指摘対応）。
+        let cfg = AiConfig {
+            current_app: None,
+            ..AiConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        assert!(!json.contains("currentApp"), "json: {json}");
+
+        let cfg2 = AiConfig {
+            current_app: Some("app-abc".into()),
+            ..AiConfig::default()
+        };
+        assert!(serde_json::to_string(&cfg2).unwrap().contains("currentApp"));
+    }
+
+    #[test]
+    fn settings_roundtrip_with_defaults() {
+        // AppSettings の欠落フィールドはデフォルト関数で補完される
+        let json = r#"{"theme":"dark","language":"en"}"#;
+        let s: AppSettings = serde_json::from_str(json).unwrap();
+        assert_eq!(s.theme, "dark");
+        assert_eq!(s.language, "en");
+        assert_eq!(s.ui_font_size, 14); // default_ui_font_size
+        assert_eq!(s.code_font_size, 13); // default_code_font_size
+        assert!(s.simple_mode); // default_simple_mode
+    }
 }
 
 
