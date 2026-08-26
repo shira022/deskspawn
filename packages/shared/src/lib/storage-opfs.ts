@@ -8,6 +8,7 @@
  */
 
 import { getSetting, setSetting } from "./storage";
+import { isDesktopEnv } from "./platform";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -213,16 +214,8 @@ export async function isOpfsAvailable(): Promise<boolean> {
 
 // ── Unified API (auto-routes to OPFS or IndexedDB) ────────────────────────────
 
-/**
- * Desktop uses real files via Rust IPC (ADR-008); Web uses OPFS/IndexedDB.
- * The desktop adapter is imported lazily so the web bundle stays unaffected.
- */
-function isDesktopRuntime(): boolean {
-  return typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__);
-}
-
 export async function readAppFile(appId: string, filePath: string): Promise<string | null> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { readAppFileDesktop } = await import("./storage-desktop");
     return readAppFileDesktop(appId, filePath);
   }
@@ -233,7 +226,7 @@ export async function readAppFile(appId: string, filePath: string): Promise<stri
 }
 
 export async function writeAppFile(appId: string, filePath: string, content: string): Promise<void> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { writeAppFileDesktop } = await import("./storage-desktop");
     return writeAppFileDesktop(appId, filePath, content);
   }
@@ -244,7 +237,7 @@ export async function writeAppFile(appId: string, filePath: string, content: str
 }
 
 export async function deleteAppFile(appId: string, filePath: string): Promise<void> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     // C1 fix (2026-08-12): previously wrote an empty string, leaving 0-byte
     // files behind. Now does a real deletion via Rust IPC.
     const { deleteAppFileDesktop } = await import("./storage-desktop");
@@ -257,7 +250,7 @@ export async function deleteAppFile(appId: string, filePath: string): Promise<vo
 }
 
 export async function listAppFiles(appId: string): Promise<FileInfo[]> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { listAppFilesDesktop } = await import("./storage-desktop");
     const relPaths = await listAppFilesDesktop(appId);
     // Map to FileInfo shape (web interface compatibility).
@@ -275,7 +268,7 @@ export async function listAppFiles(appId: string): Promise<FileInfo[]> {
 }
 
 export async function deleteAppDir(appId: string): Promise<void> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     // C2 fix (2026-08-12): deleting the whole app is the responsibility of
     // deleteApp (Rust `delete_app` removes registry + directory). Calling
     // deleteAppDesktop here would double-delete — AppSwitcher already calls

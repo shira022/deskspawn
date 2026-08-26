@@ -14,11 +14,13 @@ import { getSidecarPort } from "./lib/ipc";
 // Import CSS (desktop entry imports web app's styles via local index.css)
 import "./index.css";
 
+// デスクトップ環境フラグ — 共有エンジンがサイドカープロキシ経由でAIを呼ぶための判定。
+// ServiceRegistry 登録より先に設定する（registerDesktopServices 内で
+// isDesktopEnv() を参照するため — 監査 2026-08-27）。
+(window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ = true;
+
 // Register desktop services before anything renders
 registerDesktopServices();
-
-// デスクトップ環境フラグ — 共有エンジンがサイドカープロキシ経由でAIを呼ぶための判定
-(window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ = true;
 
 /**
  * サイドカーの実ポートをRustから取得してからレンダーする。

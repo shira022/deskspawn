@@ -8,10 +8,6 @@
 import React, { useEffect } from "react";
 import { MainLayout } from "@deskspawn/shared/components/layout/MainLayout";
 import { useAppStore } from "@deskspawn/shared/store/useAppStore";
-import { registerDesktopServices } from "./lib/services";
-
-// Register Desktop services once at module level
-registerDesktopServices();
 
 function DesktopInit({ children }: { children: React.ReactNode }) {
   const initialize = useAppStore((s) => s.initialize);
