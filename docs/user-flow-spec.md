@@ -45,29 +45,29 @@ Main screen layout (verified):
 | Item | Value (this session) |
 |---|---|
 | Host | Windows 11 (WSL2 dev, host-direct verification) |
-| Build | `cargo-tauri build --no-bundle --config tauri.build-override.json` (production mode, serves `tauri.localhost`, no dev server needed) |
+| Build | `cargo-tauri build --no-bundle` (production mode, serves `tauri.localhost`; `beforeBuildCommand` builds the frontend) |
 | Frontend | `pnpm --filter desktop build` → bundled into the exe |
 | Sidecar | bun-compiled `deskspawn-sidecar-x86_64-pc-windows-msvc.exe` |
 | AI provider | configured provider/model (key stored in Windows Credential Manager) |
-| Sidecar port | ≈3009 (fallback-capable: 3009→3010→… when ports are taken) |
-| Preview | local Vite on `localhost:<port>` (≈5174; dynamic, app switch moves it) |
-| CDP | `--remote-debugging-port=9222` (WebView2 binds `::1`, portproxy v4tov6 for WSL access) |
+| Sidecar port | `<port>` (dynamic; default ≈3009, falls back 3009→3010→… when taken) |
+| Preview | local Vite on `localhost:<port>` (dynamic; app switch moves it) |
+| CDP | `--remote-debugging-port=<port>` (dev/E2E only; WebView2 binds `::1`, portproxy v4tov6 for WSL access) |
 | App data root | `~/deskspawn/` (apps/ · config/ · templates/ · tools/) |
 
 ### Build & launch recipe (for reproducible tests)
 
 ```bash
 # WSL
-pnpm --filter desktop build
+pnpm --filter desktop build                      # frontend → apps/desktop/dist
+cd apps/desktop && bun scripts/build-sidecar.mjs # sidecar exe → src-tauri/binaries (externalBin)
 rsync -a --delete --exclude node_modules --exclude .git --exclude target \
       --exclude 'src-tauri/binaries' ./ /mnt/c/Users/<u>/dev/deskspawn-staging/
-# Windows (staging): sidecar first, then Rust
+# Windows (staging): Rust build (tauri.conf.json beforeBuildCommand rebuilds the frontend)
 $env:PATH='C:\Users\<u>\dev\tools\bun\bun-windows-x64;C:\Users\<u>\.cargo\bin;'+$env:PATH
-bun scripts/build-sidecar.mjs
-Set-Location apps/desktop/src-tauri   # tauri.build-override.json: {"build":{"beforeBuildCommand":""}}
-cargo-tauri build --no-bundle --config tauri.build-override.json
-# Launch with CDP
-$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=9222'
+Set-Location apps/desktop/src-tauri
+cargo-tauri build --no-bundle
+# Launch with CDP (dev/E2E only)
+$env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS='--remote-debugging-port=<port>'
 Start-Process ...\target\release\deskspawn-desktop.exe
 ```
 
@@ -200,8 +200,8 @@ Verified: round trip between existing apps; history follows the selection.
 Test notes:
 - Popover rows are `div.absolute.left-0.top-full [role="button"]`; the app name
   is the row's `.font-medium` span. **Do not use `hasText` on the row for
-  matching** — the date line (e.g. `8/12 18:05`) contains substring matches
-  (`05`) that collide with other app names. Match the `.font-medium` text
+  matching** — a date line such as `<M/D HH:MM>` can collide with other app
+  names via digit substrings. Match the `.font-medium` text
   exactly, then click `rows.nth(index)`.
 - Switching resets session state (messages cleared, then reloaded).
 
@@ -492,7 +492,7 @@ actual *app generation loop* (code generation → checkpoints → preview render
 use the helper script (same responsibility & leak rules as above):
 
 ```bash
-# Default: "ToDoアプリを作成して" (fixed)
+# Default: the script's built-in prompt (fixed in scripts/verify-generate-app.mjs)
 node scripts/verify-generate-app.mjs
 
 # Custom prompt (developer's choice)
@@ -502,8 +502,8 @@ node scripts/verify-generate-app.mjs "予定管理アプリを作成"
 Output is JSON: `{ ok, appId, appName, prompt, aiResponded, codeGenerated,
 checkpoints, previewRendered, elapsedMs }`. `ok` requires AI response + code
 files; `previewRendered` indicates the Vite dev server actually rendered
-(verified on the real app: ToDo app generated, preview shows "今日のタスク",
-tasks can be added).
+(verified on the real app: a generated app was rendered in the preview and its
+UI was interactive).
 
 Prerequisites:
 - **Run the app as a single instance** — duplicate desktop instances race the
@@ -534,8 +534,8 @@ Prerequisites:
 
 1. **No "閉じる" in the AI-config dialog** — use キャンセル. A leftover open
    dialog blocks every later click (z-50 backdrop intercepts pointer events).
-2. **`hasText` substring collisions on app rows** — date `18:05` matches name
-   `05`. Match `.font-medium` exactly, click by index.
+2. **`hasText` substring collisions on app rows** — a date like `<M/D HH:MM>`
+   can match digits in a name. Match `.font-medium` exactly, click by index.
 3. **Active app cannot be deleted** — switch first, then delete.
 4. **Fresh app preview is slow to boot** — poll up to 60 s, or test preview on
    an existing app.
@@ -619,7 +619,7 @@ Out of scope / not exercised: F10 export/import (native dialogs), installer
 ### テストコード生成時の重要ポイント
 
 1. AI設定ダイアログに「閉じる」ボタンは無い → 閉じるのは「キャンセル」（E2E で「閉じる」を探すと無反応でダイアログが残り、以降のクリックが全部バックドロップにブロックされる）
-2. アプリ一覧の行マッチングは `hasText` を使うと日付（例: `18:05`）とアプリ名（`05`）が衝突する → `.font-medium` の完全一致 + index クリック
+2. アプリ一覧の行マッチングは `hasText` を使うと日付（例: `<M/D HH:MM>`）の数字とアプリ名が衝突し得る → `.font-medium` の完全一致 + index クリック
 3. 選択中のアプリは削除不可（ガード）→ 削除テストは先に別アプリへ切替
 4. 新規作成直後のプレビューは起動に時間がかかる（bun install）→ プレビュー検証は既存アプリで、または 60 秒ポーリング
 5. 実機の状態は実行間で永続する → アプリ名・検証トークンは毎回ユニークにし、作成したアプリは削除して後片付け
@@ -627,4 +627,4 @@ Out of scope / not exercised: F10 export/import (native dialogs), installer
 7. デスクトップ版の起動は**初回（言語未設定）のみ言語選択画面あり**（config.json に `settings` が無い場合）。設定済みなら即メイン画面（言語は `settings.language`・ja デフォルト）。ランディングは Web 版のみ
 8. アプリ履歴は localStorage に無い（`apps/apps.json` 実ファイル）・UI設定（言語/テーマ等）は config.json → localStorage クリアでは消えない（実機確認済み）。「アプリゼロ」「言語未設定」の初期画面は、開発環境専用コマンド `reset_app_data`（デバッグビルド + `DESKSPAWN_TEST_RESET=1`・E2E の beforeAll で実行）で再現可能。⚠️ 実データを消すため開発環境限定
 9. **実API E2E（`DESKSPAWN_E2E_REAL=1`）は開発者自己責任**（コスト・漏洩含む）。OS キーチェーン保存が前提・キーの保存/削除は開発者に委ねられる。キーは `.env`（gitignore 済み）で管理し、シェル履歴に直接打たない。実APIモードでは playwright の trace は自動オフ（`playwright.config.ts`）・実行後は `pnpm test:e2e:real` が test-results を掃除。CI では実API 不可（ダミーのみ）。詳細は英語本編「Real-API E2E」参照
-10. **実アプリ生成のフル検証**（コード生成 → チェックポイント → プレビュー描画）は `node scripts/verify-generate-app.mjs`（引数でプロンプト可変・既定「ToDoアプリを作成して」）。⚠️ アプリを**1インスタンス**で起動すること（多重起動はサイドカー競合で `Project has no package.json` の誤エラー）。生成中にプレビュー boot が失敗しても**生成完了後に自動再試行**する（PreviewPanel 修正済み）。実機確認済み ✅: ToDo アプリ生成 → プレビューに「今日のタスク」表示・タスク追加まで動作
+10. **実アプリ生成のフル検証**（コード生成 → チェックポイント → プレビュー描画）は `node scripts/verify-generate-app.mjs`（引数でプロンプト可変・既定はスクリプト内の固定プロンプト）。⚠️ アプリを**1インスタンス**で起動すること（多重起動はサイドカー競合で `Project has no package.json` の誤エラー）。生成中にプレビュー boot が失敗しても**生成完了後に自動再試行**する（PreviewPanel 修正済み）。実機確認済み ✅: 生成したアプリがプレビューに描画され、UI操作（タスク追加等）まで動作

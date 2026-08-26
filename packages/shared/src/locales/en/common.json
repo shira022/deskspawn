@@ -16,7 +16,9 @@
     "reload": "Reload",
     "refresh": "Refresh",
     "minimize": "Minimize",
-    "maximize": "Maximize"
+    "maximize": "Maximize",
+    "copy": "Copy",
+    "retry": "Retry"
   },
   "settings": {
     "title": "Settings",
@@ -285,7 +287,8 @@
     "templateAutoBackup": "Changes are automatically backed up",
     "templateShare": "Export/Import to share apps with others",
     "creating": "Creating...",
-    "create": "Create"
+    "create": "Create",
+    "createError": "Failed to create app"
   },
   "fileTree": {
     "askAiToGenerate": "Ask AI to generate an app",
