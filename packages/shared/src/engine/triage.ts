@@ -60,11 +60,13 @@ Keep reasons short (max 50 chars), user-facing.`;
  *
  * @param messages - Conversation messages (uses only the last user message)
  * @param model - Language model instance (same as main, but minimal tokens)
+ * @param signal - Optional abort signal (Stop ボタン / 全体タイムアウトで生成を中断)
  * @returns Triage decision with mode and user-facing reason
  */
 export async function triageRequest(
   messages: Array<Record<string, unknown>>,
   model: LanguageModel,
+  signal?: AbortSignal,
 ): Promise<TriageResult> {
   // Extract the last user message for triage
   const lastUserMsg = findLastUserMessage(messages);
@@ -81,6 +83,8 @@ export async function triageRequest(
       model,
       system: TRIAGE_SYSTEM_PROMPT,
       messages: [{ role: 'user', content: lastUserMsg }],
+      abortSignal: signal,
+      timeout: 30_000,  // 軽量コールなので短めのタイムアウト
       temperature: 0.1,  // Low temperature for consistent classification
       maxOutputTokens: 100,
     });

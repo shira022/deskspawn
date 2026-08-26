@@ -10,11 +10,29 @@
 import { generateText, type LanguageModel, type ToolSet } from "ai";
 import { StepManager } from "./step-limits";
 import { withRateLimitRetry } from "./retry";
+import { triageRequest } from "./triage";
 import { plannerPrompt } from "./system-prompts/planner";
 import { coderPrompt } from "./system-prompts/coder";
 import { verifierPrompt } from "./system-prompts/verifier";
 import { visualQAPrompt } from "./system-prompts/visual-qa";
 import type { Phase, Usage } from "@deskspawn/ai-core";
+
+// ── Timeouts ──────────────────────────────────────────────────────────────────
+
+/** 各 generateText 呼び出しの壁時計タイムアウト (ms) */
+const GENERATE_TIMEOUT_MS = 120_000;
+
+/** パイプライン全体の壁時計タイムアウト (ms) — UI の abort controller と併用 */
+const PIPELINE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * UI の abort signal と全体タイムアウト信号を合成する。
+ * AbortSignal.timeout による強制停止は Stop ボタンと同様に生成中にも効く。
+ */
+function withPipelineTimeout(signal: AbortSignal): AbortSignal {
+  if (signal.aborted) return signal;
+  return AbortSignal.any([signal, AbortSignal.timeout(PIPELINE_TIMEOUT_MS)]);
+}
 
 // ── Phase Configuration ───────────────────────────────────────────────────────
 
@@ -190,13 +208,15 @@ export async function runPhase(
   _simpleMode?: boolean,
   language?: string,
   isDesktop?: boolean,
+  maxSteps?: number,
 ): Promise<PhaseRunResult> {
   const systemPrompt = getSystemPrompt(phase, planContext, _simpleMode, language, isDesktop);
   const toolNames = getAllowedTools(phase);
   const tools = buildTools(toolNames);
   const config = PHASE_CONFIGS[phase];
 
-  const stepManager = new StepManager(config.stepLimit, 120, config.maxContinuations);
+  // AiConfig.maxSteps が設定されていれば動的ステップ管理のベース値として優先する
+  const stepManager = new StepManager(maxSteps ?? config.stepLimit, 120, config.maxContinuations);
   const onStepFinish = makeStepCallback(phase, stepManager, hooks);
 
   let allResultText = "";
@@ -213,6 +233,7 @@ export async function runPhase(
           messages: roundMessages as any,
           tools: tools as unknown as ToolSet,
           abortSignal: signal,
+          timeout: GENERATE_TIMEOUT_MS,
           stopWhen: (opts) => stepManager.shouldStop(opts),
           temperature: 0.2,
           maxOutputTokens: 16384,
@@ -296,48 +317,6 @@ export async function runPhase(
   }
 }
 
-// ── Triage ────────────────────────────────────────────────────────────────────
-
-/**
- * 軽量トリアージでリクエストの複雑さを分類する。
- * "single" → Coderのみ / "multi" → フルパイプライン
- */
-async function triageRequest(
-  requestMessages: Array<Record<string, unknown>>,
-  model: LanguageModel,
-): Promise<{ mode: "single" | "multi"; reason: string }> {
-  const triageSystemPrompt = `You are a request classifier. Analyze the user's request and determine if it needs a simple single-step code change or a complex multi-step implementation.
-
-Respond with one of:
-- "single" + reason: For simple changes (fix one file, add one component, minor style change, single feature addition)
-- "multi" + reason: For complex requests (multi-file changes, new features with planning, new app creation, refactoring)
-
-Only respond with "mode: single" or "mode: multi" followed by a brief reason.`;
-
-  try {
-    const result = await generateText({
-      model,
-      system: triageSystemPrompt,
-      messages: requestMessages as any,
-      temperature: 0,
-      maxOutputTokens: 200,
-    });
-
-    const text = result.text || "";
-    if (text.toLowerCase().includes("mode: multi") || text.toLowerCase().includes("single")) {
-      const isMulti = text.toLowerCase().includes("mode: multi") || text.toLowerCase().includes("multi");
-      return {
-        mode: isMulti ? "multi" : "single",
-        reason: text.split("\n").slice(1).join(" ").trim() || "Classified by triage",
-      };
-    }
-    // Default: multi for safety
-    return { mode: "multi", reason: "Default to multi-agent for completeness" };
-  } catch {
-    return { mode: "multi", reason: "Fallback: triage failed" };
-  }
-}
-
 // ── Main Pipeline ─────────────────────────────────────────────────────────────
 
 export async function runWithTriage(
@@ -349,15 +328,19 @@ export async function runWithTriage(
   language?: string,
   hooks?: PipelineHooks,
   isDesktop?: boolean,
+  maxSteps?: number,
 ): Promise<PipelineResult> {
-  hooks?.onPhaseStart?.("planner");
+  // 全体タイムアウト（10分）を UI の abort signal と合成してトリアージ以降の全生成に適用する
+  const triageSignal = withPipelineTimeout(signal);
 
-  const triageResult = await triageRequest(requestMessages, model);
+  const triageResult = await triageRequest(requestMessages, model, triageSignal);
   hooks?.onTriageResult?.(triageResult);
 
+  // 分岐確定後にフェーズ開始を通知する（トリアージ前に "planner" を発火しない）
   if (triageResult.mode === "single") {
+    hooks?.onPhaseStart?.("coder");
     const coderResult = await runPhase(
-      model, "coder", requestMessages, buildTools, signal, hooks, undefined, _simpleMode, language, isDesktop,
+      model, "coder", requestMessages, buildTools, triageSignal, hooks, undefined, _simpleMode, language, isDesktop, maxSteps,
     );
     return {
       text: coderResult.text,
@@ -366,7 +349,7 @@ export async function runWithTriage(
     };
   }
 
-  return runPipeline(model, requestMessages, buildTools, signal, hooks, _simpleMode, language, isDesktop);
+  return runPipeline(model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps);
 }
 
 const MAX_FIX_ROUNDS = 2;
@@ -409,7 +392,11 @@ export async function runPipeline(
   _simpleMode?: boolean,
   language?: string,
   isDesktop?: boolean,
+  maxSteps?: number,
 ): Promise<PipelineResult> {
+  // runWithTriage から直接呼ばれる場合も含め、パイプライン全体にタイムアウトを適用する
+  const phaseSignal = withPipelineTimeout(signal);
+
   // phaseQueue を使って動的に修正ラウンドを追加できるようにする
   const phaseQueue: Phase[] = ["planner", "coder", "verifier", "visual_qa"];
   let planContext: string | undefined;
@@ -444,12 +431,13 @@ export async function runPipeline(
       phase,
       messages,
       buildTools,
-      signal,
+      phaseSignal,
       hooks,
       planContext,
       _simpleMode,
       language,
       isDesktop,
+      maxSteps,
     );
 
     hooks?.onPhaseEnd?.(phase, result);

@@ -17,7 +17,7 @@ import { getModelsForProvider } from "../../lib/models-fetcher";
 export class WebAiService implements AiService {
   async generateText(params: GenerateTextParams): Promise<string> {
     const { messages, config, systemPrompt, maxSteps } = params;
-    const { generateText } = await import("ai");
+    const { generateText, stepCountIs } = await import("ai");
     const model = getModel(config as ProviderConfig);
 
     const result = await generateText({
@@ -25,17 +25,18 @@ export class WebAiService implements AiService {
       messages: (systemPrompt
         ? [{ role: "system" as const, content: systemPrompt }, ...messages]
         : messages) as any,
-      ...(maxSteps ? { maxSteps } : {}),
+      // ai v6: maxSteps は廃止 → stopWhen: stepCountIs() でステップ上限を指定
+      ...(maxSteps ? { stopWhen: stepCountIs(maxSteps) } : {}),
     });
 
     return result.text;
   }
 
   async streamText(params: StreamTextParams): Promise<void> {
-    const { messages, config, systemPrompt, onChunk, onError, signal } = params;
+    const { messages, config, systemPrompt, onChunk, onError, signal, tools, maxSteps } = params;
 
     try {
-      const { streamText } = await import("ai");
+      const { streamText, stepCountIs } = await import("ai");
       const model = getModel(config as ProviderConfig);
 
       const result = streamText({
@@ -43,7 +44,10 @@ export class WebAiService implements AiService {
         messages: (systemPrompt
           ? [{ role: "system" as const, content: systemPrompt }, ...messages]
           : messages) as any,
+        ...(tools ? { tools: tools as any } : {}),
         abortSignal: signal,
+        // ai v6: maxSteps は廃止 → stopWhen: stepCountIs() でステップ上限を指定
+        ...(maxSteps ? { stopWhen: stepCountIs(maxSteps) } : {}),
       });
 
       for await (const chunk of result.textStream) {
@@ -58,7 +62,9 @@ export class WebAiService implements AiService {
 
   async getModels(provider: string, apiKey?: string): Promise<ModelInfo[]> {
     if (!apiKey) return [];
-    const models = await getModelsForProvider(provider, apiKey);
+    // getModelsForProvider は (provider, endpoint?, apiKey?) のシグネチャのため
+    // apiKey を第3引数に渡す（第2引数 endpoint は指定しない）
+    const models = await getModelsForProvider(provider, undefined, apiKey);
     // Convert web ModelInfo to shared ModelInfo
     return models.map((m: any) => ({
       id: m.id,
