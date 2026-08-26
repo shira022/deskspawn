@@ -235,31 +235,34 @@ export interface TriageResult {
 }
 
 /**
- * Error codes for user-facing messages in SSE events (server.ts HTTP mode).
+ * Error codes sent in HTTP/SSE error responses (server.ts の実送出コードと同期:
+ * 監査 2026-08-27 で /chat・/api/models・export/import 削除に伴い未送出コードを除去)。
  * The frontend uses these codes to look up localized translations.
  */
 export type ErrorCode =
-  | 'RATE_LIMIT'
-  | 'GENERATION_FAILED'
-  | 'PROJECT_DELETE_ACTIVE'
-  | 'PROJECT_NAME_REQUIRED'
-  | 'PROJECT_ID_REQUIRED'
-  | 'PROJECT_NOT_FOUND'
-  | 'PROJECT_DIR_NOT_FOUND'
-  | 'PATH_REQUIRED'
+  | 'APP_DIR_NOT_FOUND'
+  | 'APP_ID_REQUIRED'
+  | 'CHECKPOINT_CREATE_FAILED'
+  | 'CHECKPOINT_DELETE_AFTER_FAILED'
+  | 'CHECKPOINT_DELETE_ALL_FAILED'
   | 'CHECKPOINT_ID_REQUIRED'
+  | 'CHECKPOINT_LIST_FAILED'
+  | 'CHECKPOINT_RESTORE_FAILED'
+  | 'CONFIG_REQUIRED'
+  | 'INTERNAL_ERROR'
   | 'KEEP_CHECKPOINT_ID_REQUIRED'
   | 'MESSAGES_REQUIRED'
-  | 'API_KEY_REQUIRED'
-  | 'MODELS_FETCH_FAILED'
-  | 'SERVER_ERROR'
   | 'NO_BACKUP_FOUND'
-  | 'EXPORT_DOWNLOAD_FAILED'
-  | 'EXPORT_FAILED'
-  | 'FILE_BASE64_REQUIRED'
-  | 'INVALID_IMPORT_FILE'
-  | 'IMPORT_FAILED'
-  | 'INTERNAL_ERROR';
+  | 'NO_UPSTREAM'
+  | 'PARAMS_REQUIRED'
+  | 'PATH_REQUIRED'
+  | 'PROJECT_DELETE_ACTIVE'
+  | 'PROJECT_DIR_NOT_FOUND'
+  | 'PROJECT_ID_REQUIRED'
+  | 'PROJECT_NAME_REQUIRED'
+  | 'PROJECT_NOT_FOUND'
+  | 'PROXY_ERROR'
+  | 'UNAUTHORIZED';
 
 /**
  * Extended error detail for SSE error events that includes an optional

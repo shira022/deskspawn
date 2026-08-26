@@ -558,10 +558,12 @@ Prerequisites:
 | Check | Expect |
 |---|---|
 | `GET /health` (no token) | 401 `Unauthorized` (auth enforced) |
-| `GET /api/models` (no token) | 401 |
-| `GET /api/models` (with token, via app) | 200, model list incl. provider models |
+| `GET /v1/models` (no token) | 401 |
+| `GET /v1/models` (token + `/api/config` 設定済み) | 200, upstream のモデル一覧（OpenAI 互換プロキシ） |
 | Preview `http://localhost:<port>/` | 200 HTML |
-| `POST /chat` (SSE) | `triage_start → phase_start → triage_result → step_progress → text → done` |
+
+> ⚠️ 2026-08 監査で `GET /api/models`・`POST /chat`（SSE）は削除された（フロントの
+> 共有エンジンが実動パス・sidecar は `/v1` プロキシとプレビュー/ストレージ専用に縮小）。
 
 CORS/SSRF posture (security review baseline): custom endpoints are proxied via
 the sidecar (`/v1` proxy, `x-upstream`), token required, no `Access-Control-
@@ -607,7 +609,7 @@ Out of scope / not exercised: F10 export/import (native dialogs), installer
 | F7 チェックポイント | ツール実行時に実ファイルスナップショット自動保存（checkpoints/<uuid>/） | ✅ |
 | F8 アプリ削除 | 確認ダイアログ経由の削除・選択中アプリの削除ガード | ✅ |
 | F9 永続化 | 再起動後もアプリ一覧・チャット・AI設定・プレビューが復元 | ✅ |
-| 認証 | /health・/api/models はトークンなしで 401（サイドカー認証が機能） | ✅ |
+| 認証 | /health・/v1/* はトークンなしで 401（サイドカー認証が機能） | ✅ |
 
 ※ 具体的な検証記録（日付・コミット・環境・シナリオ別結果）は本仕様書に
 含めず、リポジトリ外のローカル検証ログに分離している。実APIを使う検証
