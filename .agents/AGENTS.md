@@ -164,11 +164,11 @@ Hierarchical  feature/*   local      separate    separate │
 - DeskSpawn is an OSS project
 - **Versioning (MANDATORY)**: 全パッケージ単一バージョン方針。ルート / apps/web / apps/desktop / apps/desktop/sidecar / packages/* / tauri.conf.json / Cargo.toml のversionは常に同一（SemVer 3桁 `major.minor.patch`）。リリース時はGitHubタグ `v<version>` とも一致させること。検証: `node scripts/check-versions.mjs`。バージョン更新: `python3 scripts/set-version.py <version>`。詳細は verify スキル Stage 7 / merge スキル Version Bump を参照。
 - Primary languages: Rust (backend) + TypeScript (frontend)
-- Package manager: npm (frontend), cargo (backend)
+- Package manager: pnpm (frontend), cargo (backend)
 - Build system: Vite (frontend), Cargo (backend)
 - Testing: vitest (frontend), cargo test (backend)
 - Linting: ESLint (frontend), clippy (backend)
-- **i18n:** All user-facing UI strings must use the i18n system (`useTranslation()` hook in React components, `i18n.t()` in non-React code). Translation keys are defined in `src/locales/*/common.json`. Language configuration is in `src/lib/languages.ts`. Never hardcode display strings in components or utilities.
+- **i18n:** All user-facing UI strings must use the i18n system (`useTranslation()` hook in React components, `i18n.t()` in non-React code). Translation keys are defined in `packages/shared/src/locales/{en,ja}/common.json`. Language configuration is in `packages/shared/src/lib/languages.ts`. Never hardcode display strings in components or utilities.
 
 ## Allowed Package List
 
@@ -185,3 +185,16 @@ lucide-react, @radix-ui/* (shadcn/ui dependencies)
 ```
 tauri, tauri-build, serde, serde_json, sqlx (sqlite feature), tokio
 ```
+
+---
+
+## 🇯🇵 日本語
+
+この AGENTS.md は「DeskSpawn（開発対象ツール・Tauri/Rust）」と「生成アプリ（Web のみ）」の2コンテキストを統治する。要点:
+
+- **ブランチ戦略**: 3ブランチ GitFlow（`main` 🔒 保護・人間のみ ← `develop` 🤖 自律マージ ← `<type>/*`）。`<type>/*` → `develop` は CI 通過後にエージェントが自律マージ可、`develop` → `main` は人間の承認のみ。
+- **検証ゲート**: VERIFY 段階で lint / tsc / vitest / build をローカル実行し `verify-report-<slug>.json` を `.agents/artifacts/` に置く。型チェックは `pnpm --filter web exec tsc -b --noEmit`（desktop も `-b` 必須 — `tsc --noEmit` は no-op）。
+- **バージョン（MANDATORY）**: 全パッケージ単一バージョン（SemVer 3桁 `major.minor.patch`）。検証 `node scripts/check-versions.mjs`、更新 `python3 scripts/set-version.py <version>`。
+- **i18n**: UI 文字列のハードコード禁止。`useTranslation()` / `i18n.t()` を使い、キーは `packages/shared/src/locales/{en,ja}/common.json` に定義、対応言語は `packages/shared/src/lib/languages.ts`。
+- **ADR**: 重要な設計判断は `decision-recorder` スキルで `docs/adr/NNN-title.md` に記録（proposed → human approval → accepted）。公開 OSS リポジトリのため**個人情報（実ユーザー名・実パス・APIキー等）を ADR に書かない**（`~/...` やプレースホルダを使用）。
+- **共有コード**: 両アプリ共通の実装（UI・チャット・AI・ストレージ・i18n・型）は `packages/shared/src/` に置き `@deskspawn/shared` alias で import（ADR-014）。`apps/web/src` / `apps/desktop/src` はプラットフォームエントリ＆グルーコードのみ。

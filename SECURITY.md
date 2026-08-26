@@ -27,53 +27,89 @@ Instead, use GitHub's [private vulnerability reporting](https://github.com/shira
 
 | Version | Supported |
 |---------|-----------|
-| 0.2.x   | :white_check_mark: |
+| 0.4.2   | :white_check_mark: |
 
 ## Architecture & Threat Model
 
-DeskSpawn is a **client-side-only web application** with no backend server. This section describes what we protect and how.
+DeskSpawn is a **desktop-first application**: a Tauri v2 (Rust) shell with a
+local sidecar (Node/Bun) that runs entirely on the user's machine. There is
+**no remote backend**. A browser demo exists for evaluation only. This
+section describes what we protect and how.
+
+### Local Attack Surface
+
+The desktop app starts a **local sidecar HTTP server** on the loopback
+interface (`127.0.0.1:<port>`, default ≈3009, fallback 3009→3010→… when
+taken). It provides:
+
+- An OpenAI-compatible **`/v1` proxy** that forwards to the
+  **user-configured** upstream endpoint only. Arbitrary upstream forwarding
+  (the `x-upstream` header) was removed as an SSRF risk. Requests without a
+  token are rejected (`401 Unauthorized`), and no `Access-Control-Allow-Origin`
+  is granted to foreign origins.
+- `/api/models` (model list) and the local **preview dev server** for
+  generated apps.
+
+Because the server listens on loopback, **any local process** that can reach
+`127.0.0.1` sits inside the same trust boundary as the app itself.
 
 ### Data at Rest
 
-| Data | Storage | Protection |
-|------|---------|------------|
-| AI API keys (OpenAI, Anthropic, etc.) | IndexedDB | Same-origin isolation applies. Note: browser extensions installed by the user operate outside this sandbox and can access stored data. Mitigate by setting a spending limit on your API key. |
-| Project source code (generated apps) | IndexedDB / OPFS | Same-origin isolation. |
-| Settings & preferences | LocalStorage | Standard browser sandbox. |
+| Data | Desktop (main product) | Web demo (evaluation only) |
+|------|------------------------|----------------------------|
+| AI API keys | **OS keychain** (Windows Credential Manager) via Rust IPC. Fallback when the keychain is unavailable: `credentials.json` under the user profile (`~/deskspawn/config/credentials.json`, file mode 600). The path is verified to stay inside `HOME`/`USERPROFILE`; writes outside are refused. | IndexedDB. Same-origin isolation, but browser extensions run outside that sandbox. |
+| Generated app source | Real files under `~/deskspawn/apps/<app-id>/` | IndexedDB / OPFS |
+| Chat history | SQLite `chat.db` per app (Rust-managed; ADR-013 v2 schema: `client_id` UNIQUE + `payload` JSON) | IndexedDB |
+| Settings & AI provider config | JSON files under `~/deskspawn/config/` (keys in OS keychain, see above) | LocalStorage / IndexedDB |
 
 ### Data in Transit
 
-| Destination | Protocol | Protection |
-|-------------|----------|-----------|
-| AI Provider API (user-configured) | HTTPS (TLS 1.3) | Standard internet encryption. DeskSpawn does not proxy or inspect API traffic. |
-| No other outbound data | — | DeskSpawn has no telemetry, no analytics, no backend. |
+| Destination | Path | Protection |
+|-------------|------|------------|
+| AI Provider API (user-configured) | HTTPS **through the local sidecar `/v1` proxy** | TLS. The app never sends keys to external servers directly; the sidecar attaches the stored key only for the configured upstream. |
+| Generated app preview (desktop) | loopback `127.0.0.1` | Local Vite dev server; not reachable from other hosts. |
+| Any other outbound traffic | — | None. No telemetry, no analytics, no backend. |
 
 ### Attack Vectors & Mitigations
 
 | Threat | Mitigation |
 |--------|-----------|
-| **XSS via dependency vulnerability** | CSP restricts script execution to `'self'` + `'wasm-unsafe-eval'`. `connect-src` limits data exfiltration targets. |
-| **Malicious AI-generated code** | Runs inside WebContainer — a sandboxed environment that cannot access IndexedDB, LocalStorage, or the host origin's cookies. Also isolated via iframe `sandbox` attribute. |
-| **API key exfiltration via supply chain** | No backend to exfiltrate to. CSP restricts outbound connections to known AI provider endpoints. |
-| **Cross-origin data leakage** | `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: credentialless` isolate the browsing context. |
+| **XSS via dependency vulnerability** | CSP restricts script execution to `'self'` + `'wasm-unsafe-eval'`. `connect-src` limits data-exfiltration targets. |
+| **Malicious AI-generated code** | Runs in an isolated preview: iframe `sandbox` attribute on desktop (local Vite), WebContainer on web — no access to the host origin's storage. |
+| **API key exfiltration via supply chain** | No backend to exfiltrate to. The sidecar proxies only the user-configured upstream; arbitrary `x-upstream` forwarding is rejected (SSRF guard). |
+| **Sidecar abused by other local processes** | Listens on loopback only, requires a token (401 without it), grants no CORS to foreign origins. |
+| **Plaintext key fallback (`credentials.json`)** | Used only when the OS keychain is unavailable; file mode 600; confined to the user profile (writes outside are refused). |
+| **WebView2 CDP port** | The remote-debugging port (`--remote-debugging-port=9222`) is **never enabled by default** — it is a dev/E2E-only flag (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`). When enabled, WebView2 binds loopback (`::1`) and any local CDP client can control the app. Never enable it in production. |
+| **Cross-origin data leakage (web demo)** | `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: credentialless` isolate the browsing context. |
 | **Clickjacking** | `frame-ancestors 'none'` in CSP prevents embedding. |
+| **Malicious browser extensions (web demo)** | The same-origin sandbox does not cover extensions; the web demo is evaluation-only. Use the desktop app (OS keychain) for real work. |
 
 ### Recommended Practices for Users
 
+- Use the **desktop app** for real work; the browser demo is evaluation-only
 - Use a dedicated API key with usage limits for DeskSpawn (most AI providers support this)
   - [OpenAI](https://platform.openai.com/settings/organization/limits)
   - [Anthropic](https://console.anthropic.com/settings/limits)
   - [Google AI](https://aistudio.google.com/)
-- Keep your browser updated
+- Keep your OS and browser updated
 - Review generated app code before sharing or deploying it
-- Export and backup important projects
+- Export and back up important projects periodically
 
 ## Dependencies
 
-DeskSpawn uses automated dependency management via Dependabot. Security audits (`npm audit`) run in CI for every pull request.
+DeskSpawn uses automated dependency management via Dependabot. Security audits (`pnpm audit`) run in CI for every pull request.
 
 ## Security Best Practices for DeskSpawn
 
-- **API Keys**: API keys are stored in your browser's IndexedDB. They are never sent to any server other than the AI provider you configure. Do not share browser sessions on untrusted devices.
-- **Generated Applications**: Review AI-generated code before distribution. Treat it as you would any code from a junior developer.
-- **CSP**: The production deployment includes a Content Security Policy. If you self-host, ensure the `_headers` file or equivalent is deployed.
+- **API Keys**: On desktop, keys are stored in the **OS keychain** (Windows
+  Credential Manager); `credentials.json` is a plaintext fallback confined to
+  your user profile. Keys are never sent to any server other than the AI
+  provider you configure — and on desktop they travel via the local sidecar
+  proxy, not directly from the app. Do not share sessions or profiles on
+  untrusted machines.
+- **Generated Applications**: Review AI-generated code before distribution.
+  Treat it as you would code from a junior developer.
+- **CSP**: The web demo deployment includes a Content Security Policy. If you
+  self-host it, ensure the `_headers` file or equivalent is deployed.
+- **CDP**: Never run the desktop app with `--remote-debugging-port` enabled
+  outside development (see the WebView2 CDP row above).
