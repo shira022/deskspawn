@@ -12,7 +12,8 @@ accepted
 - サイズ約100MBを許容し、オフラインでも初回セットアップが完結
 - ユーザーのホスト環境（Node/npm）は一切変更しない
 - 開発中は `dev/tools/bun/` を利用（配布時は同梱に切替）
-- sidecarは `BUN_PATH` で絶対パスを解決し、cwd非依存で起動
+- sidecarのbun解決は環境非依存の3段階: 1) `process.env.BUN_PATH`（明示指定を最優先、配布時の同梱bun切替にも使用）→ 2) PATH探索（Windows: `where bun` / Unix: `which bun`）→ 3) `os.homedir()` ベースの既定レイアウト。cwd非依存で起動
+- 実ユーザー名入りの絶対パスのハードコードを排除（公開リポジトリへの情報混入と他マシンでの preview 失敗を防止）
 
 ## Consequences
 - ユーザーはbunの存在を意識せずに、インストール・起動・テストが動作
