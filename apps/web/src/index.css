@@ -1,7 +1,8 @@
 @import "tailwindcss";
 /* 共有コンポーネント(packages/shared)のユーティリティクラスを生成するため
-   明示的に @source でスキャン対象を追加する。 */
-@source "../../packages/shared/src";
+   明示的に @source でスキャン対象を追加する。
+   desktop 側 (apps/desktop/src/index.css) と同じ 3 階層で統一。 */
+@source "../../../packages/shared/src";
 @import "flag-icons/css/flag-icons.min.css";
 
 @custom-variant dark (&:is(.dark *));
