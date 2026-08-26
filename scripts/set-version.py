@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
 """DeskSpawn: 全バージョン定義を単一バージョンに統一するスクリプト。
 対象: ルート / apps/web / apps/desktop / apps/desktop/sidecar / tauri.conf.json / Cargo.toml / packages/*
+      (ai-core, config, shared, ui) — check-versions.mjs の対象と一致させること。
+
+注意: apps/desktop/src-tauri/Cargo.lock の deskspawn-desktop バージョンは
+      ここで直接置換しない。実行後に `cargo update -p deskspawn-desktop` で
+      更新すること（cargo に依存解決を再検証させるのが正しい手順）。
 """
 import re, sys, os
 
+# 注意: Cargo.lock の deskspawn-desktop は直接書き換えず、本スクリプト実行後に
+# `cargo update -p deskspawn-desktop` で更新すること（cargo 経由が正しい）。
 files = [
     "package.json",
     "apps/web/package.json",
@@ -13,10 +20,11 @@ files = [
     "apps/desktop/src-tauri/Cargo.toml",
     "packages/ai-core/package.json",
     "packages/config/package.json",
+    "packages/shared/package.json",
     "packages/ui/package.json",
 ]
 
-NEW = sys.argv[1] if len(sys.argv) > 1 else "0.4.1"
+NEW = sys.argv[1] if len(sys.argv) > 1 else "0.4.2"
 results = []
 for f in files:
     if not os.path.exists(f):
