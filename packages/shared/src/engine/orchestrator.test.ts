@@ -98,9 +98,9 @@ describe("runWithTriage", () => {
   });
 
   it("dispatches to coder only in single mode", async () => {
-    // Triage returns single
+    // Triage returns single (triage.ts の JSON 形式)
     vi.mocked(generateText).mockResolvedValueOnce({
-      text: "mode: single\nSimple CSS fix",
+      text: JSON.stringify({ mode: "single", reason: "Simple CSS fix" }),
     } as any);
     // Coder phase (second call to generateText)
     vi.mocked(generateText).mockResolvedValueOnce({
@@ -122,9 +122,9 @@ describe("runWithTriage", () => {
   });
 
   it("dispatches to full pipeline in multi mode", async () => {
-    // Triage returns multi
+    // Triage returns multi (triage.ts の JSON 形式)
     vi.mocked(generateText)
-      .mockResolvedValueOnce({ text: "mode: multi\nFull feature needed" } as any)
+      .mockResolvedValueOnce({ text: JSON.stringify({ mode: "multi", reason: "Full feature needed" }) } as any)
       // planner
       .mockResolvedValueOnce({
         text: "Planned the feature",
@@ -159,7 +159,7 @@ describe("runWithTriage", () => {
 
   it("calls onTriageResult hook with the triage result", async () => {
     vi.mocked(generateText)
-      .mockResolvedValueOnce({ text: "mode: single\nTiny tweak" } as any)
+      .mockResolvedValueOnce({ text: JSON.stringify({ mode: "single", reason: "Tiny tweak" }) } as any)
       .mockResolvedValueOnce({
         text: "done",
         usage: { inputTokens: 1, outputTokens: 1 },
