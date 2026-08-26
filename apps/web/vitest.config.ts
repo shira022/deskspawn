@@ -48,7 +48,10 @@ export default defineConfig({
       ],
       // Per-file thresholds — heavy I/O modules (storage-opfs, storage,
       // webcontainer) need integration-level testing; UI components use
-      // vitest.ui.config.ts. We track coverage here as a guide, not a gate.
+      // vitest.ui.config.ts.
+      // ⚠️ 実効ゲート: vitest は閾値未達で exit 1 になるため、これは guide では
+      // なく gate。低い値は現状の実測値ベースの下限であり、カバレッジ向上に
+      // 合わせて段階的に引き上げること（引き上げ時は全テスト green を確認）。
       thresholds: {
         statements: 25,
         branches: 20,
