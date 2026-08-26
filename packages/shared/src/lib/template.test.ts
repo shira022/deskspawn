@@ -272,3 +272,61 @@ describe("getTemplateFiles isDesktop (full-stack, ADR-010)", () => {
     expect(testFile).toContain(".request(");
   });
 });
+
+// ── 回帰テスト（監査 2026-08-27 で実測検出した P1-P10 の再発防止） ──────────
+describe("generated template regression guards (audit 2026-08-27)", () => {
+  // Rust 側（apps/desktop/src-tauri/src/engine/security.rs の
+  // FORBIDDEN_TS_PATTERNS）と同期させること。
+  const FORBIDDEN_TS_PATTERNS = [
+    "eval(",
+    "new Function(",
+    "document.write(",
+    ".innerHTML",
+    "child_process",
+    "exec(",
+    "execSync(",
+    "spawn(",
+    "spawnSync(",
+  ];
+
+  it("generated files contain no forbidden TS patterns (P10-1)", () => {
+    for (const isDesktop of [false, true]) {
+      const files = getTemplateFiles("ja", isDesktop);
+      for (const file of files) {
+        for (const pattern of FORBIDDEN_TS_PATTERNS) {
+          expect(
+            file.content,
+            `${file.path} must not contain forbidden pattern: ${pattern}`,
+          ).not.toContain(pattern);
+        }
+      }
+    }
+  });
+
+  it("desktop package.json devDependencies include @types/bun and @types/node (P10-2)", () => {
+    const files = getTemplateFiles("ja", true);
+    const pkg = JSON.parse(
+      files.find((f) => f.path === "package.json")!.content,
+    ) as { devDependencies: Record<string, string> };
+    expect(pkg.devDependencies["@types/bun"]).toBeDefined();
+    expect(pkg.devDependencies["@types/node"]).toBeDefined();
+  });
+
+  it("generated db.ts isolates tests via lazy DATABASE_URL + :memory: branch (P10-3)", () => {
+    const files = getTemplateFiles("ja", true);
+    const db = files.find((f) => f.path === "src/lib/db.ts")!.content;
+    // DATABASE_URL must be read lazily inside openDb() — not at module top level,
+    // otherwise tests cannot switch to ":memory:" without touching the live DB.
+    expect(db).toContain("function getDbUrl()");
+    expect(db).toContain('":memory:"');
+    expect(db).toContain('new Database(":memory:")');
+  });
+
+  it("desktop vite.config.ts preview proxies /api to the backend port (P9)", () => {
+    const files = getTemplateFiles("ja", true);
+    const vite = files.find((f) => f.path === "vite.config.ts")!.content;
+    expect(vite).toContain("preview:");
+    expect(vite).toContain('"/api"');
+    expect(vite).toContain("http://localhost:4174");
+  });
+});
