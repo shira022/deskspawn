@@ -145,7 +145,6 @@ pub fn run() {
             commands::harness::get_errors,
             commands::harness::get_workspace_path,
             commands::harness::initialize_workspace,
-            commands::harness::open_in_vscode,
             // App management commands (real files under ~/deskspawn/apps)
             commands::apps::list_apps,
             commands::apps::create_app,
@@ -162,10 +161,7 @@ pub fn run() {
             // Environment check commands
             commands::env_check::check_environment,
             commands::env_check::check_winget,
-            commands::env_check::install_with_winget,
             commands::env_check::open_url,
-            // Spawn commands
-            commands::spawn::spawn_build,
             // AI config commands
             commands::ai_config::save_ai_config,
             commands::ai_config::load_ai_config,

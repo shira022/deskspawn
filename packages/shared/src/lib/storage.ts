@@ -280,11 +280,11 @@ export async function loadLastProvider(): Promise<string | null> {
 
 export async function saveCurrentAppId(appId: string | null): Promise<void> {
   // Desktop: persist to config.json via Rust IPC.
+  // null でも invoke を呼ぶ（Rust 側が current_app を config.json から除去する
+  // — 2026-08-27 監査指摘対応）。
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    if (appId) {
-      await invoke("save_current_app", { appId });
-    }
+    await invoke("save_current_app", { appId });
     return;
   } catch {
     // Not in Tauri environment — use localStorage (Web)
