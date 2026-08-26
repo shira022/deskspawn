@@ -483,6 +483,8 @@ export function useChatStream(): UseChatStreamReturn {
             onTriageResult: (_result) => {},
           },
           isDesktopEnv(),
+          // AiConfig.maxSteps — 動的ステップ管理のベース値（未設定ならエンジン既定値）
+          cfg.maxSteps,
         );
 
         generationActive.current = false;
