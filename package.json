@@ -7,6 +7,7 @@
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
     "test": "pnpm --filter web test",
+    "test:sidecar": "pnpm --filter deskspawn-sidecar test",
     "lint": "pnpm --filter web lint",
     "preview": "pnpm --filter web preview",
     "test:e2e": "playwright test",
