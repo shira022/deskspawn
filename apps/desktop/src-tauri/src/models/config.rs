@@ -167,15 +167,6 @@ pub struct WingetStatus {
     pub message: String,
 }
 
-/// Progress event emitted during winget installation.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SetupProgress {
-    pub package: String,
-    pub stage: String,       // "starting" | "downloading" | "installing" | "complete" | "error"
-    pub progress_percent: u8,
-    pub message: String,
-}
-
 // ── File Info ─────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -253,15 +244,6 @@ pub struct ErrorInfo {
     pub message: String,
     pub file_path: Option<String>,
     pub line: Option<u32>,
-}
-
-// ── Spawn Config ──────────────────────────────────────────────────────────────
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct SpawnConfig {
-    pub app_name: String,
-    pub version: String,
-    pub window_title: String,
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
