@@ -9,7 +9,7 @@ import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
 import os from 'os';
-import { ChildProcess, spawn, execSync, execFileSync } from 'child_process';
+import { ChildProcess, spawn, spawnSync, execSync, execFileSync } from 'child_process';
 import * as executors from './tool-executors.js';
 import { createSerialQueue } from './install-queue.js';
 import { initMCPClients, closeMCPClients } from './mcp-client.js';
@@ -31,11 +31,45 @@ const WORKSPACE_DEV_PORT = 5174;
 let workspaceDevActualPort = WORKSPACE_DEV_PORT;
 
 /**
- * Bun executable path — the Windows host is kept minimal (no Node.js/npm),
- * so all package install / dev-server commands go through Bun.
- * Override via env var BUN_PATH when the host layout differs.
+ * Bun executable path resolution — the Windows host is kept minimal
+ * (no Node.js/npm), so all package install / dev-server commands go through Bun.
+ *
+ * 監査(2026-08-27)で検出: 以前は実ユーザー名入りの絶対パスがハードコードされており、
+ * public リポジトリへの情報混入 + 他マシンで preview 機能が全滅する問題があった。
+ * 環境非依存の解決順:
+ *   1. process.env.BUN_PATH（明示指定があれば最優先。配布時の同梱bun切替にも使用）
+ *   2. PATH 探索（Windows: `where bun` / Unix: `which bun`）
+ *   3. ~/dev/tools/bun/bun-windows-x64/bun.exe（os.homedir() ベースの既定レイアウト）
+ * 全て見つからなければ null を返す（呼び出し側で明示的エラーにする）。
  */
-const BUN_PATH = process.env.BUN_PATH || 'C:\\Users\\shira\\dev\\tools\\bun\\bun-windows-x64\\bun.exe';
+function resolveBunPath(): string | null {
+  const fromEnv = process.env.BUN_PATH;
+  if (fromEnv) return fromEnv;
+
+  try {
+    const lookupCmd = process.platform === 'win32' ? 'where' : 'which';
+    const res = spawnSync(lookupCmd, ['bun'], { encoding: 'utf-8' });
+    if (res.status === 0 && res.stdout) {
+      const first = res.stdout.split(/\r?\n/)[0].trim();
+      if (first && fs.existsSync(first)) return first;
+    }
+  } catch {
+    // PATH 探索に失敗してもフォールバックへ進む
+  }
+
+  const homeFallback = path.join(os.homedir(), 'dev', 'tools', 'bun', 'bun-windows-x64', 'bun.exe');
+  if (fs.existsSync(homeFallback)) return homeFallback;
+
+  return null;
+}
+
+/** Bun が見つからない場合の共通エラー（エラー文字列に絶対パスは含めない）。 */
+function bunNotFoundError(): Error {
+  return new Error(
+    '[sidecar] Bun 実行ファイルが見つかりません。BUN_PATH 環境変数で bun のパスを指定するか、' +
+      'bun を PATH に追加して再試行してください。',
+  );
+}
 
 const app = express();
 
@@ -715,10 +749,13 @@ async function startApiServer(dir: string): Promise<number> {
     return 0;
   }
 
+  const bun = resolveBunPath();
+  if (!bun) throw bunNotFoundError();
+
   for (let attempt = 0; attempt <= API_MAX_FALLBACK; attempt++) {
     const port = API_DESIRED_PORT + attempt;
     console.log(`[apiserver] Starting API server on port ${port}...`);
-    const child = spawn(BUN_PATH, ['src/server.ts'], {
+    const child = spawn(bun, ['src/server.ts'], {
       cwd: dir,
       stdio: 'pipe',
       detached: true,
@@ -791,6 +828,8 @@ function waitForApiPort(port: number, timeoutMs: number): Promise<boolean> {
 async function startWorkspaceDevServer(dir: string) {
   stopWorkspaceDevServer();
   killOrphanDevServer();
+  const bun = resolveBunPath();
+  if (!bun) throw bunNotFoundError();
   // Windows は taskkill 後のポート解放にラグがある → 解放を待ってから起動
   await waitForPortFree(WORKSPACE_DEV_PORT);
   // 起動前に既応答ポートをベースライン記録（旧残骸をポーリングで拾わない）
@@ -802,9 +841,9 @@ async function startWorkspaceDevServer(dir: string) {
   // unnecessary HMR reloads when checkpoints are created/restored.
   patchViteConfigForDotDeskspawn(dir);
 
-  // Host has no npm — use Bun (absolute path, shell:false).
+  // Host has no npm — use Bun (resolveBunPath() で解決, shell:false).
   // PORT env は vite に効かないため CLI オプションでポートを固定する
-  const child = spawn(BUN_PATH, ['run', 'dev', '--', '--port', String(WORKSPACE_DEV_PORT)], {
+  const child = spawn(bun, ['run', 'dev', '--', '--port', String(WORKSPACE_DEV_PORT)], {
     cwd: dir,
     stdio: 'pipe',
     detached: true,
@@ -878,9 +917,14 @@ async function runInstall(dir: string): Promise<void> {
 
 function spawnInstall(dir: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const bun = resolveBunPath();
+    if (!bun) {
+      reject(bunNotFoundError());
+      return;
+    }
     console.log(`[projects] Installing dependencies in ${dir}...`);
-    // Host has no npm — use Bun (absolute path, shell:false).
-    const child = spawn(BUN_PATH, ['install', '--ignore-scripts'], {
+    // Host has no npm — use Bun (resolveBunPath() で解決, shell:false).
+    const child = spawn(bun, ['install', '--ignore-scripts'], {
       cwd: dir,
       stdio: 'pipe',
     });
@@ -1662,8 +1706,10 @@ app.post('/api/preview/check', async (req, res) => {
 
     // 1. tsc --noEmit (via bunx)
     if (fs.existsSync(dir)) {
+      const bun = resolveBunPath();
+      if (!bun) throw bunNotFoundError();
       try {
-        execFileSync(BUN_PATH, ['x', 'tsc', '--noEmit', '--pretty', 'false'], {
+        execFileSync(bun, ['x', 'tsc', '--noEmit', '--pretty', 'false'], {
           cwd: dir,
           encoding: 'utf-8',
           timeout: 60_000,
