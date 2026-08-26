@@ -42,6 +42,7 @@ import { setModelCostCache, clearModelCostCache } from "../lib/cost";
 import { getModelsForProvider } from "../lib/models-fetcher";
 import { seedAppFromFilesystem, seedAppFromWorkspace, hasAppFiles } from "../lib/seed-app";
 import i18n from "../lib/i18n";
+import { isDesktopEnv } from "../lib/platform";
 
 // ── Sidecar config sync (デスクトップのみ) ─────────────────────────────────────
 //
@@ -70,14 +71,6 @@ async function pushAiConfigToSidecar(config: {
   } catch (e) {
     console.warn("[sidecar] Failed to push AI config:", e);
   }
-}
-
-/** デスクトップ環境判定（Web では false）。 */
-function isDesktopEnv(): boolean {
-  return (
-    typeof window !== "undefined" &&
-    Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__)
-  );
 }
 
 // ── Store Types ─────────────────────────────────────────────────────────────
@@ -442,6 +435,9 @@ export const useAppStore = create<Store>((set, get) => ({
       // sync them from the filesystem (for apps created by the
       // desktop/Tauri version).
       setTimeout(async () => {
+        // seed-app は Web 専用の vite dev-server ブリッジ。desktop では
+        // 実ファイルがそのまま使えるため不要な fetch を防ぐ（監査 2026-08-27）。
+        if (isDesktopEnv()) return;
         try {
           const hasFiles = await hasAppFiles(id);
           if (!hasFiles) {

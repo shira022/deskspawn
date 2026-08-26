@@ -17,6 +17,7 @@
 import type { AppSettings } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
 import { SETTINGS_KEY } from "./constants";
+import { isDesktopEnv } from "./platform";
 
 // ── Constants ────────────────────────────────────────────────────────────────
 
@@ -224,22 +225,6 @@ export async function loadProviderConfig(
   return cfg ?? null;
 }
 
-export async function deleteProviderConfig(provider: string): Promise<void> {
-  const db = await openDB();
-  const tx = db.transaction("settings", "readwrite");
-  const store = tx.objectStore("settings");
-  await new Promise<void>((resolve, reject) => {
-    const req = store.delete(providerConfigKey(provider));
-    req.onsuccess = () => resolve();
-    req.onerror = () => reject(req.error);
-  });
-}
-
-export async function hasProviderConfig(provider: string): Promise<boolean> {
-  const cfg = await getSetting<StoredProviderConfig>(providerConfigKey(provider));
-  return !!cfg?.model;
-}
-
 // ── Last Active Provider ────────────────────────────────────────────────────
 //
 // Tracks which provider was last used (per-provider configs need this to know
@@ -326,12 +311,8 @@ export async function loadCurrentAppId(): Promise<string | null> {
  * Desktop uses real files via Rust IPC (ADR-008); Web uses IndexedDB.
  * The desktop adapter is imported lazily so the web bundle stays unaffected.
  */
-function isDesktopRuntime(): boolean {
-  return typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__);
-}
-
 export async function listApps(): Promise<StoredApp[]> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { listAppsDesktop } = await import("./storage-desktop");
     return listAppsDesktop();
   }
@@ -346,7 +327,7 @@ export async function listApps(): Promise<StoredApp[]> {
 }
 
 export async function getApp(id: string): Promise<StoredApp | null> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { getAppDesktop } = await import("./storage-desktop");
     return getAppDesktop(id);
   }
@@ -361,7 +342,7 @@ export async function getApp(id: string): Promise<StoredApp | null> {
 }
 
 export async function saveApp(app: StoredApp): Promise<string> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { saveAppDesktop } = await import("./storage-desktop");
     return saveAppDesktop(app);
   }
@@ -377,7 +358,7 @@ export async function saveApp(app: StoredApp): Promise<string> {
 }
 
 export async function deleteApp(id: string): Promise<void> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { deleteAppDesktop } = await import("./storage-desktop");
     return deleteAppDesktop(id);
   }
@@ -401,7 +382,7 @@ export async function deleteApp(id: string): Promise<void> {
 export async function deleteAppDatabase(appId: string): Promise<void> {
   // C8 (web-storage audit 2026-08-12): on desktop the host origin has no such
   // IndexedDB database (generated apps live as real files) — skip the no-op.
-  if (typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__)) {
+  if (isDesktopEnv()) {
     return;
   }
   const dbName = `deskspawn_app_${appId}`;
@@ -419,7 +400,7 @@ export async function deleteAppDatabase(appId: string): Promise<void> {
 // ── Chat History Operations ───────────────────────────────────────────────────
 
 export async function getChatHistory(appId: string): Promise<any[]> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { getChatHistoryDesktop } = await import("./storage-desktop");
     return getChatHistoryDesktop(appId);
   }
@@ -435,7 +416,7 @@ export async function getChatHistory(appId: string): Promise<any[]> {
 }
 
 export async function saveChatHistory(appId: string, messages: any[]): Promise<void> {
-  if (isDesktopRuntime()) {
+  if (isDesktopEnv()) {
     const { saveChatHistoryDesktop } = await import("./storage-desktop");
     return saveChatHistoryDesktop(appId, messages);
   }
@@ -468,9 +449,22 @@ export async function getStorageStats(): Promise<{
 // language-select screen.
 
 export async function saveSettingsDesktop(settings: AppSettings): Promise<void> {
+  // 起動フラッシュ解消（監査 2026-08-27）: 保存先の主は config.json のまま、
+  // 言語とテーマのみ localStorage へミラーする。i18n.ts / desktop の
+  // vite.config.ts テーマスクリプトは同期 localStorage 読みなので、ミラーが
+  // あれば 2 回目起動時に前回の言語/テーマが初回レンダー前に確定する。
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     await invoke("save_settings", { settings });
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      const current = raw ? (JSON.parse(raw) as Record<string, unknown>) : {};
+      current.language = settings.language;
+      current.theme = settings.theme;
+      localStorage.setItem(SETTINGS_KEY, JSON.stringify(current));
+    } catch {
+      // non-critical — mirror は起動フラッシュ解消目的のみ
+    }
     return;
   } catch {
     // Not in Tauri environment — use localStorage (Web)

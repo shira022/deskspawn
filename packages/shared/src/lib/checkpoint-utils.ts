@@ -45,14 +45,16 @@ export function getMessageCountForCheckpoint(
 
 /**
  * Restore app files to a given checkpoint and clean up future checkpoints
- * using browser-native checkpoint storage (IndexedDB).
+ * （デスクトップ: sidecar が実ファイル <app>/.deskspawn/checkpoints/<id>/ から復元 /
+ * Web: IndexedDB のファイルスナップショットから復元 — 監査 2026-08-27 で旧コメント修正）。
  * Throws if the restore fails.
  */
 export async function restoreCheckpoint(checkpointId: string): Promise<void> {
   const pid = getAppId();
   if (!pid) throw new Error("No app selected.");
 
-  // Use the browser-native checkpoint restore from tool-executors
+  // tool-executors の復元処理はプラットフォームで自動分岐
+  // （デスクトップ: sidecar 実ファイル / Web: IndexedDB スナップショット）
   const { restoreCheckpoint: engineRestore, deleteCheckpointsAfter } = await import("../engine/tool-executors");
   await engineRestore(pid, checkpointId);
   await deleteCheckpointsAfter(pid, checkpointId);

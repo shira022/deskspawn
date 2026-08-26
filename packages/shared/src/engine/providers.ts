@@ -15,6 +15,7 @@ import { createVertex } from '@ai-sdk/google-vertex/edge';
 import type { LanguageModel } from 'ai';
 import type { ProviderConfig } from "@deskspawn/ai-core";
 import { sidecarBase, sidecarFetchWithToken } from "../lib/sidecar";
+import { isDesktopEnv } from "../lib/platform";
 
 export function getModel(config: ProviderConfig): LanguageModel {
   const { provider, model, apiKey, customEndpoint } = config;
@@ -89,9 +90,7 @@ export function getModel(config: ProviderConfig): LanguageModel {
         );
       }
       // デスクトップ(Tauri)ではサイドカープロキシ経由で呼ぶ (CORS回避)
-      const isDesktop =
-        typeof window !== 'undefined' &&
-        (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ === true;
+      const isDesktop = isDesktopEnv();
       const client = createOpenAICompatible({
         name: 'custom-provider',
         baseURL: isDesktop ? `${sidecarBase()}/v1` : customEndpoint,
