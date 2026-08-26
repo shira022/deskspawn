@@ -97,8 +97,9 @@ test.beforeAll(async () => {
   }
 
   // ⚠️ ここで実データ（アプリ/設定/チャット履歴）を削除する。
-  // reset_app_data はデバッグビルド + DESKSPAWN_TEST_RESET=1 の時のみ動作する
-  // E2E 専用コマンド（開発環境限定・誤爆防止ガード付き）。APIキー
+  // reset_app_data は env ガードのみ（DESKSPAWN_TEST_RESET=1）で動作する
+  // E2E 専用コマンド — デバッグビルド限定ではない（release ビルドでも動作、
+  // ai_config.rs のコメント参照。誤爆防止は env ガードのみ）。APIキー
   // （OSキーチェーン）とAIプロバイダー設定は削除されない。
   // ヘッダコメントと AGENTS.md の警告を確認すること。
   await page.evaluate(() => localStorage.clear());
