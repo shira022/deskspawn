@@ -28,11 +28,6 @@ async function tauriInvoke<T>(cmd: string, args?: Record<string, unknown>): Prom
   return invoke<T>(cmd, args);
 }
 
-/** True when running inside Tauri (desktop). */
-function isDesktopRuntime(): boolean {
-  return typeof window !== "undefined" && Boolean((window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__);
-}
-
 // ── App Operations (Rust IPC) ─────────────────────────────────────────────
 
 /** Map Rust AppMeta (snake_case) to the shared StoredApp shape. */
@@ -144,11 +139,6 @@ export async function writeAppFilesDesktop(
     appId,
     files: entries,
   });
-}
-
-/** Desktop adapter detection used by storage.ts. */
-export function isDesktopStorageActive(): boolean {
-  return isDesktopRuntime();
 }
 
 // ── Chat History (per-app SQLite via Rust IPC, ADR-009 / ADR-013) ──────────

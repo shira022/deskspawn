@@ -14,10 +14,6 @@ vi.mock("@tauri-apps/api/core", () => ({
   invoke: (...args: unknown[]) => invokeMock(...args),
 }));
 
-// The module reads `window.__DESKSPAWN_DESKTOP__` — provide a node-safe shim.
-const windowShim = {} as { __DESKSPAWN_DESKTOP__?: boolean };
-(globalThis as unknown as { window?: unknown }).window = windowShim;
-
 import {
   listAppsDesktop,
   getAppDesktop,
@@ -28,13 +24,10 @@ import {
   readAppFilesDesktop,
   writeAppFileDesktop,
   writeAppFilesDesktop,
-  isDesktopStorageActive,
 } from "./storage-desktop";
 
 beforeEach(() => {
   invokeMock.mockReset();
-  // Default: not in a desktop runtime (no window flag) unless a test sets it.
-  delete windowShim.__DESKSPAWN_DESKTOP__;
 });
 
 describe("storage-desktop", () => {
@@ -151,12 +144,6 @@ describe("storage-desktop", () => {
         ["b.ts", "2"],
       ],
     });
-  });
-
-  it("isDesktopStorageActive reflects the __DESKSPAWN_DESKTOP__ flag", () => {
-    expect(isDesktopStorageActive()).toBe(false);
-    (windowShim as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ = true;
-    expect(isDesktopStorageActive()).toBe(true);
   });
 
   it("getChatHistoryDesktop restores full payload objects", async () => {
