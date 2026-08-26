@@ -86,6 +86,7 @@ pub struct AiConfig {
     pub custom_endpoint: Option<String>,
     #[serde(alias = "api_version")]
     pub api_version: Option<String>,
+    #[serde(default)]
     pub temperature: f64,
     #[serde(alias = "max_tokens")]
     pub max_tokens: Option<u32>,
@@ -362,8 +363,8 @@ mod tests {
     #[test]
     fn ai_config_ignores_unknown_version_field() {
         // 将来 config.json に "version" 等の未知フィールドが追加されても
-        // 無視してパースできる（前方互換）。
-        let json = r#"{"provider":"anthropic","model":"claude","version":2}"#;
+        // 無視してパースできる（前方互換）。必須フィールド（api_key）は含める。
+        let json = r#"{"provider":"anthropic","api_key":"sk-x","model":"claude","version":2}"#;
         let cfg: AiConfig = serde_json::from_str(json).unwrap();
         assert_eq!(cfg.provider, "anthropic");
         assert_eq!(cfg.model, "claude");
