@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Cargo.lock の全レジストリ依存を crates.io sparse index と突き合わせ、
 「存在しないバージョン」や「checksum不一致」を網羅的に検出する。
-
 使い方: python3 scan_cargo_lock.py <Cargo.lock>
+
+終了コード: 0 = 問題なし / 1 = 問題あり または index 取得失敗（検証不能を FAIL とみなす）
 """
 import re
 import sys
@@ -45,7 +46,7 @@ def index_url(name):
         return f"https://index.crates.io/3/{name[0]}/{name}"
     return f"https://index.crates.io/{name[:2]}/{name[2:4]}/{name}"
 
-def fetch_index(name, retries=3):
+def fetch_index(name, retries=5):
     """sparse index をフェッチして {version: {cksum, yanked}} を返す。失敗時は None"""
     for attempt in range(retries):
         req = urllib.request.Request(index_url(name), headers={"User-Agent": "deskspawn-lock-scan"})
@@ -92,7 +93,12 @@ def main():
 
     missing_idx = [n for n in names if indexes[n] is None]
     if missing_idx:
+        # ネットワーク要因で index が取れないと「✅問題なし」と誤判定してしまうため、
+        # 取得失敗時は検証不能として FAIL (exit 1) にする（監査 2026-08-27 指摘対応）。
         print(f"\n⚠️ index取得失敗 (ネットワーク/存在しないクレート?): {missing_idx}")
+        print("❌ FAIL: index 取得に失敗したパッケージがあるため検証を完了できません")
+        print("   (crates.io sparse index への到達性を確認して再実行してください)")
+        sys.exit(1)
 
     problems = []
     for p in registry_pkgs:
