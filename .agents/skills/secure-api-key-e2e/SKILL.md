@@ -121,6 +121,7 @@ git status --short | grep -i '\.env'
 
 ## Pitfalls
 
+- **verify-generate-app.mjs の `--cleanup` で `window` を Node コンテキストから参照しない**（実績 2026-08-22: `ReferenceError: window is not defined` で cleanup が常に失敗していた — 握りつぶされて `cleanedUp: false` になるだけ）。`__TAURI_INTERNALS__`・`__DESKSPAWN_SIDECAR_PORT__` は必ず `page.evaluate` 内で参照する
 - `pnpm test:e2e`（real でない方）は web.spec.ts も実行し、CDP サーバー不在で失敗する → **実API は必ず `pnpm test:e2e:real`**。
 - credentials.json（file フォールバック）は**ユーザープロファイル内のみ**保存。プロファイル外は拒否（ADR-015）。
 - trace が `retain-on-failure` のままだと失敗時にキー/プロンプトが残る → 実API 時は config が自動オフにするが、手動実行する場合は `--trace off` を付ける。
