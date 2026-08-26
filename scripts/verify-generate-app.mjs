@@ -20,6 +20,7 @@
  *   CDP_URL                   WebView2 CDP エンドポイント (default: http://172.28.208.1:9222)
  *   DESKSPAWN_E2E_REAL=1      実APIモード（必須。未設定なら拒否）
  *   DESKSPAWN_API_KEY         実APIキー（.env から source すること。値はログに出力しない）
+ *   DESKSPAWN_APPS_DIR        アプリ実体ディレクトリ（必須。例: /mnt/c/Users/<you>/deskspawn/apps）
  *
  * ── セキュリティ ────────────────────────────────────────────────
  *   ⚠️ 実API を使用する。実コストが発生する。開発者の明示依頼時のみ実行すること。
@@ -39,7 +40,7 @@ const REAL_API = process.env.DESKSPAWN_E2E_REAL === '1';
 const args = process.argv.slice(2);
 const CLEANUP = args.includes('--cleanup');
 const PROMPT = args.find((a) => !a.startsWith('--')) || 'ToDoアプリを作成して';
-const APPS_DIR = process.env.DESKSPAWN_APPS_DIR || '/mnt/c/Users/shira/deskspawn/apps';
+const APPS_DIR = process.env.DESKSPAWN_APPS_DIR || '';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -58,6 +59,13 @@ async function main() {
   }
   if (!process.env.DESKSPAWN_API_KEY) {
     return done({ ok: false, error: 'DESKSPAWN_API_KEY が未設定です。.env を source してください。' });
+  }
+  if (!APPS_DIR) {
+    return done({
+      ok: false,
+      error:
+        'DESKSPAWN_APPS_DIR が未設定です。.env で Windows 側のアプリ実体ディレクトリを指定してください（例: /mnt/c/Users/<you>/deskspawn/apps）。',
+    });
   }
 
   const t0 = Date.now();
@@ -178,17 +186,31 @@ async function main() {
     let cleanedUp = false;
     if (CLEANUP && appId) {
       try {
-        const invoke = window.__TAURI_INTERNALS__?.invoke;
-        if (invoke) {
-          // プレビュー停止（best effort・lock 解放）
+        // window.__TAURI_INTERNALS__ は Node コンテキストに存在しないため、
+        // 必ず WebView2 ページのコンテキスト（page.evaluate）内で実行する
+        // （実績 2026-08-22: 以前は Node 直参照で ReferenceError になり
+        //   cleanup が常に失敗していた）。
+        cleanedUp = await page.evaluate(async (id) => {
+          const internals =
+            window.__TAURI_INTERNALS__ &&
+            typeof window.__TAURI_INTERNALS__.invoke === 'function'
+              ? window.__TAURI_INTERNALS__
+              : null;
+          if (!internals) return false;
+          // プレビュー停止（best effort・lock 解放）。トークン無しは 401 になるが、
+          // delete_app 側の os error 32 リトライ（最大 ~31 秒）がカバーする。
           const port = window.__DESKSPAWN_SIDECAR_PORT__;
           if (port) {
-            await fetch(`http://127.0.0.1:${port}/api/preview/stop`, { method: 'POST' }).catch(() => {});
+            try {
+              await fetch(`http://127.0.0.1:${port}/api/preview/stop`, { method: 'POST' });
+            } catch {
+              // best effort — ignore
+            }
           }
           await new Promise((r) => setTimeout(r, 1000)); // lock 解放待ち
-          await invoke('delete_app', { appId });
-          cleanedUp = true;
-        }
+          await internals.invoke('delete_app', { appId: id });
+          return true;
+        }, appId);
       } catch (e) {
         console.warn('[verify] cleanup failed:', e?.message || String(e));
       }
