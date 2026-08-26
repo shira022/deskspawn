@@ -46,12 +46,16 @@ cp .env.example .env        # gitignore 済み・コミットされない
 #   DESKSPAWN_E2E_ENDPOINT=<endpoint>
 #   DESKSPAWN_E2E_MODEL=<model>
 #   DESKSPAWN_TEST_RESET=1   # E2E が実データ削除するためのガード
+#   DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e   # E2E は必須（実APIでも実キーはテスト専用キーチェーンへ）
 set -a; source .env; set +a   # シェル履歴に残さず読み込む
 ```
 
 注意:
 - キーをシェルに直接打たない（履歴に残る）。
 - `.env` は gitignore 済みだが、誤ってステージしないよう `git status` で確認。
+- **アプリを `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` 付きで起動してから** Playwright を実行する
+  （beforeAll ガードが keyring service を検証・違反は abort。実APIモードでも実キーは
+  テスト専用キーチェーンに保存され、本番 com.deskspawn は汚れない）。
 
 ### 2. 実行
 
@@ -99,10 +103,11 @@ node scripts/verify-generate-app.mjs --cleanup
 ### 4. 後始末（開発者責任）
 
 1. **キーチェーンから実キーを削除**する:
-   - Windows: コントロールパネル → 資格情報マネージャー → Windows 資格情報 → `com.deskspawn` エントリを削除
+   - Windows: コントロールパネル → 資格情報マネージャー → Windows 資格情報 → **`com.deskspawn.e2e`** エントリを削除
+     （E2E は必ずテスト専用キーチェーンに保存される。本番 `com.deskspawn` には無い）
    - または app の AI 設定でキーを削除
 2. **生成されたテストアプリ**を削除（registry + ディレクトリ）or ダミーモードの E2E でリセット。
-3. `test-results/`・`playwright-report/` が無いことを確認（クレス が自動クリーン済み）。
+3. `test-results/`・`playwright-report/` が無いことを確認（クリーンスクリプト clean-test-results.mjs が自動クリーン済み）。
 4. `.env` からキーを取り除く（不要なら .env 自体を削除）。
 
 ### 5. 検証（寄生キーの監査）
@@ -127,6 +132,34 @@ git status --short | grep -i '\.env'
   アプリ再起動 or プレビュー再試行ボタン。
 - **実API の応答は不安定**: モデルによって応答なし/長遅延がある（レート制限・一時不調）。
   スクリプトがタイムアウトしたら再実行する（実コストは発生）。
+
+## クリーンアップ（検証完了の定義に含める）
+
+実API検証は **生成 → 確認 → 適切な後始末**までが完了（2026-08-21 ユーザー要件として確定）。
+生成アプリが実データに残ったままは「未完了」扱い。
+
+- `verify-generate-app.mjs --cleanup` で生成アプリを自動削除（sidecar `/api/preview/stop` → `delete_app` IPC の順・プレビューがファイルをロックするため）。
+- 手動検証が溜まったら **apps.json の registry と `apps/app-*` ディレクトリを突き合わせて残骸を確認**:
+  - registry に無い**孤立ディレクトリ**は UI から消せない → 直接削除。
+  - config.json の `currentApp` も None にリセット（`delete_app` は 2026-08-21 から削除対象が currentApp の場合自動クリアするよう修正済みだが、手動削除分は手で直す）。
+- プレビュープロセス（bun/node/vite）が node_modules をロックし remove が失敗する → 先に停止。
+- 削除前に apps.json・config.json のバックアップを /tmp に取る。
+
+## キーチェーン分離（テスト専用 service を推奨）
+
+- 実API E2E は `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` で起動し、**テスト専用キーチェーン**に保存する（2026-08-21 ユーザー合意）。
+  - 本番キーチェーン（com.deskspawn）を汚さず、既存の実キーを上書きしない。
+  - アプリの保存挙動は service 名が違うだけなので実使用検証として十分。
+  - 実キーの保存・削除は開発者に委ねる（ADR-015）。テスト後は `com.deskspawn.e2e` のキーチェーンエントリ削除を案内。
+- E2E beforeAll で `get_keyring_service()` を invoke し `com.deskspawn.e2e` でなければ**テスト全体を中止**（ガード・実API モードも本番 service は許可しない）。
+
+## プロバイダー別の .env（エンドポイント要否）
+
+| プロバイダー | endpoint | 備考 |
+|---|---|---|
+| openai / anthropic | ❌ 不要 | provider + api_key + model のみ |
+| custom / azure-openai / ollama | ✅ 必須 | ollama は api_key 不要 |
+| amazon-bedrock | ❌ 不要 | **region** 必須 |
 
 ## 参照
 
