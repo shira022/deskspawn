@@ -21,10 +21,12 @@
  *   CDP_URL                 WebView2 CDP エンドポイント (default: http://172.28.208.1:9222)
  *
  * 実APIモードの例 (OpenAI互換):
- *   DESKSPAWN_E2E_PROVIDER=custom \
- *   DESKSPAWN_E2E_ENDPOINT=https://api.example.com/v1 \
- *   DESKSPAWN_E2E_MODEL=my-model \
- *   DESKSPAWN_API_KEY=sk-... DESKSPAWN_E2E_REAL=1 pnpm test:e2e
+ *   1. cp .env.example .env   # .env は gitignore 済み・シェル履歴に残さない
+ *   2. .env に設定: DESKSPAWN_API_KEY / DESKSPAWN_E2E_REAL=1 / PROVIDER / ENDPOINT / MODEL
+ *   3. set -a; source .env; set +a; pnpm test:e2e:real
+ *      (test:e2e:real = desktop 限定 + 実行後 test-results クリーン)
+ *   ⚠️ 実API E2E は開発者自己責任 (コスト・キー保存/削除含む)。CI ではダミーのみ。
+ *   ⚠️ 実APIモードでは trace は自動オフ (playwright.config.ts) — キー/プロンプト漏洩防止。
  *
  * APIキーは環境変数からのみ取得する (テストファイルへの直書き禁止)。
  *
@@ -69,8 +71,10 @@ test.beforeAll(async () => {
   // ⚠️ キーチェーン分離のガード: E2E は本番キーチェーン（com.deskspawn）を
   // 汚さないよう、アプリが `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` 付きで
   // 起動されていることを確認する（2026-08-15 レビュー指摘対応）。
-  // テスト02 がダミーキーを保存しても、本番 service ではなくテスト専用
+  // テスト02 がキーを保存しても、本番 service ではなくテスト専用
   // service に入るため、開発機の実 API キーは上書きされない。
+  // 実APIモード（REAL_API=1）も同じくテスト専用キーチェーンに保存する
+  // （ADR-015: 実キー保存先は開発者委ねる。本番を汚さない方針）。
   const ks = await page.evaluate(async () => {
     const internals = (window as unknown as {
       __TAURI_INTERNALS__?: { invoke: (c: string, a?: object) => Promise<unknown> };

@@ -126,6 +126,19 @@ pub fn delete_app(app_id: String) -> Result<(), String> {
     apps.retain(|p| p.id != app_id);
     write_registry(&apps)?;
 
+    // 削除したアプリが current_app（config.json の開いているアプリ）だった場合、
+    // 幽霊参照を残さないようクリアする（実績 2026-08-21: UI の削除ガード
+    // では起きないが、直接 IPC 削除では current_app が空参照のまま残った）。
+    if crate::commands::ai_config::read_existing_config()
+        .map(|c| c.current_app.as_deref() == Some(app_id.as_str()))
+        .unwrap_or(false)
+    {
+        if let Some(mut cfg) = crate::commands::ai_config::read_existing_config() {
+            cfg.current_app = None;
+            crate::commands::ai_config::write_config(&cfg)?;
+        }
+    }
+
     // Remove the on-disk directory (recursive, guarded to app root only).
     // Windows ではプレビュー停止後やウイルススキャン（Defender 等）の
     // リアルタイムチェックでファイルハンドル解放に数十秒かかることがあり、
@@ -706,6 +719,39 @@ mod tests {
 
             // Deleting again errors.
             assert!(delete_app(meta.id.clone()).is_err());
+        });
+    }
+
+    #[test]
+    fn delete_app_clears_current_app_reference() {
+        with_temp_root(|| {
+            let meta = create_app("CurrentRef".to_string()).unwrap();
+            // このアプリを current_app として保存
+            crate::commands::ai_config::save_current_app(meta.id.clone()).unwrap();
+            assert_eq!(
+                crate::commands::ai_config::load_current_app().unwrap().as_deref(),
+                Some(meta.id.as_str())
+            );
+
+            // 削除すると current_app がクリアされる（幽霊参照防止・2026-08-21）
+            delete_app(meta.id.clone()).unwrap();
+            assert_eq!(crate::commands::ai_config::load_current_app().unwrap(), None);
+        });
+    }
+
+    #[test]
+    fn delete_app_keeps_current_app_when_other_app_deleted() {
+        with_temp_root(|| {
+            let keep = create_app("Keep".to_string()).unwrap();
+            let del = create_app("Delete".to_string()).unwrap();
+            crate::commands::ai_config::save_current_app(keep.id.clone()).unwrap();
+
+            // 別アプリを削除しても current_app は維持される
+            delete_app(del.id.clone()).unwrap();
+            assert_eq!(
+                crate::commands::ai_config::load_current_app().unwrap().as_deref(),
+                Some(keep.id.as_str())
+            );
         });
     }
 

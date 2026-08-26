@@ -111,6 +111,25 @@ pnpm test:e2e
 
 > **Never hardcode API keys in test files.** Keys are read from the environment only.
 
+> ⚠️ **Real-API E2E is the developer's own responsibility.** It uses a real
+> API key, incurs real cost, and stores the key in the **OS keychain** (same
+> path as production). The developer is responsible for saving **and deleting**
+> the key. Recommended guardrails:
+> - Use a **rate-limited / low-quota key**, never a production key. Cap cost
+>   (small model, max tokens, one generation only).
+> - Keep the key out of shell history: use the gitignored `.env` file
+>   (`cp .env.example .env`, then `set -a; source .env; set +a`).
+> - **CI must never run real-API E2E** — dummy mode only (`DESKSPAWN_E2E_REAL` unset).
+>
+> **Leak-mitigation is automatic:** `playwright.config.ts` disables trace when
+> `DESKSPAWN_E2E_REAL=1`, and `pnpm test:e2e:real` cleans `test-results/` and
+> `playwright-report/` afterwards. credentials.json (file fallback) only ever
+> lives under the user profile.
+>
+> Prefer `pnpm test:e2e:real` (desktop-only + cleanup) over the raw command
+> above, since `pnpm test:e2e` also targets the web suite which needs a live
+> CDP server.
+
 ## Branch Strategy
 
 We use a 3-branch GitFlow:
