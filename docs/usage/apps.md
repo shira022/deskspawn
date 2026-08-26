@@ -45,11 +45,11 @@ Everything lives under `~/deskspawn/` on your machine:
 ```
 ~/deskspawn/
 ├── apps/                 # your generated apps (real files on disk)
-│   └── <app-id>/
-│       ├── src/          # editable source files
-│       └── .deskspawn/
-│           └── chat.db   # per-app chat history (SQLite)
-├── apps.json             # app registry (id, name, timestamps)
+│   ├── <app-id>/
+│   │   ├── src/          # editable source files
+│   │   └── .deskspawn/
+│   │       └── chat.db   # per-app chat history (SQLite)
+│   └── apps.json         # app registry (id, name, timestamps)
 ├── config/               # app settings
 └── templates/            # bundled templates
 ```

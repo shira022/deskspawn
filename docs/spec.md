@@ -26,6 +26,8 @@ deskspawn/
 │       ├── src-tauri/             # Rust backend (storage, sidecar mgmt, IPC)
 │       └── sidecar/               # Node/Bun AI engine (local preview + AI proxy)
 ├── packages/
+│   ├── shared/                    # ⭐ Shared app code (ADR-014)
+│   │   └── src/                   # engine/ hooks/ lib/ store/ components/ locales/ types/
 │   ├── ui/                        # Shared UI primitives
 │   ├── ai-core/                   # Shared types & service interfaces
 │   └── config/                    # Shared tsconfig
@@ -36,9 +38,10 @@ deskspawn/
 
 - **Shell**: Tauri v2 (Rust)
 - **Frontend**: Vite + React 18 + TypeScript
-- **Shared UI**: the desktop imports the web app's components directly via a
-  `@/*` alias → `apps/web/src/*` (true code sharing; only platform-specific
-  parts are branched via `isDesktopEnv()`)
+- **Shared code (ADR-014)**: the desktop and web apps both import shared UI,
+  chat, AI engine, storage, i18n, and types from `packages/shared/src` via
+  the `@deskspawn/shared` alias (only platform-specific parts are branched
+  via `isDesktopEnv()`); `apps/desktop/src` is a thin wrapper
 - **AI engine**: a local **sidecar** (bundled with Bun, ADR-011) runs the
   multi-agent pipeline and proxies AI API calls (CORS fix, ADR-003)
 - **Storage**: real files on disk + SQLite (ADR-007/008/009)
@@ -60,18 +63,20 @@ deskspawn/
 ```
 ~/deskspawn/
 ├── apps/                 # generated apps — real files on disk
-│   └── <app-id>/
-│       ├── src/          # editable source
-│       └── .deskspawn/
-│           └── chat.db   # per-app chat history (SQLite, Rust-managed)
-├── apps.json             # app registry (JSON)
+│   ├── <app-id>/
+│   │   ├── src/          # editable source
+│   │   └── .deskspawn/
+│   │       └── chat.db   # per-app chat history (SQLite, Rust-managed)
+│   └── apps.json         # app registry (JSON)
 ├── config/               # settings, AI provider config (keys → OS keychain)
 ├── templates/            # bundled app templates
 └── tools/                # sidecar tooling (bun, etc.)
 ```
 
-- **Hybrid management data** (ADR-009): app list/settings in JSON,
-  per-app chat history in SQLite (`chat_messages.app_id`, `app_id TEXT`).
+- **Hybrid management data** (ADR-009): app list/settings in JSON; per-app
+  chat history in SQLite with schema v2 (ADR-013): `chat_messages`
+  (`client_id TEXT UNIQUE` + `payload TEXT` holding the full message JSON),
+  saved atomically via `save_chat_messages` (whole-table replace).
 - **API keys**: OS keychain (Windows Credential Manager) via Rust IPC.
 - **Web version**: IndexedDB/OPFS for apps + API keys (evaluation only).
 
