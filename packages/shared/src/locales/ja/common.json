@@ -16,7 +16,9 @@
     "reload": "再読み込み",
     "refresh": "更新",
     "minimize": "最小化",
-    "maximize": "最大化"
+    "maximize": "最大化",
+    "copy": "コピー",
+    "retry": "リトライ"
   },
   "settings": {
     "title": "設定",
@@ -285,7 +287,8 @@
     "templateAutoBackup": "変更は自動でバックアップされます",
     "templateShare": "他のユーザーとアプリを共有するにはエクスポート/インポート",
     "creating": "作成中...",
-    "create": "作成"
+    "create": "作成",
+    "createError": "アプリの作成に失敗しました"
   },
   "fileTree": {
     "askAiToGenerate": "AIにアプリ生成を指示してください",

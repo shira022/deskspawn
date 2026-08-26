@@ -146,7 +146,7 @@ deskspawn/                          # pnpm workspace root
 │   │   ├── src/                    # Web-only entry: main.tsx, App.tsx, index.css, routes/, test/
 │   │   ├── public/                 # Static assets + _headers
 │   └── desktop/                    # Tauri v2 desktop app — thin wrapper over packages/shared
-│       ├── src/                    # Entry point + platform services only (5 files)
+│       ├── src/                    # Entry point + platform services only (6 files)
 │       ├── src-tauri/              # Rust backend (storage, sidecar, IPC)
 │       └── sidecar/                # Bun-bundled Node server (AI proxy, preview, MCP)
 ├── packages/
@@ -165,7 +165,7 @@ deskspawn/                          # pnpm workspace root
 |---|---|---|
 | **UI & AI chat flow** | `packages/shared/src/**` | The single source of truth. Both `apps/web` and `apps/desktop` import it directly via the `@deskspawn/shared` alias. Do NOT edit code under `apps/web/src` (except `main.tsx`/`App.tsx`/`routes/`) to fix shared UI/AI logic — edit `packages/shared/src`. |
 | Web entry + routing | `apps/web/src/` | Only `main.tsx`, `App.tsx`, `index.css`, `routes/`, `test/`. Everything else lives in `packages/shared`. |
-| Desktop entry + IPC | `apps/desktop/src/` | Only 5 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `lib/ipc.ts` (Tauri bridge — `getSidecarPort` is the only live wrapper), `lib/services.ts`. |
+| Desktop entry + IPC | `apps/desktop/src/` | Only 6 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `vite-env.d.ts`, `index.css`, `lib/ipc.ts` (Tauri bridge — `getSidecarPort` is the only live wrapper), `lib/services.ts`. |
 | Rust backend | `apps/desktop/src-tauri/` | Storage, sidecar lifecycle, security server. |
 | Standalone AI server | `apps/desktop/sidecar/` | Bun-bundled Node server: OpenAI-compatible `/v1` proxy (CORS workaround), `/api/models`, preview server. Its `providers.ts` mirrors `packages/shared/src/engine/providers.ts` but is **not** on the current chat path. |
 | Model resolution (OpenAI/Anthropic/etc.) | `packages/shared/src/engine/providers.ts` | **The single source of truth** for which API each provider uses. Also mirrored in `apps/desktop/sidecar/src/providers.ts` (legacy path). |
@@ -241,5 +241,5 @@ This project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
 直したい場合は `apps/web/src` や `apps/desktop/src` ではなく
 `packages/shared/src` を編集してください。`apps/web/src` は Web 専用の
 エントリ（main.tsx・App.tsx・routes）だけ、`apps/desktop/src` はデスクトップの
-エントリとWindows固有のサービス登録（5ファイル）だけです。詳細は README の
+エントリとWindows固有のサービス登録（6ファイル）だけです。詳細は README の
 **Project Structure** を参照。
