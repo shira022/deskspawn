@@ -46,3 +46,6 @@ e2e/.auth/
 # Preview test fixture (not part of the repo)
 preview-test/
 
+# Lockfiles (pnpm-only repo — prevent npm lockfile contamination)
+package-lock.json
+
