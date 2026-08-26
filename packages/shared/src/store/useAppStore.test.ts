@@ -39,8 +39,6 @@ vi.mock("../lib/storage", () => {
       simpleMode: true,
     }),
     listApps: vi.fn().mockResolvedValue([]),
-    deleteProviderConfig: vi.fn().mockResolvedValue(undefined),
-    hasProviderConfig: vi.fn().mockResolvedValue(false),
   };
   // Sync to shared ref so tests can configure mocks
   Object.assign(mockStorageFns, fns);

@@ -11,6 +11,7 @@
  */
 import type { ModelInfo, ModelCost } from "../types";
 import { sidecarBase, sidecarFetch } from "./sidecar";
+import { isDesktopEnv } from "./platform";
 
 // ─── In-memory cache ───────────────────────────────────────────────────────────
 
@@ -212,9 +213,7 @@ async function fetchCustomModels(
   apiKey?: string,
 ): Promise<ModelInfo[]> {
   // デスクトップ(Tauri)ではサイドカープロキシ経由で取得 (CORS回避)
-  const isDesktop =
-    typeof window !== "undefined" &&
-    (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ === true;
+  const isDesktop = isDesktopEnv();
   const base = (isDesktop ? `${sidecarBase()}/v1` : endpoint).replace(/\/+$/, "");
   const url = `${base}/models`;
   const headers: Record<string, string> = {
