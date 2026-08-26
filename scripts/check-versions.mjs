@@ -13,7 +13,10 @@
  *
  * 使い方:
  *   node scripts/check-versions.mjs            # 全箇所が一致しているか確認
- *   node scripts/check-versions.mjs 0.4.1      # 指定バージョンとの一致を確認
+ *   node scripts/check-versions.mjs 0.4.2      # 指定バージョンとの一致を確認
+ *
+ * テスト用: 環境変数 DESKSPAWN_CHECK_VERSIONS_ROOT でリポジトリ root を
+ * 差し替え可能（scripts/check-versions.test.mjs がフィクスチャで利用）。
  *
  * 終了コード: 0 = OK / 1 = 不一致あり
  */
@@ -21,7 +24,7 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
+const ROOT = process.env.DESKSPAWN_CHECK_VERSIONS_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..');
 const EXPECTED = process.argv[2] || null;
 
 /** JSON の "version" を読む */
