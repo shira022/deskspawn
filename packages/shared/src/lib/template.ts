@@ -90,6 +90,8 @@ const PACKAGE_JSON_DESKTOP = JSON.stringify(
     },
     devDependencies: {
       "@tailwindcss/vite": "^4.3.0",
+      "@types/bun": "^1.1.0",
+      "@types/node": "^22.0.0",
       "@types/react": "^18.3.12",
       "@types/react-dom": "^18.3.1",
       "@vitejs/plugin-react": "^4.3.4",
@@ -180,6 +182,11 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    proxy: {
+      "/api": "http://localhost:${apiPort}",
+    },
+  },
 });`;
 }
 
@@ -264,18 +271,19 @@ import { mkdirSync } from "fs";
 import path from "path";
 
 // DB path comes from DATABASE_URL (defaults to ./data/app.db).
-const DB_URL = process.env.DATABASE_URL || "file:./data/app.db";
-const dbPath = DB_URL.replace(/^file:/, "");
+// DATABASE_URL は openDb() 内で遅延評価する。テストが ":memory:" を設定して
+// から開けるようにするため（監査 2026-08-27: モジュール先頭評価だとテストが
+// ライブDB ./data/app.db を破壊していた）。
+function getDbUrl(): string {
+  return process.env.DATABASE_URL || "file:./data/app.db";
+}
 
 // ── 汎用コレクションストア ────────────────────────────────────────
 // 全コレクションを1テーブル (entries) で管理する。各ドキュメントは
 // JSON 文字列として data カラムに保存。将来 Drizzle 移行時はこの
 // ファイルの関数群だけを置き換える (ADR-010)。
 
-export function openDb(): Database {
-  const dir = path.dirname(path.resolve(dbPath));
-  mkdirSync(dir, { recursive: true });
-  const db = new Database(path.resolve(dbPath));
+function initSchema(db: Database): void {
   db.query("CREATE TABLE IF NOT EXISTS entries ("
     + "id TEXT PRIMARY KEY,"
     + " collection TEXT NOT NULL,"
@@ -283,6 +291,21 @@ export function openDb(): Database {
     + " created_at TEXT NOT NULL,"
     + " updated_at TEXT NOT NULL)").run();
   db.query("CREATE INDEX IF NOT EXISTS idx_entries_collection ON entries(collection)").run();
+}
+
+export function openDb(): Database {
+  const dbUrl = getDbUrl();
+  if (dbUrl === ":memory:") {
+    // In-memory DB for tests — no filesystem writes.
+    const db = new Database(":memory:");
+    initSchema(db);
+    return db;
+  }
+  const dbPath = dbUrl.replace(/^file:/, "");
+  const dir = path.dirname(path.resolve(dbPath));
+  mkdirSync(dir, { recursive: true });
+  const db = new Database(path.resolve(dbPath));
+  initSchema(db);
   return db;
 }
 
@@ -337,11 +360,13 @@ export function clear(db: Database, collection: string): void {
   db.query("DELETE FROM entries WHERE collection = ?").run(collection);
 }
 `;
-const SERVER_TEST_TS = `import { describe, expect, it } from "vitest";
+const SERVER_TEST_TS = `import { beforeEach, describe, expect, it } from "bun:test";
 import { Hono } from "hono";
 import { openDb, getAll, create, clear } from "./lib/db";
 
 // In-memory DB for tests (DATABASE_URL=:memory: keeps the filesystem clean).
+// openDb() は DATABASE_URL を遅延評価するため、ここで設定した ":memory:" が
+// 最初の open で有効になる（監査 2026-08-27: ライブDB破壊の再発防止）。
 process.env.DATABASE_URL = ":memory:";
 const db = openDb();
 
@@ -362,11 +387,21 @@ function buildApp() {
   return app;
 }
 
+// id は毎回 crypto.randomUUID() で一意化する。固定 id を再利用すると
+// entries.id の UNIQUE 制約に衝突する（監査 2026-08-27）。
+function newDoc() {
+  const now = new Date().toISOString();
+  return { id: crypto.randomUUID(), title: "hello", created_at: now, updated_at: now };
+}
+
 describe("generated app API (ADR-010)", () => {
+  beforeEach(() => {
+    clear(db, "items");
+  });
+
   it("creates and lists docs via /api/data/:collection", async () => {
     const app = buildApp();
-    const now = new Date().toISOString();
-    const doc = { id: "1", title: "hello", created_at: now, updated_at: now };
+    const doc = newDoc();
 
     const createRes = await app.request("/api/data/items", {
       method: "POST",
@@ -378,6 +413,7 @@ describe("generated app API (ADR-010)", () => {
     const listRes = await app.request("/api/data/items");
     const list = await listRes.json();
     expect(list).toHaveLength(1);
+    expect(list[0].id).toBe(doc.id);
     expect(list[0].title).toBe("hello");
   });
 
@@ -393,12 +429,14 @@ describe("generated app API (ADR-010)", () => {
 
   it("clears the collection", async () => {
     const app = buildApp();
-    const now = new Date().toISOString();
-    await app.request("/api/data/items", {
+    const doc = newDoc();
+    const createRes = await app.request("/api/data/items", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: "1", title: "x", created_at: now, updated_at: now }),
+      body: JSON.stringify(doc),
     });
+    expect(createRes.status).toBe(201);
+
     const del = await app.request("/api/data/items", { method: "DELETE" });
     expect(del.status).toBe(204);
     const listRes = await app.request("/api/data/items");
@@ -696,7 +734,7 @@ export class ApiAdapter implements StorageAdapter {
 }
 `;
 const APP_ID_TS_PREFIX = `// ============================================================
-// App ID \\u2014 injected by DeskSpawn at app creation time.
+// App ID — injected by DeskSpawn at app creation time.
 // DO NOT MODIFY: Uniquely identifies this app's IndexedDB.
 // ============================================================
 
@@ -807,7 +845,7 @@ const INDEX_CSS = `@import "tailwindcss";
 
 function getAppTsx(locale: TemplateLocale): string {
   return `// ============================================================
-//  DeskSpawn Generated App \u2014 Root Component
+//  DeskSpawn Generated App — Root Component
 // ============================================================
 //
 //  \uD83D\uDCC1 App Structure:
@@ -838,7 +876,7 @@ function getAppTsx(locale: TemplateLocale): string {
 //      main.tsx        \u2192 Entry point
 //
 //  \u26A0\uFE0F RULES:
-//    1. App.tsx is the COMPOSITION ROOT only \u2014 keep it minimal
+//    1. App.tsx is the COMPOSITION ROOT only — keep it minimal
 //    2. When adding a feature, ALWAYS create separate files:
 //       types/X.ts + store/XStore.ts + components/X.tsx
 //    3. Import from each directory in App.tsx to compose the app
