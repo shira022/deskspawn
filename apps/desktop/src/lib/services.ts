@@ -9,4 +9,18 @@
  * to the web app's service registration.
  */
 
-export { registerWebServices as registerDesktopServices } from "@deskspawn/shared/lib/services/index";
+import { registerWebServices } from "@deskspawn/shared/lib/services/index";
+
+/**
+ * Register desktop services.
+ *
+ * Sets the desktop environment flag BEFORE delegating to the shared web
+ * registration, so isDesktopEnv() guards inside registerWebServices (C7:
+ * desktop must NOT register WebStorageService) evaluate correctly no matter
+ * which call site runs first (main.tsx body, or the module-level call in
+ * App.tsx which executes during import graph evaluation).
+ */
+export function registerDesktopServices(): void {
+  (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ = true;
+  registerWebServices();
+}
