@@ -9,7 +9,8 @@
     "test": "pnpm --filter web test",
     "lint": "pnpm --filter web lint",
     "preview": "pnpm --filter web preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:real": "playwright test e2e/desktop.spec.ts && node scripts/clean-test-results.mjs"
   },
   "engines": {
     "node": ">=20"
