@@ -397,7 +397,20 @@ pub fn load_full_config_for_sidecar() -> Option<String> {
         &config.storage_method
     };
 
-    load_key_from_storage(&config.provider, method)
+    let key = load_key_from_storage(&config.provider, method);
+    if key.is_some() {
+        return key;
+    }
+    // 監査指摘対応 (2026-08-27): save_api_key は keychain 利用不可時に credentials.json へ
+    // フォールバックするが storage_method を更新しないため、method=keychain のまま
+    // keychain が使えない環境では file 保存されたキーが読み戻せず、サイドカーへ
+    // 同期されない（load_api_key と同じ alternate-method フォールバック）。
+    let alt = if method == "keychain" {
+        "file"
+    } else {
+        "keychain"
+    };
+    load_key_from_storage(&config.provider, alt)
 }
 
 // ── Tauri commands ────────────────────────────────────────────────────────────
@@ -545,8 +558,22 @@ pub fn load_ai_config() -> Result<Option<AiConfig>, String> {
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read config file: {}", e))?;
 
-    let config: AiConfig = serde_json::from_str(&content)
+    let mut config: AiConfig = serde_json::from_str(&content)
         .map_err(|e| format!("Failed to parse config file: {}", e))?;
+
+    // 監査指摘対応 (2026-08-27): レガシー平文 api_key が config.json に残っている場合、
+    // フロントへ返す前に空化する（キーの実体は keychain / credentials.json 側が本命。
+    // フロントには apiKeyConfigured フラグのみを渡し、平文キーをレンダラーへ漏らさない。
+    // ディスク上の平文は load_full_config_for_sidecar（ヘッドレス/CI フォールバック）が
+    // 参照するため削除せず、表示層だけを安全化する）。
+    if !config.api_key.is_empty() {
+        log::warn!(
+            "load_ai_config: legacy plaintext api_key found in config.json; \
+             stripping before returning to frontend"
+        );
+        config.api_key_configured = true;
+        config.api_key = String::new();
+    }
 
     Ok(Some(config))
 }
@@ -655,10 +682,13 @@ pub fn load_last_provider() -> Result<Option<String>, String> {
 }
 
 /// Save the currently open app id (was WebView localStorage).
+///
+/// `None`（フロントが `null` を渡した場合）は config.json から `current_app` を
+/// 除去する（2026-08-27 監査指摘対応: アプリを閉じた際に null 同期が可能に）。
 #[tauri::command]
-pub fn save_current_app(app_id: String) -> Result<(), String> {
+pub fn save_current_app(app_id: Option<String>) -> Result<(), String> {
     let mut existing = read_existing_config().unwrap_or_default();
-    existing.current_app = Some(app_id);
+    existing.current_app = app_id;
     write_config(&existing)
 }
 
@@ -727,6 +757,25 @@ pub fn get_keyring_service() -> Result<String, String> {
     Ok(keyring_service())
 }
 
+/// remove_dir_all を指数バックオフで再試行する（Windows のファイルハンドル解放遅延対策。
+/// delete_app と同じ方針 — 実績 2026-08-15・E2E で「os error 32」頻発）。
+/// 失敗時は最後のエラーを返す。
+fn remove_dir_all_with_retry(dir: &std::path::Path) -> Result<(), String> {
+    let mut last_err: Option<String> = None;
+    for attempt in 0..6 {
+        match fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) => {
+                last_err = Some(format!("Failed to remove dir: {}", e));
+                if attempt < 5 {
+                    std::thread::sleep(std::time::Duration::from_secs(1 << attempt));
+                }
+            }
+        }
+    }
+    Err(last_err.unwrap_or_else(|| "Failed to remove dir".to_string()))
+}
+
 /// DEV/TEST ONLY: wipe all user app data so E2E starts from a clean state.
 ///
 /// Deletes:
@@ -770,8 +819,14 @@ pub fn reset_app_data() -> Result<(), String> {
             for entry in entries.flatten() {
                 let name = entry.file_name().to_string_lossy().to_string();
                 if name.starts_with("app-") {
-                    let _ = fs::remove_dir_all(entry.path());
-                    log::info!("reset_app_data: removed app dir {name}");
+                    // Windows ではファイルハンドル解放に数十秒かかることがあり
+                    // remove_dir_all が "os error 32" で失敗するため、delete_app と同じ
+                    // 指数バックオフ（1+2+4+8+16 = 最大31秒待ち）で再試行する
+                    // （2026-08-27 監査指摘対応・実績 2026-08-15 E2E）。
+                    match remove_dir_all_with_retry(&entry.path()) {
+                        Ok(()) => log::info!("reset_app_data: removed app dir {name}"),
+                        Err(e) => log::error!("reset_app_data: failed to remove app dir {name}: {e}"),
+                    }
                 }
             }
         }
@@ -941,7 +996,7 @@ mod tests {
 
         // Setup: config.json with settings + current_app, registry, one app dir
         save_settings(AppSettings::default()).unwrap();
-        save_current_app("app-1234567890abcdef1234567890abcdef".into()).unwrap();
+        save_current_app(Some("app-1234567890abcdef1234567890abcdef".into())).unwrap();
 
         let apps_json = workspace::apps_json_path().unwrap();
         std::fs::create_dir_all(apps_json.parent().unwrap()).unwrap();

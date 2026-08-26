@@ -101,7 +101,6 @@ pub fn run() {
             app.manage(sidecar_manager);
 
             // Spawn update check in background (non-blocking, no dialog on startup)
-            // The frontend can call check_for_updates command for user-facing checks
             #[cfg(desktop)]
             {
                 let handle = app.handle().clone();
@@ -145,7 +144,6 @@ pub fn run() {
             commands::harness::get_errors,
             commands::harness::get_workspace_path,
             commands::harness::initialize_workspace,
-            commands::harness::open_in_vscode,
             // App management commands (real files under ~/deskspawn/apps)
             commands::apps::list_apps,
             commands::apps::create_app,
@@ -162,10 +160,7 @@ pub fn run() {
             // Environment check commands
             commands::env_check::check_environment,
             commands::env_check::check_winget,
-            commands::env_check::install_with_winget,
             commands::env_check::open_url,
-            // Spawn commands
-            commands::spawn::spawn_build,
             // AI config commands
             commands::ai_config::save_ai_config,
             commands::ai_config::load_ai_config,
@@ -190,61 +185,8 @@ pub fn run() {
             commands::sidecar::sidecar_status,
             commands::sidecar::sidecar_port,
             commands::sidecar::get_sidecar_token,
-            // Updater
-            check_for_updates,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
 
-/// Check for updates via the Tauri updater plugin.
-///
-/// When an update is available, shows a native OS dialog asking the user
-/// whether to install it. Only proceeds on explicit user confirmation.
-#[tauri::command]
-async fn check_for_updates(app: tauri::AppHandle) -> Result<String, String> {
-    #[cfg(desktop)]
-    {
-        let updater = app
-            .updater()
-            .map_err(|e| format!("Failed to initialize updater: {e}"))?;
-
-        match updater
-            .check()
-            .await
-            .map_err(|e| format!("Update check failed: {e}"))?
-        {
-            Some(update) => {
-                let notes = update.body.clone().unwrap_or_default();
-
-                let confirmed = app
-                    .dialog()
-                    .message(format!(
-                        "Version {} is available (you have {}).\n\n{}\n\nInstall now?",
-                        update.version, update.current_version, notes
-                    ))
-                    .title("Update Available")
-                    .blocking_show();
-
-                if !confirmed {
-                    Ok("Update skipped by user.".into())
-                } else {
-                    update
-                        .download_and_install(
-                            |_chunk_length, _content_length| {},
-                            || log::info!("Update download finished, installing..."),
-                        )
-                        .await
-                        .map_err(|e| format!("Download/install failed: {e}"))?;
-
-                    // restart() terminates the current process to apply the update
-                    app.restart();
-                }
-            }
-            None => Ok("Already up to date.".into()),
-        }
-    }
-
-    #[cfg(not(desktop))]
-    Err("Updates are not supported on this platform.".into())
-}

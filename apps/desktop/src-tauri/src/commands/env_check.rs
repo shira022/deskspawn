@@ -1,6 +1,5 @@
-use crate::models::config::{EnvCheckItem, SetupProgress, WingetStatus};
+use crate::models::config::{EnvCheckItem, WingetStatus};
 use std::process::Command;
-use tauri::Emitter;
 
 const WINGET_NODEJS: &str = "OpenJS.NodeJS.LTS";
 
@@ -93,97 +92,6 @@ pub fn check_winget() -> Result<WingetStatus, String> {
         version: None,
         message: "winget is not available. Install 'App Installer' from the Microsoft Store to enable automatic setup.".to_string(),
     })
-}
-
-/// Install a package using winget. Emits progress events during installation.
-#[tauri::command]
-pub async fn install_with_winget(
-    app: tauri::AppHandle,
-    package: String,
-) -> Result<String, String> {
-    let package_name = get_package_display_name(&package);
-    log::info!(
-        "Starting winget install for: {} ({})",
-        package,
-        package_name
-    );
-
-    let _ = app.emit(
-        "env-setup-progress",
-        SetupProgress {
-            package: package.clone(),
-            stage: "starting".to_string(),
-            progress_percent: 0,
-            message: format!("{} のインストールを準備中...", package_name),
-        },
-    );
-
-    let mut cmd = Command::new("winget");
-    cmd.arg("install")
-        .arg("--id")
-        .arg(&package)
-        .arg("--silent")
-        .arg("--accept-source-agreements")
-        .arg("--accept-package-agreements");
-
-    let _ = app.emit(
-        "env-setup-progress",
-        SetupProgress {
-            package: package.clone(),
-            stage: "downloading".to_string(),
-            progress_percent: 10,
-            message: format!("{} をダウンロード中...", package_name),
-        },
-    );
-
-    let output = cmd.output().map_err(|e| format!("Failed to run winget: {}", e))?;
-
-    let _ = app.emit(
-        "env-setup-progress",
-        SetupProgress {
-            package: package.clone(),
-            stage: "installing".to_string(),
-            progress_percent: 50,
-            message: format!("{} をインストール中...", package_name),
-        },
-    );
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let stderr = String::from_utf8_lossy(&output.stderr);
-
-    if output.status.success() || stdout.contains("No applicable update found") || stdout.contains("already installed") {
-        let _ = app.emit(
-            "env-setup-progress",
-            SetupProgress {
-                package: package.clone(),
-                stage: "complete".to_string(),
-                progress_percent: 100,
-                message: format!("{} のインストールが完了しました", package_name),
-            },
-        );
-        log::info!("winget install success for: {}", package);
-        Ok(format!("Successfully installed {}", package_name))
-    } else {
-        let err_msg = if !stderr.is_empty() {
-            stderr.to_string()
-        } else {
-            format!("winget exited with status: {}", output.status)
-        };
-        let _ = app.emit(
-            "env-setup-progress",
-            SetupProgress {
-                package: package.clone(),
-                stage: "error".to_string(),
-                progress_percent: 0,
-                message: format!("{} のインストールに失敗しました: {}", package_name, err_msg),
-            },
-        );
-        log::error!("winget install failed for {}: {}", package, err_msg);
-        Err(format!(
-            "Failed to install {}: {}",
-            package_name, err_msg
-        ))
-    }
 }
 
 /// 外部ブラウザで開いても安全な URL かどうか（C2: コマンドインジェクション対策）。
@@ -302,13 +210,6 @@ fn get_download_url(name: &str) -> Option<String> {
     match name {
         "Node.js" => Some("https://nodejs.org/en/download/".to_string()),
         _ => None,
-    }
-}
-
-fn get_package_display_name(package: &str) -> &str {
-    match package {
-        WINGET_NODEJS => "Node.js",
-        _ => package,
     }
 }
 

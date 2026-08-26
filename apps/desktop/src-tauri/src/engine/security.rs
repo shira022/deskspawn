@@ -130,7 +130,7 @@ fn normalize_path(path: &Path) -> std::path::PathBuf {
 pub fn is_extension_allowed(path: &str) -> bool {
     let allowed_extensions = &[
         "tsx", "ts", "jsx", "js", "css", "html", "json", "toml",
-        "md", "yaml", "yml", "env", "env.example", "gitignore", "prettierrc",
+        "md", "yaml", "yml", "env", "env.example", "example", "gitignore", "prettierrc",
         "eslintrc", "babelrc", "mjs", "cjs", "mts", "cts", "d.ts",
         "txt", "csv", "svg", "xml",
     ];
@@ -256,6 +256,16 @@ mod tests {
         assert!(!is_extension_allowed("script.bat"));
         assert!(!is_extension_allowed("src/lib.rs"));
         assert!(!is_extension_allowed("schema.sql"));
+    }
+
+    #[test]
+    fn test_is_extension_allowed_env_example() {
+        // Rust の Path::extension() は .env.example を拡張子 "example" に解決する。
+        // export→import のラウンドトリップ（apps.rs import_app_zip）を恒常失敗させないため
+        // "example" を許可リストに含める（2026-08-27 監査指摘対応）。
+        assert!(is_extension_allowed(".env.example"));
+        assert!(is_extension_allowed("config/.env.example"));
+        assert!(is_extension_allowed(".env"));
     }
 
     #[test]
