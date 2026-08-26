@@ -167,8 +167,8 @@ deskspawn/                          # pnpm workspace root
 | Web entry + routing | `apps/web/src/` | Only `main.tsx`, `App.tsx`, `index.css`, `routes/`, `test/`. Everything else lives in `packages/shared`. |
 | Desktop entry + IPC | `apps/desktop/src/` | Only 6 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `vite-env.d.ts`, `index.css`, `lib/ipc.ts` (Tauri bridge — `getSidecarPort` is the only live wrapper), `lib/services.ts`. |
 | Rust backend | `apps/desktop/src-tauri/` | Storage, sidecar lifecycle, security server. |
-| Standalone AI server | `apps/desktop/sidecar/` | Bun-bundled Node server: OpenAI-compatible `/v1` proxy (CORS workaround), `/api/models`, preview server. Its `providers.ts` mirrors `packages/shared/src/engine/providers.ts` but is **not** on the current chat path. |
-| Model resolution (OpenAI/Anthropic/etc.) | `packages/shared/src/engine/providers.ts` | **The single source of truth** for which API each provider uses. Also mirrored in `apps/desktop/sidecar/src/providers.ts` (legacy path). |
+| Standalone AI server | `apps/desktop/sidecar/` | Bun-bundled Node server: OpenAI-compatible `/v1` proxy (CORS workaround), preview server, checkpoint & chat-history storage. The AI chat engine itself lives in `packages/shared` (legacy sidecar engine was removed in the 2026-08 audit). |
+| Model resolution (OpenAI/Anthropic/etc.) | `packages/shared/src/engine/providers.ts` | **The single source of truth** for which API each provider uses. |
 | Shared primitives | `packages/ui`, `packages/ai-core` | True shared packages (not aliased). |
 
 > 💡 **Rule of thumb:** if it's UI, chat, or AI provider logic, it lives in
