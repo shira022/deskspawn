@@ -1,7 +1,7 @@
 /**
  * HTTP server for the DeskSpawn sidecar.
- * Provides a REST API for the frontend to call for AI-powered code generation.
- * For dev/demo mode, tools are executed directly (not via Rust IPC).
+ * Provides a REST API for the frontend (WebView) to manage projects, previews,
+ * checkpoints, installs, and the /v1 OpenAI-compatible proxy.
  */
 import express from 'express';
 import cors from 'cors';
@@ -10,19 +10,11 @@ import fs from 'fs';
 import crypto from 'crypto';
 import os from 'os';
 import { ChildProcess, spawn, execSync, execFileSync } from 'child_process';
-import { fileURLToPath } from 'url';
-import { getModel } from './providers.js';
-import { tools } from './tools.js';
 import * as executors from './tool-executors.js';
-import { getModelsForProvider } from './models-fetcher.js';
-import { takeScreenshot } from './screenshot.js';
-import { runWithTriage, getPhaseLabel } from './orchestrator.js';
 import { createSerialQueue } from './install-queue.js';
-import { initMCPClients, getMCPTools, closeMCPClients } from './mcp-client.js';
+import { initMCPClients, closeMCPClients } from './mcp-client.js';
+import { findListeningPids, nextFallbackPort } from './port-utils.js';
 // preview import removed — no longer needed (no Tauri backend)
-
-const __filename = fileURLToPath(import.meta.url);
-void __filename;
 
 // ── In-memory API key store (received from Rust backend, never from frontend) ─
 // 一元管理ルート（ADR-007）: ~/deskspawn 配下に全データを集約。
@@ -104,11 +96,16 @@ const DESIRED_PORT = process.env.PORT ? parseInt(process.env.PORT) : 3009;
 let ACTUAL_PORT = DESIRED_PORT;
 
 // ── Unhandled error resilience ───────────────────────────────────────────────
+// 起動フェーズ（startServer 成功まで）の例外・rejection は握りつぶさず再 throw して、
+// 異常な状態のまま起動し続けるのを防ぐ。起動完了後はログのみで継続する。
+let serverStarted = false;
 process.on('uncaughtException', (err) => {
   console.error('[sidecar] UNCAUGHT EXCEPTION — sidecar continuing:', err);
+  if (!serverStarted) throw err;
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[sidecar] UNHANDLED REJECTION — sidecar continuing:', reason);
+  if (!serverStarted) throw reason;
 });
 
 // ── Workspace dev server process management ─────────────────────────────────
@@ -604,15 +601,7 @@ function killPortOwner(port: number, label: string) {
   try {
     // -p tcp を付けると [::1] (IPv6) の LISTENING 行が出力されない → 付けない
     const out = execSync('netstat -ano', { encoding: 'utf-8', timeout: 5000 });
-    const re = new RegExp(`:${port}\\s`);
-    const pids = new Set<number>();
-    for (const line of out.split(/\r?\n/)) {
-      if (!/LISTENING/.test(line) || !re.test(line)) continue;
-      const cols = line.trim().split(/\s+/);
-      const pid = parseInt(cols[cols.length - 1], 10);
-      if (!isNaN(pid)) pids.add(pid);
-    }
-    for (const pid of pids) {
+    for (const pid of findListeningPids(out, [port])) {
       console.log(`[${label}] Killing orphan PID ${pid} holding port ${port}...`);
       killProcessTree(pid);
     }
@@ -634,15 +623,7 @@ function killPortOwnersInBand(startPort: number, count: number, label: string) {
   try {
     const out = execSync('netstat -ano', { encoding: 'utf-8', timeout: 5000 });
     const ports = Array.from({ length: count }, (_, i) => startPort + i);
-    const re = new RegExp(`:(?:${ports.join('|')})\\s`);
-    const pids = new Set<number>();
-    for (const line of out.split(/\r?\n/)) {
-      if (!/LISTENING/.test(line) || !re.test(line)) continue;
-      const cols = line.trim().split(/\s+/);
-      const pid = parseInt(cols[cols.length - 1], 10);
-      if (!isNaN(pid)) pids.add(pid);
-    }
-    for (const pid of pids) {
+    for (const pid of findListeningPids(out, ports)) {
       console.log(`[${label}] Killing orphan PID ${pid} holding dev port...`);
       killProcessTree(pid);
     }
@@ -1356,10 +1337,12 @@ app.post('/api/config', (req, res) => {
 
 // ── OpenAI互換プロキシ (/v1/*) ──────────────────────────────────────────────
 // デスクトップ(WebView2)からはCORSで直接呼べないカスタムエンドポイントを中継する。
-// フロントエンドは baseURL=http://localhost:3009/v1 を指定する。
+// フロントエンドは baseURL=http://localhost:<sidecar待受ポート>/v1 を指定する
+// （実際のポートはフォールバックで変わりうるため、起動後に sidecar-ready:<port> を参照）。
 // 上流エンドポイントは Rust が POST /api/config で設定した storedCustomEndpoint
 // のみを使用する（H1: x-upstream ヘッダによる任意転送は SSRF リスクのため廃止）。
 // キーは保存済みキー（storedApiKey）を優先し、無ければリクエストの Authorization を使用。
+// クエリ文字列（例: ?model=xxx）も上流へそのまま転送する。
 app.use('/v1', async (req, res) => {
   try {
     const upstream = storedCustomEndpoint;
@@ -1376,7 +1359,11 @@ app.use('/v1', async (req, res) => {
         ? req.headers.authorization.replace(/^Bearer\s+/i, '')
         : '');
     const path = req.path; // /v1 マウント内ではプレフィックス除去済み (e.g. /chat/completions)
-    const target = `${upstream.replace(/\/+$/, '')}${path}`;
+    // req.path はクエリを含まないため、req.originalUrl からクエリ部を復元して付与する
+    // （監査指摘 2026-08-27: クエリ未転送で ?model= 等が上流に届かなかった）。
+    const queryIndex = req.originalUrl.indexOf('?');
+    const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
+    const target = `${upstream.replace(/\/+$/, '')}${path}${query}`;
 
     const headers: Record<string, string> = {};
     if (typeof req.headers['content-type'] === 'string') headers['Content-Type'] = req.headers['content-type'];
@@ -1435,467 +1422,6 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// ── Model discovery endpoint ──────────────────────────────────────────────────
-
-app.get('/api/models', async (req, res) => {
-  try {
-    const provider = (req.query.provider as string) || 'openai';
-    const customEndpoint = req.query.customEndpoint as string | undefined;
-    // Use stored key when frontend doesn't provide one.
-    // undefined lets provider SDKs fall back to environment variables.
-    const apiKey = (req.query.apiKey as string) || storedApiKey || undefined;
-
-    const models = await getModelsForProvider(provider, customEndpoint, apiKey);
-    res.json({ models });
-  } catch (error: any) {
-    res.status(500).json({ error: `Failed to fetch models: ${error?.message || error}`, errorCode: 'MODELS_FETCH_FAILED' });
-  }
-});
-
-// ── Chat endpoint ────────────────────────────────────────────────────────────
-
-app.post('/chat', async (req, res) => {
-  const { messages, config, simpleMode, language } = req.body;
-  
-  if (!messages || !Array.isArray(messages)) {
-    res.status(400).json({ error: 'messages array required', errorCode: 'MESSAGES_REQUIRED' });
-    return;
-  }
-
-  try {
-    // Capture workspace dir at request start to prevent race condition
-    // if project is switched mid-generation.
-    const workspaceDir = executors.getWorkspaceDir();
-
-    // Use stored API key (from Rust backend) when frontend doesn't send one.
-    // This ensures the frontend NEVER needs to hold the raw API key.
-    // API keys come exclusively from keychain/file (Tauri) or localStorage
-    // (browser). Environment variables are NEVER used as fallback.
-    const resolvedApiKey = config?.apiKey || storedApiKey || undefined;
-
-    const model = getModel({
-      provider: config?.provider || 'ollama',
-      model: config?.model,
-      apiKey: resolvedApiKey,
-      customEndpoint: config?.customEndpoint,
-      temperature: config?.temperature ?? 0.2,
-      maxTokens: config?.maxTokens,
-    });
-
-    // Build message history (system message goes to `system` param, not in messages array)
-    const aiMessages = messages.map((m: any) => ({
-      role: m.role as 'user' | 'assistant' | 'tool',
-      content: m.content,
-      ...(m.tool_calls ? { toolCalls: m.tool_calls } : {}),
-      ...(m.tool_call_id ? { toolCallId: m.tool_call_id } : {}),
-    }));
-
-    // Set up SSE for streaming (declare early so tools can use it)
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const sendSSE = (data: Record<string, unknown>) => {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
-
-    // Log diagnostic info for debugging
-    console.log(`[chat] Request: provider=${config?.provider || 'ollama'} model=${config?.model || 'default'} msgs=${(messages || []).length} lastRole=${(messages || []).at(-1)?.role || 'none'} lastContent=${((messages || []).at(-1)?.content || '').substring(0, 80)}`);
-
-    // ── Abort support: cancel when client disconnects ─────────────
-    const abortController = new AbortController();
-    const signal = abortController.signal;
-    let generationDone = false;
-    // Track client disconnection — use `close` on the response (res) instead of
-    // request (req) to avoid false positives from request stream cleanup.
-    res.on('close', () => {
-      if (!generationDone && !abortController.signal.aborted) {
-        abortController.abort();
-        console.log('[chat] Client disconnected, aborting generation');
-      }
-    });
-
-    // ── Build all tool execute functions ──────────────────────────────────
-    // These are later filtered by phase in the multi-agent pipeline.
-    const allToolExecs: Record<string, any> = {
-      read_file: {
-        ...tools.read_file,
-        execute: async ({ path: filePath }: { path: string }) => {
-          try {
-            const content = await executors.readFile(filePath, workspaceDir);
-            console.log(`[exec] read_file(${filePath}) => ${content.length} chars`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'read_file',
-              result: `${content.length} chars read from ${filePath}`,
-              detail: { file: filePath, size: content.length },
-            });
-            return content;
-          } catch (e: any) {
-            const errMsg = `Failed to read ${filePath}: ${e?.message || e}`;
-            console.warn(`[exec] read_file error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'read_file',
-              result: `❌ ${errMsg}`,
-              detail: { file: filePath, error: e?.message || String(e) },
-            });
-            return `❌ ${errMsg}`;
-          }
-        },
-      },
-      list_files: {
-        ...tools.list_files,
-        execute: async () => {
-          try {
-            const files = await executors.listFiles(workspaceDir);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'list_files',
-              result: `${files.length} files found`,
-            });
-            return files;
-          } catch (e: any) {
-            const errMsg = `Failed to list files: ${e?.message || e}`;
-            console.warn(`[exec] list_files error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'list_files',
-              result: `❌ ${errMsg}`,
-            });
-            return [];
-          }
-        },
-      },
-      apply_artifact: {
-        ...tools.apply_artifact,
-        execute: async (input: { id: string; title: string; actions: unknown[] }) => {
-          const artifact: import('./types.js').Artifact = {
-            id: input.id,
-            title: input.title,
-            actions: input.actions as any,
-          };
-          console.log(`[exec] apply_artifact id=${artifact.id} title=${artifact.title} actions=${artifact.actions.length}`);
-          try {
-            const result = await executors.applyArtifact(artifact, workspaceDir);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'apply_artifact',
-              result: result.success
-                ? `${result.filesChanged.length} files changed: ${result.filesChanged.join(', ')}`
-                : `Failed: ${(result.errors || []).join('; ')}`,
-              detail: {
-                filesChanged: result.filesChanged,
-                errors: result.errors,
-              },
-            });
-            return result;
-          } catch (e: any) {
-            const errMsg = `Failed to apply artifact: ${e?.message || e}`;
-            console.warn(`[exec] apply_artifact error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'apply_artifact',
-              result: `❌ ${errMsg}`,
-              detail: { error: e?.message || String(e) },
-            });
-            return { success: false, filesChanged: [], shellCommandsRun: [], errors: [errMsg] };
-          }
-        },
-      },
-      run_shell: {
-        ...tools.run_shell,
-        execute: async ({ command }: { command: string }) => {
-          console.log(`[exec] run_shell: ${command}`);
-          const result = await executors.runShell(command);
-          const emoji = result.success ? '✅' : '❌';
-          const msg = result.success
-            ? `${emoji} ${command}`
-            : `${emoji} ${command}: ${result.stderr}`.substring(0, 200);
-          sendSSE({
-            type: 'tool_result',
-            toolName: 'run_shell',
-            result: msg,
-          });
-          return result;
-        },
-      },
-      get_errors: {
-        ...tools.get_errors,
-        execute: async () => {
-          try {
-            const errors = await executors.getErrors(workspaceDir);
-            const summary = errors.length === 0
-              ? 'No errors found'
-              : `${errors.length} errors found`;
-            const details = errors.map((e: any) => ({
-              type: e.type,
-              pattern: e.pattern,
-              filePath: e.filePath,
-              line: e.line,
-              message: e.message?.substring(0, 200),
-              suggestion: e.suggestion,
-            }));
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'get_errors',
-              result: summary,
-              detail: { errors: details },
-            });
-            return errors;
-          } catch (e: any) {
-            const errMsg = `Failed to get errors: ${e?.message || e}`;
-            console.warn(`[exec] get_errors error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'get_errors',
-              result: `❌ ${errMsg}`,
-              detail: { error: e?.message || String(e) },
-            });
-            return [];
-          }
-        },
-      },
-      // ── MCP tools (grep.app GitHub code search) ────────────────
-      ...(() => {
-        const mcp = getMCPTools();
-        if (mcp) {
-          console.log(`[mcp] Exposing tools: ${Object.keys(mcp).join(', ')}`);
-          return mcp;
-        }
-        return {};
-      })(),
-
-      take_screenshot: {
-        ...tools.take_screenshot,
-        execute: async (input: {
-          target?: string;
-          mode?: 'browser';
-          fullPage?: boolean;
-          width?: number;
-          height?: number;
-          viewports?: Array<{ width: number; height: number; label?: string }>;
-          compareWithPrevious?: boolean;
-          waitAfterLoad?: number;
-        }) => {
-          const startTime = Date.now();
-          const mode = input.mode ?? 'browser';
-          const target = input.target ?? 'http://localhost:5174';
-          console.log(`[exec] take_screenshot target=${target} mode=${mode}` +
-            (input.viewports ? ` viewports=${input.viewports.length}` : '') +
-            (input.compareWithPrevious ? ' diff=true' : ''));
-
-          try {
-            const result = await takeScreenshot({
-              target,
-              mode,
-              fullPage: input.fullPage ?? true,
-              width: input.width ?? 1280,
-              height: input.height ?? 720,
-              viewports: input.viewports,
-              compareWithPrevious: input.compareWithPrevious ?? false,
-              waitAfterLoad: input.waitAfterLoad ?? 1500,
-            });
-
-            const elapsed = Date.now() - startTime;
-            const imageSizeKb = Math.round((result.layer1.length * 3) / 4 / 1024);
-            const isResponsive = result.responsive && result.responsive.length > 0;
-            const hasDiff = result.diff !== undefined;
-
-            console.log(
-              `[exec] take_screenshot OK: ${elapsed}ms` +
-              (isResponsive ? `, responsive=${result.responsive!.length}` : '') +
-              (hasDiff ? `, diff=${result.diff!.changedPercent}% changed` : '') +
-              `, image=${imageSizeKb}KB` +
-              `, elements=${result.layer2.elements.length}` +
-              `, errors=${result.layer2.consoleErrors.length}`,
-            );
-
-            let sseResult = isResponsive
-              ? `📱 Responsive: ${result.responsive!.length} viewports captured`
-              : `📸 Screenshot captured (${imageSizeKb}KB)`;
-            if (hasDiff) {
-              const d = result.diff!;
-              sseResult += d.hasChanges
-                ? `\n🔄 Diff: ${d.changedPercent}% changed (${d.changedPixels}px)`
-                : `\n✅ No visual changes since last screenshot`;
-            }
-            sseResult += `\n${result.layer3.substring(0, 500)}`;
-
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'take_screenshot',
-              result: sseResult,
-            });
-
-            return JSON.stringify(result);
-          } catch (e: any) {
-            const errMsg = `Screenshot failed: ${e?.message || e}`;
-            console.warn(`[exec] take_screenshot error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'take_screenshot',
-              result: `❌ ${errMsg}`,
-              detail: { error: e?.message || String(e) },
-            });
-            return `❌ ${errMsg}`;
-          }
-        },
-      },
-    };
-
-    // ── Triage + Multi-Agent Pipeline ────────────────────────────────────
-    // Phase 0: Lightweight triage classifies request complexity.
-    //   - "single": runs only Coder phase (fast path)
-    //   - "multi":  runs full pipeline (Planner → Coder → Verifier → Visual QA)
-    //
-    // Tool builder: filters allToolExecs to only the tools allowed per phase.
-    // Pipeline hooks: translate orchestrator events to SSE for the frontend.
-    //
-    try {
-      // Notify frontend that triage is starting
-      sendSSE({ type: 'triage_start', label: 'Analyzing request...' });
-
-      const pipelineResult = await runWithTriage(
-        model,
-        aiMessages,
-        // Build filtered tool set for each phase
-        (toolNames: string[]) => {
-          const subset: Record<string, any> = {};
-          for (const name of toolNames) {
-            if (allToolExecs[name]) {
-              subset[name] = allToolExecs[name];
-            }
-          }
-          return subset;
-        },
-        signal,
-        simpleMode !== false, // default to true
-        language,
-        // Pipeline lifecycle hooks → SSE events
-        {
-          onPhaseStart: (phase) => {
-            console.log(`[pipeline] Starting phase: ${phase}`);
-            sendSSE({
-              type: 'phase_start',
-              phase,
-              label: getPhaseLabel(phase),
-            });
-          },
-
-          onPhaseEnd: (phase, result) => {
-            console.log(`[pipeline] Phase ${phase} done: steps=${result.stepCount} textLen=${result.text?.length || 0}`);
-            sendSSE({
-              type: 'phase_end',
-              phase,
-              steps: result.stepCount,
-              usage: result.usage,
-            });
-          },
-
-          onPhaseDetail: (phase, text) => {
-            sendSSE({
-              type: 'phase_detail',
-              phase,
-              text,
-              label: getPhaseLabel(phase),
-            });
-          },
-
-          onToolCall: (phase, toolName, args) => {
-            console.log(`[pipeline] ${phase}: ${toolName}()`, JSON.stringify(args).substring(0, 100));
-            sendSSE({ type: 'tool_call', phase, toolName, args });
-          },
-
-          onStepProgress: (phase, { step, maxSteps }) => {
-            sendSSE({ type: 'step_progress', phase, step, maxSteps });
-          },
-
-          onRateLimit: (phase, retryCount, maxRetries, waitMs) => {
-            console.log(`[pipeline] ${phase}: rate limit (${retryCount}/${maxRetries}), waiting ${waitMs}ms`);
-            sendSSE({ type: 'rate_limit', phase, retryCount, maxRetries, waitMs });
-          },
-
-          onContinuation: (phase, round, maxRounds) => {
-            console.log(`[pipeline] ${phase}: auto-continuation ${round}/${maxRounds}`);
-            sendSSE({ type: 'continuation', phase, round, maxRounds });
-          },
-
-          onTriageResult: (result) => {
-            console.log(`[triage] mode=${result.mode} reason="${result.reason}"`);
-            sendSSE({ type: 'triage_result', mode: result.mode, reason: result.reason });
-          },
-        },
-      );
-
-      // ── Send final result ────────────────────────────────────────────
-      generationDone = true;
-
-      const { text: finalText, usage: totalUsage, phases } = pipelineResult;
-
-      // ── Create single checkpoint after pipeline completes ──────────
-      if (workspaceDir && phases.length > 0) {
-        executors.createCheckpoint(workspaceDir)
-          .then((id: string) => {
-            sendSSE({ type: 'checkpoint', phase: 'all', id });
-          })
-          .catch((e: any) => console.warn('[pipeline] Failed to create final checkpoint:', e));
-      }
-
-      sendSSE({
-        type: 'text',
-        text: finalText || '⚠️ Response generation failed. Please try again.',
-        usage: totalUsage,
-        phases,
-      });
-      console.log(`[done] textLen=${finalText?.length || 0} phases=${phases.join(',')} usage=${JSON.stringify(totalUsage)}`);
-    } catch (error: any) {
-      generationDone = true;
-      if (error?.name === 'AbortError' || error?.message === 'This operation was aborted') {
-        console.log('[pipeline] Generation aborted (client disconnected)');
-      } else {
-        try {
-          const isRateLimit = /rate limit|rate_limit|429|too many requests/i.test(
-            String(error?.message || error),
-          );
-          const errorMsg = error?.message || String(error || '');
-          sendSSE({
-            type: 'error',
-            error: errorMsg,
-            errorCode: isRateLimit ? 'RATE_LIMIT' : 'GENERATION_FAILED',
-          });
-        } catch {
-          // Best-effort
-        }
-      }
-    }
-
-    // Best-effort stream end — don't let a write error crash the handler
-    try {
-      sendSSE({ type: 'done' });
-    } catch {}
-    try {
-      res.end();
-    } catch {}
-  } catch (error: any) {
-    // If we already flushed SSE headers, send error as SSE event instead of HTTP 500
-    // which would fail silently (headers already sent).
-    try {
-      res.write(`data: ${JSON.stringify({ type: 'error', error: `Server error: ${error?.message || error}`, errorCode: 'SERVER_ERROR' })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-      res.end();
-    } catch {
-      // Headers not yet sent or response already ended — fall back to JSON
-      try {
-        if (!res.headersSent) {
-          res.status(500).json({ error: `Server error: ${error?.message || error}`, errorCode: 'SERVER_ERROR' });
-        }
-      } catch {}
-    }
-  }
-});
-
 // ── Data backup endpoint ─────────────────────────────────────────────────────
 
 // Backup: store app data to project file
@@ -1927,172 +1453,6 @@ app.get('/data-backup', (_req, res) => {
     res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
   }
 });
-
-// ── Export/Import ────────────────────────────────────────────────────────────
-
-// Export project as .deskspawn file
-app.get('/projects/:id/export', (req, res) => {
-  try {
-    const { id } = req.params;
-    const projectDir = path.join(PROJECTS_DIR, id);
-    if (!fs.existsSync(projectDir)) {
-      res.status(404).json({ error: 'Project not found', errorCode: 'PROJECT_NOT_FOUND' });
-      return;
-    }
-
-    const exportDir = path.join(projectDir, '.deskspawn', 'export');
-    fs.mkdirSync(exportDir, { recursive: true });
-
-    // Collect project files (excluding ignored dirs)
-    const filesToExport: Array<{ path: string; content: string }> = [];
-    function collectFiles(dir: string, relative: string) {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          if (executors.IGNORED_DIRS.includes(entry.name) || entry.name === '.deskspawn') continue;
-          collectFiles(path.join(dir, entry.name), relative ? `${relative}/${entry.name}` : entry.name);
-        } else {
-          const fullPath = path.join(dir, entry.name);
-          const content = fs.readFileSync(fullPath, 'utf-8');
-          filesToExport.push({ path: relative ? `${relative}/${entry.name}` : entry.name, content });
-        }
-      }
-    }
-    collectFiles(projectDir, '');
-
-    // Write export files to temp dir
-    for (const file of filesToExport) {
-      const outPath = path.join(exportDir, file.path);
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, file.content, 'utf-8');
-    }
-
-    // Write metadata
-    const projMeta = JSON.parse(fs.readFileSync(path.join(projectDir, 'project.json'), 'utf-8'));
-    fs.writeFileSync(path.join(exportDir, 'deskspawn.json'), JSON.stringify({
-      name: projMeta.name,
-      version: '1.0',
-      exportedAt: new Date().toISOString(),
-    }, null, 2));
-
-    // Create zip archive (use execFileSync to avoid shell injection from project name)
-    const zipName = `${projMeta.name.toLowerCase().replace(/[^a-z0-9-]/g, '')}.deskspawn`;
-    execFileSync('zip', ['-r', zipName, '.'], { cwd: exportDir, timeout: 30000 });
-
-    // Send the zip file
-    const zipPath = path.join(exportDir, zipName);
-    // Use dotfiles: 'allow' because the export dir is under .deskspawn/
-    // Without this, Express 5's send package returns 404 for paths through hidden directories.
-    res.download(zipPath, zipName, { dotfiles: 'allow' }, (err) => {
-      if (err) {
-        console.error(`[sidecar] Export download failed for project ${id}:`, err.message);
-        if (!res.headersSent) {
-          res.status(500).json({ error: `Export download failed: ${err.message}`, errorCode: 'EXPORT_DOWNLOAD_FAILED' });
-        }
-      }
-      // Cleanup temp export directory
-      fs.rmSync(exportDir, { recursive: true, force: true });
-    });
-  } catch (e: any) {
-    res.status(500).json({ error: `Export failed: ${e.message}`, errorCode: 'EXPORT_FAILED' });
-  }
-});
-
-// Import project from .deskspawn file (base64-encoded zip)
-app.post('/projects/import', async (req, res) => {
-  try {
-    const { fileBase64 } = req.body;
-    if (!fileBase64 || typeof fileBase64 !== 'string') {
-      res.status(400).json({ error: 'fileBase64 is required', errorCode: 'FILE_BASE64_REQUIRED' });
-      return;
-    }
-
-    // Decode base64 to temp zip file
-    const tempDir = path.join(PROJECTS_DIR, '.import-temp');
-    fs.mkdirSync(tempDir, { recursive: true });
-    const zipPath = path.join(tempDir, 'import.deskspawn');
-    fs.writeFileSync(zipPath, Buffer.from(fileBase64, 'base64'));
-
-    // Extract zip (execFileSync avoids shell injection from file paths)
-    execFileSync('unzip', ['-o', zipPath, '-d', tempDir], { timeout: 10000 });
-
-    // Read metadata
-    const metaPath = path.join(tempDir, 'deskspawn.json');
-    if (!fs.existsSync(metaPath)) {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-      res.status(400).json({ error: 'Invalid .deskspawn file: missing deskspawn.json', errorCode: 'INVALID_IMPORT_FILE' });
-      return;
-    }
-    const deskspawnMeta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-    const appName = deskspawnMeta.name || 'Imported App';
-
-    const projectId = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const projectMeta: ProjectMeta = {
-      id: projectId,
-      name: appName,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const projectDir = path.join(PROJECTS_DIR, projectId);
-    fs.mkdirSync(projectDir, { recursive: true });
-
-    // Copy all files from temp to project dir (skip deskspawn.json)
-    function copyImportFiles(src: string, dst: string, relative: string) {
-      const entries = fs.readdirSync(src, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name === 'deskspawn.json') continue;
-        const srcPath = path.join(src, entry.name);
-        const dstPath = path.join(dst, entry.name);
-        if (entry.isDirectory()) {
-          if (['node_modules', '.deskspawn', '.git'].includes(entry.name)) continue;
-          fs.mkdirSync(dstPath, { recursive: true });
-          copyImportFiles(srcPath, dstPath, relative ? `${relative}/${entry.name}` : entry.name);
-        } else {
-          fs.copyFileSync(srcPath, dstPath);
-        }
-      }
-    }
-    copyImportFiles(tempDir, projectDir, '');
-
-    // Generate storage adapter (ensure it exists)
-    generateStorageAdapterFiles(projectDir);
-
-    // Write project metadata
-    fs.writeFileSync(path.join(projectDir, 'project.json'), JSON.stringify({
-      name: projectMeta.name, createdAt: now, updatedAt: now,
-    }, null, 2));
-
-    // Cleanup temp
-    fs.rmSync(tempDir, { recursive: true, force: true });
-
-    // Register in registry
-    const projects = readProjectsJson();
-    projects.push(projectMeta);
-    saveProjectsJson(projects);
-
-    // Install deps and start dev server
-    executors.setWorkspaceDir(projectDir);
-    stopWorkspaceDevServer();
-    installDeps(projectDir)
-      .then(async () => {
-        startWorkspaceDevServer(projectDir);
-        try { await executors.createCheckpoint(projectDir, 'initial'); } catch {}
-      })
-      .catch(e => console.error('[import] Failed to setup:', e));
-
-    res.json({ project: projectMeta, projects });
-  } catch (e: any) {
-    res.status(500).json({ error: `Import failed: ${e.message}`, errorCode: 'IMPORT_FAILED' });
-  }
-});
-
-// ── Start ────────────────────────────────────────────────────────────────────
-
-// Cleanup on exit
-process.on('SIGTERM', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
-process.on('SIGINT', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
 
 // ── Desktop Preview Endpoints (local Vite dev server) ──────────────────────
 // The desktop app runs the generated app's dev server locally (via Bun) and
@@ -2385,13 +1745,12 @@ function startServer(port: number): Promise<void> {
     });
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
-        const nextPort = port + 1;
-        const maxPort = DESIRED_PORT + 9;
-        if (nextPort <= maxPort) {
+        const nextPort = nextFallbackPort(port, DESIRED_PORT, 9);
+        if (nextPort !== null) {
           console.warn(`[sidecar] Port ${port} in use, trying ${nextPort}...`);
           server.close(() => startServer(nextPort).then(resolve, reject));
         } else {
-          reject(new Error(`All ports ${DESIRED_PORT}-${maxPort} in use`));
+          reject(new Error(`All ports ${DESIRED_PORT}-${DESIRED_PORT + 9} in use`));
         }
       } else {
         reject(err);
@@ -2401,6 +1760,7 @@ function startServer(port: number): Promise<void> {
 }
 
 startServer(DESIRED_PORT).then(() => {
+  serverStarted = true;
   // Initialise MCP clients (non-fatal if grep.app is unreachable)
   initMCPClients();
 }).catch((err) => {
@@ -2428,11 +1788,13 @@ function cleanupPreviewServers() {
 process.on('SIGTERM', () => {
   console.log('[shutdown] SIGTERM received, cleaning up previews...');
   cleanupPreviewServers();
+  closeMCPClients();
   process.exit(0);
 });
 process.on('SIGINT', () => {
   console.log('[shutdown] SIGINT received, cleaning up previews...');
   cleanupPreviewServers();
+  closeMCPClients();
   process.exit(0);
 });
 process.on('exit', () => {
