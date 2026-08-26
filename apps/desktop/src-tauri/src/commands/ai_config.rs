@@ -244,7 +244,7 @@ fn delete_key_from_storage(provider: &str, method: &str) {
 }
 
 /// Read existing AiConfig from disk (returns None if no config exists).
-fn read_existing_config() -> Option<AiConfig> {
+pub fn read_existing_config() -> Option<AiConfig> {
     let path = config_file_path().ok()?;
     if !path.exists() {
         return None;
@@ -254,7 +254,7 @@ fn read_existing_config() -> Option<AiConfig> {
 }
 
 /// Write the AI config to disk with restrictive permissions (Unix only).
-fn write_config(config: &AiConfig) -> Result<(), String> {
+pub fn write_config(config: &AiConfig) -> Result<(), String> {
     let path = config_file_path()?;
     let json = serde_json::to_string_pretty(config)
         .map_err(|e| format!("Failed to serialize config: {e}"))?;

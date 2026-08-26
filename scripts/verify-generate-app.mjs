@@ -12,6 +12,10 @@
  *   # プロンプトを指定（開発者の要望に応じて変更可能）
  *   node scripts/verify-generate-app.mjs "予定管理アプリを作成"
  *
+ *   # 検証後に生成アプリを自動クリーンアップ（registry + ディレクトリ削除）
+ *   node scripts/verify-generate-app.mjs --cleanup
+ *   node scripts/verify-generate-app.mjs "予定管理アプリを作成" --cleanup
+ *
  * ── 環境変数 ────────────────────────────────────────────────────
  *   CDP_URL                   WebView2 CDP エンドポイント (default: http://172.28.208.1:9222)
  *   DESKSPAWN_E2E_REAL=1      実APIモード（必須。未設定なら拒否）
@@ -31,7 +35,10 @@ import { existsSync, readdirSync, readFileSync } from 'node:fs';
 
 const CDP_URL = process.env.CDP_URL || 'http://172.28.208.1:9222';
 const REAL_API = process.env.DESKSPAWN_E2E_REAL === '1';
-const PROMPT = process.argv[2] || 'ToDoアプリを作成して';
+// 引数解析: --cleanup フラグ + プロンプト（-- で始まらない最初の引数）
+const args = process.argv.slice(2);
+const CLEANUP = args.includes('--cleanup');
+const PROMPT = args.find((a) => !a.startsWith('--')) || 'ToDoアプリを作成して';
 const APPS_DIR = process.env.DESKSPAWN_APPS_DIR || '/mnt/c/Users/shira/deskspawn/apps';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -164,6 +171,29 @@ async function main() {
     // 5. プレビュー表示の確認（ループ内で判定済みの previewRendered を使用。
     //    ここで再チェックせず、生成完了時の iframe 検出をそのまま採用する）
 
+    // 6. クリーンアップ（--cleanup 指定時）: 生成アプリを Rust の delete_app IPC で削除。
+    //    選択中アプリの削除ガードはフロントエンドのみのため、直接 invoke すれば
+    //    削除できる。プレビュー（vite）がファイルをロックするため、先に
+    //    sidecar の /api/preview/stop で停止する（AppSwitcher.stopAppPreviews と同経路）。
+    let cleanedUp = false;
+    if (CLEANUP && appId) {
+      try {
+        const invoke = window.__TAURI_INTERNALS__?.invoke;
+        if (invoke) {
+          // プレビュー停止（best effort・lock 解放）
+          const port = window.__DESKSPAWN_SIDECAR_PORT__;
+          if (port) {
+            await fetch(`http://127.0.0.1:${port}/api/preview/stop`, { method: 'POST' }).catch(() => {});
+          }
+          await new Promise((r) => setTimeout(r, 1000)); // lock 解放待ち
+          await invoke('delete_app', { appId });
+          cleanedUp = true;
+        }
+      } catch (e) {
+        console.warn('[verify] cleanup failed:', e?.message || String(e));
+      }
+    }
+
     done({
       ok: aiResponded && codeGenerated,
       appId,
@@ -173,6 +203,7 @@ async function main() {
       codeGenerated,
       checkpoints,
       previewRendered,
+      cleanedUp,
       elapsedMs: Date.now() - t0,
     });
   } catch (e) {

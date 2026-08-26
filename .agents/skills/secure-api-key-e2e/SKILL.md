@@ -77,6 +77,9 @@ node scripts/verify-generate-app.mjs
 
 # プロンプトを指定（開発者の要望に応じて変更可能）
 node scripts/verify-generate-app.mjs "予定管理アプリを作成"
+
+# 検証後に生成アプリを自動クリーンアップ（registry + ディレクトリ削除）
+node scripts/verify-generate-app.mjs --cleanup
 ```
 
 出力（JSON）:
