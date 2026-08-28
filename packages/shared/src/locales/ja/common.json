@@ -377,7 +377,12 @@
     "zoomOut": "ズームアウト",
     "zoomReset": "ズームリセット",
     "localBadge": "Local :{{port}}",
-    "openInBrowser": "ブラウザで開く"
+    "openInBrowser": "ブラウザで開く",
+    "consentTitle": "未検証のAI生成コードを実行します。続行しますか？",
+    "consentDescription": "このアプリのコードはAIによって生成された未検証のものです。プレビューを実行すると、生成されたコードがこのデバイス上で動作します。",
+    "consentExecute": "実行",
+    "consentPending": "プレビューを実行するには同意が必要です",
+    "consentStart": "プレビューを実行"
   },
   "statusBar": {
     "idle": "待機中",
