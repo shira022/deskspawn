@@ -1695,10 +1695,9 @@ app.use('/v1', async (req, res) => {
       res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
       return;
     }
-    // fetch にはパース検証済み URL オブジェクトの正規化文字列のみを渡す（CodeQL taint 対応:
-    // finalUrl は new URL() パース + protocol/host 検証を通過した値から構築される）。
-    const finalTarget = finalUrl.toString();
-    const upstreamRes = await fetch(finalTarget, { ...init, signal: AbortSignal.timeout(30_000) });
+    // fetch にはパース検証済みの URL オブジェクトを直接渡す（CodeQL taint 対応:
+    // finalUrl は new URL() パース + protocol/host 検証を通過したオブジェクト）。
+    const upstreamRes = await fetch(finalUrl, { ...init, signal: AbortSignal.timeout(30_000) });
     res.status(upstreamRes.status);
 
     const contentType = upstreamRes.headers.get('content-type') || '';
