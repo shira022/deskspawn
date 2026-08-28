@@ -17,9 +17,18 @@ import { useAppStore } from "../../store/useAppStore";
 import { Button } from "../ui/button";
 import { Badge } from "../ui/badge";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+} from "../ui/dialog";
+import {
   Loader2,
   RefreshCw,
   AlertTriangle,
+  ShieldAlert,
   Maximize2,
   Minimize2,
   Wifi,
@@ -61,6 +70,28 @@ const DEVICE_ICONS: Record<DevicePreset, React.ReactNode> = {
 const ZOOM_MIN = 25;
 const ZOOM_MAX = 200;
 const ZOOM_STEP = 25;
+
+// ── 初回プレビュー実行同意 (C1, 監査 2026-08-28) ──────────────────────────────
+// プレビューは AI が生成した未検証コードを実行するため、アプリ(projectId)ごとに
+// 初回のみ確認ダイアログを表示する。同意は localStorage に機密を含まないフラグ
+// （deskspawn_preview_consent_<projectId>='1'）で永続化する。Web/Desktop 共通。
+const PREVIEW_CONSENT_PREFIX = "deskspawn_preview_consent_";
+
+function hasPreviewConsent(appId: string): boolean {
+  try {
+    return localStorage.getItem(PREVIEW_CONSENT_PREFIX + appId) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function setPreviewConsent(appId: string): void {
+  try {
+    localStorage.setItem(PREVIEW_CONSENT_PREFIX + appId, "1");
+  } catch {
+    // localStorage が使えない環境では毎回確認を表示する（安全側）
+  }
+}
 
 // ── ステータス表示マッピング ─────────────────────────────────────────────────
 
@@ -164,6 +195,7 @@ export function PreviewPanel() {
   const [compatOk, setCompatOk] = useState(true);
   const [compatMessage, setCompatMessage] = useState("");
   const [iframeLoading, setIframeLoading] = useState(true);
+  const [consentRequired, setConsentRequired] = useState(false);
   const prevAppRef = useRef<string | null>(null);
   const prevReloadRef = useRef(0);
   const iframeLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -221,22 +253,40 @@ export function PreviewPanel() {
     return unsub;
   }, []);
 
+  // プレビュー起動ヘルパー（C1: 同意後の起動・通常起動の両方で使用）
+  const runPreview = useCallback((appId: string) => {
+    previewManager
+      .boot(appId)
+      .catch((e: any) => {
+        console.error("[preview] Boot failed:", e);
+        setError(e.message || String(e));
+      });
+  }, []);
+
+  // 同意ダイアログの「実行」— 同意を永続化してプレビューを起動する
+  const handleConsentConfirm = useCallback(() => {
+    if (!currentAppId) return;
+    setPreviewConsent(currentAppId);
+    setConsentRequired(false);
+    runPreview(currentAppId);
+  }, [currentAppId, runPreview]);
+
   // アプリ選択時 → プレビュー起動。
   // initialized（initialize 完了）を待ってから boot する — 起動直後に
   // currentAppId が復元される前の競合を避けるため。
+  // C1: アプリごとに初回のみ同意を求め、同意前は boot しない（最終防衛線）。
   useEffect(() => {
     if (!initialized) return;
     if (!currentAppId) return;
     if (prevAppRef.current === currentAppId) return;
     prevAppRef.current = currentAppId;
 
-    previewManager
-      .boot(currentAppId)
-      .catch((e: any) => {
-        console.error("[preview] Boot failed:", e);
-        setError(e.message || String(e));
-      });
-  }, [initialized, currentAppId]);
+    if (!hasPreviewConsent(currentAppId)) {
+      setConsentRequired(true);
+      return;
+    }
+    runPreview(currentAppId);
+  }, [initialized, currentAppId, runPreview]);
 
   // タブが再フォーカスされたときにエラー状態から自動復帰
   useEffect(() => {
@@ -409,7 +459,35 @@ export function PreviewPanel() {
     );
   }
 
+  // ── C1: 初回プレビュー実行の確認ダイアログ ───────────────────────────────────
+  // 未検証のAI生成コードを実行することを、アプリごとに初回のみ確認する。
   return (
+    <>
+      <Dialog open={consentRequired} onOpenChange={(open) => { if (!open) setConsentRequired(false); }}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-amber-500" />
+              {t("preview.consentTitle")}
+            </DialogTitle>
+            <DialogDescription>
+              {t("preview.consentDescription")}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setConsentRequired(false)}
+            >
+              {t("common.cancel")}
+            </Button>
+            <Button onClick={handleConsentConfirm}>
+              {t("preview.consentExecute")}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
     <div
       className={`flex h-full flex-col ${
         previewMaximized ? "fixed inset-0 z-50 bg-background" : ""
@@ -616,6 +694,22 @@ export function PreviewPanel() {
               />
             </div>
           </div>
+        ) : status === "idle" && !previewUrl && !hasPreviewConsent(currentAppId) ? (
+          <div className="flex h-full items-center justify-center">
+            <div className="flex flex-col items-center gap-2 text-muted-foreground">
+              <ShieldAlert className="h-5 w-5" />
+              <p className="text-xs">
+                {t("preview.consentPending")}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setConsentRequired(true)}
+              >
+                {t("preview.consentStart")}
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="flex h-full items-center justify-center">
             <div className="flex flex-col items-center gap-2 text-muted-foreground">
@@ -628,5 +722,6 @@ export function PreviewPanel() {
         )}
       </div>
     </div>
+    </>
   );
 }
