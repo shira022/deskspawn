@@ -1709,6 +1709,13 @@ app.use('/v1', async (req, res) => {
     }
     const safePath = path.split('?')[0].split('#')[0];
     const rebuiltUrl = new URL(safePath + query, `https://${finalHost}`);
+    // 許可リスト方式: パースし直した後のホストが検証済み finalHost と完全一致する場合のみ
+    // 転送する（不一致 = パス/クエリによるホスト乗っ取りの試み → 拒否）。
+    // これは CodeQL の SSRF サニタイザーとして認識される allow-list パターン。
+    if (rebuiltUrl.hostname !== finalHost) {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
     const upstreamRes = await fetch(rebuiltUrl, { ...init, signal: AbortSignal.timeout(30_000) }); // codeql[js/request-forgery]
     res.status(upstreamRes.status);
 
