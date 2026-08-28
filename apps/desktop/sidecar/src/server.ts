@@ -1650,7 +1650,7 @@ app.use('/v1', async (req, res) => {
     const queryIndex = req.originalUrl.indexOf('?');
     const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
     // 末尾スラッシュ除去は正規表現を使わない（CodeQL slow-regex 回避・URLは検証済み origin+pathname）
-    let base = safeUpstream.endsWith('/') ? safeUpstream.slice(0, -1) : safeUpstream;
+    const base = safeUpstream.endsWith('/') ? safeUpstream.slice(0, -1) : safeUpstream;
     const target = `${base}${path}${query}`;
 
     const headers: Record<string, string> = {};
@@ -1674,6 +1674,24 @@ app.use('/v1', async (req, res) => {
       return;
     }
     if (finalUrl.protocol !== 'https:') {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    // SSRF 最終防御: ホストもインラインで再検証する（localhost / プライベート / リンクローカル拒否）
+    let finalHost = finalUrl.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (finalHost.endsWith('.')) finalHost = finalHost.slice(0, -1);
+    const finalV6 = parseIPv6Groups(finalHost);
+    const finalIsBlocked =
+      finalHost === 'localhost' ||
+      finalHost === '127.0.0.1' ||
+      finalHost === '::1' ||
+      finalHost === '0.0.0.0' ||
+      finalHost.endsWith('.localhost') ||
+      finalHost.endsWith('.local') ||
+      (finalV6 !== null &&
+        (((finalV6[0] & 0xffc0) === 0xfe80) || ((finalV6[0] & 0xffc0) === 0xfec0) || ((finalV6[0] & 0xfe00) === 0xfc00))) ||
+      isPrivateIPv4(finalHost);
+    if (finalIsBlocked) {
       res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
       return;
     }
