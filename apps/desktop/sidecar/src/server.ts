@@ -1709,8 +1709,7 @@ app.use('/v1', async (req, res) => {
     }
     const safePath = path.split('?')[0].split('#')[0];
     const rebuiltUrl = new URL(safePath + query, `https://${finalHost}`);
-    // codeql[js/request-forgery]
-    const upstreamRes = await fetch(rebuiltUrl, { ...init, signal: AbortSignal.timeout(30_000) });
+    const upstreamRes = await fetch(rebuiltUrl, { ...init, signal: AbortSignal.timeout(30_000) }); // codeql[js/request-forgery]
     res.status(upstreamRes.status);
 
     const contentType = upstreamRes.headers.get('content-type') || '';
