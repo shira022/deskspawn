@@ -1618,6 +1618,27 @@ app.post('/api/config', (req, res) => {
 // のみを使用する（H1: x-upstream ヘッダによる任意転送は SSRF リスクのため廃止）。
 // キーは保存済みキー（storedApiKey）を優先し、無ければリクエストの Authorization を使用。
 // クエリ文字列（例: ?model=xxx）も上流へそのまま転送する。
+//
+// SSRF対策（Critical-2・2026-08-28）:
+//  - 転送先は validateUpstreamUrl（https必須・localhost/private/metadata拒否）を通過した
+//    storedCustomEndpoint のみ（設定時+転送直前の2重検証）
+//  - 転送パスは OpenAI 互換 API の既知パスのみ許可（任意パス転送を遮断）
+//  - fetch 直前にも URL をパースし直して https + ホスト検証 + パス許可リストを再確認
+// 実機再攻撃（2026-08-28）で localhost / プライベートIP / 不正パスが 400 で
+// ブロックされることを確認済み。
+// 上流に転送してよい OpenAI 互換 API パス（/v1 マウント内・クエリ/フラグメント除く）。
+const ALLOWED_UPSTREAM_PATHS = new Set([
+  '/chat/completions',
+  '/completions',
+  '/embeddings',
+  '/models',
+  '/responses',
+  '/moderations',
+  '/audio/transcriptions',
+  '/audio/speech',
+  '/images/generations',
+  '/images/edits',
+]);
 app.use('/v1', async (req, res) => {
   try {
     const upstream = storedCustomEndpoint;
@@ -1645,6 +1666,12 @@ app.use('/v1', async (req, res) => {
         ? req.headers.authorization.replace(/^Bearer\s+/i, '')
         : '');
     const path = req.path; // /v1 マウント内ではプレフィックス除去済み (e.g. /chat/completions)
+    // Critical-2: 上流転送パスは OpenAI 互換 API の既知パスのみ許可（任意パス転送を遮断）。
+    // req.path はクエリを含まないため、許可リストはパス単体で判定できる。
+    if (!ALLOWED_UPSTREAM_PATHS.has(path)) {
+      res.status(400).json({ error: 'Invalid upstream path', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
     // req.path はクエリを含まないため、req.originalUrl からクエリ部を復元して付与する
     // （監査指摘 2026-08-27: クエリ未転送で ?model= 等が上流に届かなかった）。
     const queryIndex = req.originalUrl.indexOf('?');
@@ -1696,23 +1723,16 @@ app.use('/v1', async (req, res) => {
       return;
     }
     // fetch には、検証済みホストから明示的に再構築した URL のみを渡す。
-    // SSRF 防御は 3 重に存在し、ここに到達する URL は https + 公開ホストのみ:
+    // SSRF 防御は 4 重に存在し、ここに到達する URL は https + 公開ホスト + 許可パスのみ:
     //   1) /api/config 保存時 validateUpstreamUrl（https必須・localhost/private 拒否）
     //   2) /v1 転送直前 upstreamCheck 再検証
-    //   3) 直上の finalUrl パース + protocol/host インライン再検証
+    //   3) パス許可リスト ALLOWED_UPSTREAM_PATHS（任意パス転送を遮断）
+    //   4) 直上の finalUrl パース + protocol/host インライン再検証
     // 実機再攻撃（2026-08-28）で INVALID_ENDPOINT / INVALID_UPSTREAM が返り、
     // ローカル・プライベート宛の転送がブロックされることを確認済み。
-    // さらにパスの先頭 "//"（プロトコル相対でのホスト乗っ取り）を構造的に拒否する。
-    if (path.startsWith('//') || path.includes('\\')) {
-      res.status(400).json({ error: 'Invalid upstream path', errorCode: 'INVALID_UPSTREAM' });
-      return;
-    }
-    const safePath = path.split('?')[0].split('#')[0];
-    // URL を per-component で組み立てる: ホスト(finalHost)は検証済み・https 固定。
-    // パスは pathname プロパティとして設定するため、仮に "//evil.com" が混入しても
-    // ホスト解釈されず、パスとしてのみ扱われる（構造的なホスト乗っ取り防止）。
+    // パスは許可リスト通過済みの定数値のみ（先頭 "//" のホスト乗っ取りは許可リストにないため不可）。
     const rebuiltUrl = new URL(`https://${finalHost}`);
-    rebuiltUrl.pathname = safePath;
+    rebuiltUrl.pathname = path;
     rebuiltUrl.search = query;
     // 許可リスト方式: パース後のホストが検証済み finalHost と完全一致する場合のみ転送。
     if (rebuiltUrl.hostname !== finalHost) {
