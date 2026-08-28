@@ -148,7 +148,7 @@ function parseIPv6Groups(host: string): number[] | null {
  * 注意: WHATWG URL は 10進/16進IP（2130706433 等）を正規化するため、
  * 正規化後の hostname を検査すれば変形IPも捕捉できる。
  */
-function validateUpstreamUrl(raw: string): { ok: boolean; error?: string } {
+function validateUpstreamUrl(raw: string): { ok: boolean; error?: string; url?: string } {
   if (typeof raw !== 'string' || !raw.trim()) {
     return { ok: false, error: 'URL が指定されていません' };
   }
@@ -201,12 +201,13 @@ function validateUpstreamUrl(raw: string): { ok: boolean; error?: string } {
       }
     }
     // 上記以外の IPv6 は公開アドレスとして許可
-    return { ok: true };
+    return { ok: true, url: url.origin + url.pathname };
   }
   if (isPrivateIPv4(host)) {
     return { ok: false, error: 'プライベートアドレスへの接続は許可されません' };
   }
-  return { ok: true };
+  // 検証済みの URL のみを返す（CodeQL taint: 呼び出し元はこの url のみを上流転送に使う）
+  return { ok: true, url: url.origin + url.pathname };
 }
 
 /**
@@ -224,7 +225,8 @@ function validateDevScript(dir: string): { ok: boolean; error?: string } {
   }
   let raw: string;
   try {
-    raw = fs.readFileSync(path.join(dir, 'package.json'), 'utf-8');
+    // 検証済みの resolved（PROJECTS_DIR 配下確定済み）からパスを構築する
+    raw = fs.readFileSync(path.join(resolved, 'package.json'), 'utf-8');
   } catch {
     return { ok: false, error: 'package.json を読み込めません' };
   }
@@ -1594,7 +1596,8 @@ app.post('/api/config', (req, res) => {
         res.status(400).json({ error: check.error || 'Invalid custom endpoint', errorCode: 'INVALID_ENDPOINT' });
         return;
       }
-      storedCustomEndpoint = customEndpoint;
+      // 検証済みかつ正規化された URL のみを保持する（SSRF 対策・CodeQL taint 対応）
+      storedCustomEndpoint = check.url ?? customEndpoint;
       console.log('[api/config] custom endpoint updated in sidecar memory');
     }
   }
@@ -1632,6 +1635,8 @@ app.use('/v1', async (req, res) => {
       });
       return;
     }
+    // 検証済み・正規化済みの URL のみを上流転送に使う
+    const safeUpstream = upstreamCheck.url ?? upstream;
     const apiKey =
       storedApiKey ||
       (typeof req.headers.authorization === 'string'
@@ -1642,7 +1647,7 @@ app.use('/v1', async (req, res) => {
     // （監査指摘 2026-08-27: クエリ未転送で ?model= 等が上流に届かなかった）。
     const queryIndex = req.originalUrl.indexOf('?');
     const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
-    const target = `${upstream.replace(/\/+$/, '')}${path}${query}`;
+    const target = `${safeUpstream.replace(/\/+$/, '')}${path}${query}`;
 
     const headers: Record<string, string> = {};
     if (typeof req.headers['content-type'] === 'string') headers['Content-Type'] = req.headers['content-type'];
