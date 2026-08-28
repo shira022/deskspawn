@@ -1639,6 +1639,36 @@ const ALLOWED_UPSTREAM_PATHS = new Set([
   '/images/generations',
   '/images/edits',
 ]);
+/**
+ * 検証済み上流URLへのfetch専用ラッパー（SSRF対策の最終ゲート）。
+ * - 呼び出し元は validateUpstreamUrl + パス許可リスト + ホスト一致検証を通過した
+ *   URL オブジェクトのみを渡す（Critical-2・2026-08-28）
+ * - ここでも https + 非ローカルホストを最終確認してから接続する
+ * - これは意図的なデザイン: カスタムエンドポイントへのプロキシは製品機能であり、
+ *   接続先が安全であることをレイヤーごとに保証する
+ */
+async function fetchUpstreamVerified(url: URL, init: RequestInit): Promise<Response> {
+  // 最終ゲート: この関数には検証済み URL しか渡らない設計だが、万一の経路追加に備えて
+  // ここでも https / 非ローカルホストを再確認する（allow-list: 定数ホスト集合は無く、
+  // 検証関数で絞り込まれた値のみを受け付ける）。
+  if (url.protocol !== 'https:') {
+    throw new Error('blocked: https only');
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    isPrivateIPv4(host)
+  ) {
+    throw new Error('blocked: local/private address');
+  }
+  return fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+}
+
 app.use('/v1', async (req, res) => {
   try {
     const upstream = storedCustomEndpoint;
@@ -1740,7 +1770,7 @@ app.use('/v1', async (req, res) => {
       return;
     }
     // codeql[js/request-forgery]
-    const upstreamRes = await fetch(rebuiltUrl, { ...init, signal: AbortSignal.timeout(30_000) });
+    const upstreamRes = await fetchUpstreamVerified(rebuiltUrl, init);
     res.status(upstreamRes.status);
 
     const contentType = upstreamRes.headers.get('content-type') || '';
