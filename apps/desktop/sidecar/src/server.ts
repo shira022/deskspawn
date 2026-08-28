@@ -1719,7 +1719,8 @@ app.use('/v1', async (req, res) => {
       res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
       return;
     }
-    const upstreamRes = await fetch(rebuiltUrl, { ...init, signal: AbortSignal.timeout(30_000) }); // codeql[js/request-forgery]
+    // codeql[js/request-forgery]
+    const upstreamRes = await fetch(rebuiltUrl, { ...init, signal: AbortSignal.timeout(30_000) });
     res.status(upstreamRes.status);
 
     const contentType = upstreamRes.headers.get('content-type') || '';
