@@ -23,7 +23,11 @@ async function pageFetch(page, port, token, path, body) {
       headers: { 'Content-Type': 'application/json', 'X-DeskSpawn-Token': token },
       body: body ? JSON.stringify(body) : undefined
     });
-    return { status: res.status, body: (await res.text()).slice(0, 300) };
+    const headers = {};
+    for (const [k, v] of res.headers.entries()) {
+      if (/^(cf-ray|server|via|content-type|x-)/i.test(k)) headers[k] = v;
+    }
+    return { status: res.status, headers, body: (await res.text()).slice(0, 1200) };
   }, { port, token, path, body });
 }
 
@@ -50,6 +54,17 @@ async function main() {
 
   // ── 2b. SSRF: private IP 192.168.x → expect 400 INVALID_ENDPOINT
   out.ssrfPrivateIp = await pageFetch(page, port, token, '/api/config', { customEndpoint: 'https://192.168.1.10/v1' });
+
+  // パス許可リスト検証のため、検証可能な上流エンドポイントを一時設定する
+  // （https + 公開ホスト。実送信はされず、許可外パスは送信前に400で弾かれる）
+  out.ssrfBadPathSetup = await pageFetch(page, port, token, '/api/config', { customEndpoint: 'https://api.openai.com/v1' });
+
+  // ── 2c. SSRF(final): 許可外パス転送（/v1/hack-the-planet）→ 許可リストで 400
+  out.ssrfBadPath = await pageFetch(page, port, token, '/v1/hack-the-planet', {});
+
+  // ── 2d. SSRF(final): 許可リスト内パス（/v1/chat/completions）は許可リストを通過
+  //   （上流未設定エラーやネットワークエラーにはならない = ゲートを通過した証）
+  out.ssrfOkPath = await pageFetch(page, port, token, '/v1/chat/completions', {});
 
   // ── 3. Traversal: projectId ../ → expect 400
   out.traversal = await pageFetch(page, port, token, '/api/preview/start', { projectId: '../ds-hack-fixed', files: { 'pwn.txt': 'PWNED' } });
