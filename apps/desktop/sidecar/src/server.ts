@@ -215,6 +215,13 @@ function validateUpstreamUrl(raw: string): { ok: boolean; error?: string } {
  * `bun run dev` で実行させない）。エラーにスクリプト内容・絶対パスは含めない。
  */
 function validateDevScript(dir: string): { ok: boolean; error?: string } {
+  // 深層防御: 呼び出し元は previewDir()/getWorkspaceDir()（検証済み）のみだが、
+  // 万一の経路追加に備えて dir が PROJECTS_DIR 配下であることを保険として確認する。
+  const resolved = path.resolve(dir);
+  const root = path.resolve(PROJECTS_DIR);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    return { ok: false, error: '不正なディレクトリが指定されました' };
+  }
   let raw: string;
   try {
     raw = fs.readFileSync(path.join(dir, 'package.json'), 'utf-8');
