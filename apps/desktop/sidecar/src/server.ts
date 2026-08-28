@@ -1695,8 +1695,14 @@ app.use('/v1', async (req, res) => {
       res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
       return;
     }
-    // fetch にはパース検証済みの URL オブジェクトを直接渡す（CodeQL taint 対応:
-    // finalUrl は new URL() パース + protocol/host 検証を通過したオブジェクト）。
+    // fetch にはパース検証済みの URL オブジェクトを直接渡す。
+    // SSRF 防御は 3 重に存在し、ここに到達する URL は https + 公開ホストのみ:
+    //   1) /api/config 保存時 validateUpstreamUrl（https必須・localhost/private 拒否）
+    //   2) /v1 転送直前 upstreamCheck 再検証
+    //   3) 直上の finalUrl パース + protocol/host インライン再検証
+    // 実機再攻撃（2026-08-28）で INVALID_ENDPOINT / INVALID_UPSTREAM が返り、
+    // ローカル・プライベート宛の転送がブロックされることを確認済み。
+    // codeql[js/request-forgery] 検証済みホストのみへの転送であり誤検知
     const upstreamRes = await fetch(finalUrl, { ...init, signal: AbortSignal.timeout(30_000) });
     res.status(upstreamRes.status);
 
