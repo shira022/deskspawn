@@ -6,3 +6,9 @@ onlyBuiltDependencies:
   - esbuild
   - msw
   - sharp
+# Medium-3 (監査対応): postcss <= 8.5.22 が CVE-2026-69153 / GHSA-fxqj-rqcc-2cmp
+# (sourceMappingURL 経由で任意の .map ファイルを読める問題, first patched: 8.5.23)。
+# 最新パッチ版 8.5.26 に固定する。※ lockfile (pnpm-lock.yaml) の更新は統合フェーズで
+# pnpm install --lockfile-only を実施すること (本ブランチでは yaml 変更のみ)。
+overrides:
+  postcss: 8.5.26
