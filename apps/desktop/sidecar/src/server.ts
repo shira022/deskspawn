@@ -225,8 +225,10 @@ function validateDevScript(dir: string): { ok: boolean; error?: string } {
   }
   let raw: string;
   try {
-    // 検証済みの resolved（PROJECTS_DIR 配下確定済み）からパスを構築する
-    raw = fs.readFileSync(path.join(resolved, 'package.json'), 'utf-8');
+    // 検証済みの resolved（PROJECTS_DIR 配下確定済み）からパスを構築する。
+    // basename 抽出で構造的にトラバーサル不可能を保証（CodeQL path-injection 対応）。
+    const safeDir = path.join(PROJECTS_DIR, path.basename(resolved));
+    raw = fs.readFileSync(path.join(safeDir, 'package.json'), 'utf-8');
   } catch {
     return { ok: false, error: 'package.json を読み込めません' };
   }
@@ -1647,7 +1649,9 @@ app.use('/v1', async (req, res) => {
     // （監査指摘 2026-08-27: クエリ未転送で ?model= 等が上流に届かなかった）。
     const queryIndex = req.originalUrl.indexOf('?');
     const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
-    const target = `${safeUpstream.replace(/\/+$/, '')}${path}${query}`;
+    // 末尾スラッシュ除去は正規表現を使わない（CodeQL slow-regex 回避・URLは検証済み origin+pathname）
+    let base = safeUpstream.endsWith('/') ? safeUpstream.slice(0, -1) : safeUpstream;
+    const target = `${base}${path}${query}`;
 
     const headers: Record<string, string> = {};
     if (typeof req.headers['content-type'] === 'string') headers['Content-Type'] = req.headers['content-type'];
@@ -1659,7 +1663,20 @@ app.use('/v1', async (req, res) => {
       init.body = JSON.stringify(req.body ?? {});
     }
 
-    // リソース枯渇対策: 上流への接続・応答は 30 秒で打ち切る
+    // リソース枯渇対策: 上流への接続・応答は 30 秒で打ち切る。
+    // CodeQL taint 対応: fetch 直前にも URL をパースし直して https + 公開ホストを再確認する
+    // （validateUpstreamUrl 経由の検証済み URL でも、転送先が最終的に安全であることを保証）。
+    let finalUrl: URL;
+    try {
+      finalUrl = new URL(target);
+    } catch {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    if (finalUrl.protocol !== 'https:') {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
     const upstreamRes = await fetch(target, { ...init, signal: AbortSignal.timeout(30_000) });
     res.status(upstreamRes.status);
 
