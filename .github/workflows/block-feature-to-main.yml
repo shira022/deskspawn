@@ -2,7 +2,9 @@ name: Block Feature to Main PRs
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize, edited, retargeted]
+    # NOTE: `retargeted` は pull_request では有効な activity type ではない
+    # (pull_request_target 専用) ため、actionlint 検出を受けて削除した。
+    types: [opened, reopened, synchronize, edited]
     branches: [main]
 
 permissions:
