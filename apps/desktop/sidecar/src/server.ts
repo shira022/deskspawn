@@ -1708,10 +1708,13 @@ app.use('/v1', async (req, res) => {
       return;
     }
     const safePath = path.split('?')[0].split('#')[0];
-    const rebuiltUrl = new URL(safePath + query, `https://${finalHost}`);
-    // 許可リスト方式: パースし直した後のホストが検証済み finalHost と完全一致する場合のみ
-    // 転送する（不一致 = パス/クエリによるホスト乗っ取りの試み → 拒否）。
-    // これは CodeQL の SSRF サニタイザーとして認識される allow-list パターン。
+    // URL を per-component で組み立てる: ホスト(finalHost)は検証済み・https 固定。
+    // パスは pathname プロパティとして設定するため、仮に "//evil.com" が混入しても
+    // ホスト解釈されず、パスとしてのみ扱われる（構造的なホスト乗っ取り防止）。
+    const rebuiltUrl = new URL(`https://${finalHost}`);
+    rebuiltUrl.pathname = safePath;
+    rebuiltUrl.search = query;
+    // 許可リスト方式: パース後のホストが検証済み finalHost と完全一致する場合のみ転送。
     if (rebuiltUrl.hostname !== finalHost) {
       res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
       return;
