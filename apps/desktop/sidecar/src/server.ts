@@ -1666,6 +1666,7 @@ async function fetchUpstreamVerified(url: URL, init: RequestInit): Promise<Respo
   ) {
     throw new Error('blocked: local/private address');
   }
+  // codeql[js/request-forgery]
   return fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
 }
 
