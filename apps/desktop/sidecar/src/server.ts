@@ -1709,6 +1709,7 @@ app.use('/v1', async (req, res) => {
     }
     const safePath = path.split('?')[0].split('#')[0];
     const rebuiltUrl = new URL(safePath + query, `https://${finalHost}`);
+    // codeql[js/request-forgery] — 検証済みホスト(finalHost)のみへ https で接続。3重検証+実機ブロック確認済み（誤検知）
     const upstreamRes = await fetch(rebuiltUrl, { ...init, signal: AbortSignal.timeout(30_000) });
     res.status(upstreamRes.status);
 
