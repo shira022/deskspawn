@@ -185,6 +185,66 @@ pub fn sanitize_npm_install(command: &str) -> String {
     }
 }
 
+/// package.json の `scripts.dev` が生成アプリのテンプレート期待値（"vite"）と
+/// 完全一致するかを検証する。
+///
+/// Critical-1（監査）: AI が package.json の scripts.dev を任意コマンドに書き換え、
+/// `npm run dev` 経由でホスト上に任意コード実行（RCE）する経路への対策。
+/// dev スクリプトの実行は "vite" のみ許可し、それ以外の値・欠落・不正 JSON は Err。
+/// build / preview は実行経路が無いため検証しない（diff で dependencies 等を
+/// 変更する正当な更新は scripts.dev が "vite" のままなら通る）。
+pub fn validate_package_json_scripts(json_str: &str) -> Result<(), String> {
+    let parsed: serde_json::Value = serde_json::from_str(json_str)
+        .map_err(|_| "package.json: invalid JSON".to_string())?;
+    match parsed
+        .get("scripts")
+        .and_then(|s| s.get("dev"))
+        .and_then(|v| v.as_str())
+    {
+        Some("vite") => Ok(()),
+        Some(other) => {
+            // エラーメッセージに改竄されたコマンド全体を載せない（ログ肥大化防止のため切り詰め）
+            let shown: String = other.chars().take(100).collect();
+            Err(format!(
+                "dev script modified: scripts.dev must be exactly \"vite\" (got \"{}\")",
+                shown
+            ))
+        }
+        None => Err(
+            "dev script modified: package.json has no scripts.dev field (or it is not a string)"
+                .to_string(),
+        ),
+    }
+}
+
+/// `npm run <script>` コマンドの実行可否を判定する（Critical-1・案C）。
+///
+/// - `dev` : workspace/package.json の scripts.dev が "vite" の場合のみ許可
+///   （改竄された scripts.dev による RCE 経路の遮断）
+/// - `build` / `preview` : 許可（テンプレート標準スクリプト。実行経路として固定）
+/// - それ以外のスクリプト名 : 拒否（独自スクリプト実行を塞ぐ。書き込み自体は許可＝案C）
+/// - package.json が無い / 読めない / 不正 JSON : 安全側で false
+pub fn is_npm_run_allowed(command: &str, workspace: &Path) -> bool {
+    let trimmed = command.trim();
+    let rest = match trimmed.strip_prefix("npm run") {
+        Some(r) if r.starts_with(' ') => r.trim_start(),
+        _ => return false,
+    };
+    let script = rest.split_whitespace().next().unwrap_or("");
+    if script == "build" || script == "preview" {
+        return true;
+    }
+    if script != "dev" {
+        return false;
+    }
+    let pkg_path = workspace.join("package.json");
+    let content = match std::fs::read_to_string(&pkg_path) {
+        Ok(c) => c,
+        Err(_) => return false,
+    };
+    validate_package_json_scripts(&content).is_ok()
+}
+
 /// Forbidden TypeScript/JavaScript API patterns.
 ///
 /// 危険な実行/コード生成系のみを対象とする（fetch 等の正当な API 呼び出しは
@@ -290,5 +350,80 @@ mod tests {
         assert!(!is_typescript_file("src/style.css"));
         assert!(!is_typescript_file("package.json"));
         assert!(!is_typescript_file("public/index.html"));
+    }
+
+    // ── Critical-1: package.json scripts.dev allowlist ──────────────────────
+
+    #[test]
+    fn test_validate_package_json_scripts() {
+        // dev = "vite" → OK
+        assert!(validate_package_json_scripts(r#"{"scripts": {"dev": "vite"}}"#).is_ok());
+        // 他のフィールド（dependencies 等）は自由 — diff での正当な更新を妨げない
+        assert!(validate_package_json_scripts(
+            r#"{"name":"x","version":"1.0.0","dependencies":{"react":"^18.0"},"scripts":{"dev":"vite","build":"tsc -b && vite build","preview":"vite preview"}}"#
+        )
+        .is_ok());
+
+        // dev が任意コード → Err（RCE 経路）
+        let evil = r#"{"scripts": {"dev": "node -e 'require(\"child_process\").execSync(\"calc\")'"}}"#;
+        let err = validate_package_json_scripts(evil).unwrap_err();
+        assert!(err.contains("dev script modified"), "got: {}", err);
+
+        // build のみ（dev 無し）→ Err
+        assert!(validate_package_json_scripts(r#"{"scripts": {"build": "vite build"}}"#).is_err());
+        // scripts 自体が無い → Err
+        assert!(validate_package_json_scripts(r#"{"name": "x"}"#).is_err());
+        // dev が文字列でない → Err
+        assert!(validate_package_json_scripts(r#"{"scripts": {"dev": 42}}"#).is_err());
+        // scripts が文字列（オブジェクトでない）→ Err
+        assert!(validate_package_json_scripts(r#"{"scripts": "vite"}"#).is_err());
+        // 不正 JSON → Err
+        assert!(validate_package_json_scripts("{ not json").is_err());
+        assert!(validate_package_json_scripts("").is_err());
+    }
+
+    #[test]
+    fn test_is_npm_run_allowed() {
+        let dir = std::env::temp_dir().join(format!(
+            "ds-sec-npmrun-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // package.json が無い → dev 拒否（安全側）
+        assert!(!is_npm_run_allowed("npm run dev", &dir));
+        // build / preview は package.json 無しでも許可
+        assert!(is_npm_run_allowed("npm run build", &dir));
+        assert!(is_npm_run_allowed("npm run preview", &dir));
+        assert!(is_npm_run_allowed("npm run preview -- --port 4173", &dir));
+
+        // dev = "vite" → 許可（-- 以降の引数はスクリプト名に影響しない）
+        std::fs::write(dir.join("package.json"), r#"{"scripts": {"dev": "vite"}}"#).unwrap();
+        assert!(is_npm_run_allowed("npm run dev", &dir));
+        assert!(is_npm_run_allowed("npm run dev -- --host 0.0.0.0", &dir));
+
+        // dev を改竄 → 拒否（Critical-1 の主経路）
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"scripts": {"dev": "node -e 'require(\"child_process\").execSync(\"calc\")'"}}"#,
+        )
+        .unwrap();
+        assert!(!is_npm_run_allowed("npm run dev", &dir));
+
+        // 独自スクリプト名は拒否（書き込み自体は許可＝案C）
+        assert!(!is_npm_run_allowed("npm run evil", &dir));
+        assert!(!is_npm_run_allowed("npm run test", &dir));
+
+        // 不正 JSON → dev 拒否（安全側）
+        std::fs::write(dir.join("package.json"), "{ not json").unwrap();
+        assert!(!is_npm_run_allowed("npm run dev", &dir));
+
+        // フォーマット不正（npm run の後にスクリプト名が無い）
+        assert!(!is_npm_run_allowed("npm run", &dir));
+        assert!(!is_npm_run_allowed("npm runbuild", &dir));
+        assert!(!is_npm_run_allowed("npm run --", &dir));
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }

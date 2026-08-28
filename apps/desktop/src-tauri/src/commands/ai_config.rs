@@ -1,7 +1,9 @@
+use crate::commands::sidecar::SidecarManager;
 use crate::engine::workspace;
 use crate::models::config::{AiConfig, AppSettings, ProviderConfig};
 use std::fs;
 use std::path::PathBuf;
+use tauri::State;
 
 /// Keyring identifiers for OS keychain storage.
 ///
@@ -309,13 +311,17 @@ pub fn write_config(config: &AiConfig) -> Result<(), String> {
 /// 1. After every `save_ai_config` (key may have changed)
 /// 2. On app startup after the sidecar is ready
 ///
-/// `port` defaults to 3009 if not provided (or 0).
-pub fn push_api_key_to_sidecar(api_key: &str) {
-    push_api_key_to_sidecar_on_port(api_key, None, DEFAULT_SIDECAR_PORT);
+/// C2 連携（監査 M5）: `port` は SidecarManager::actual_port() の実ポートを渡すこと。
+/// 固定ポート（3009 等）へ push すると reusePort:true の起動時ポート掠いで
+/// キー + トークンが傍受される余地があるため、動的ポートに統一する。
+pub fn push_api_key_to_sidecar(api_key: &str, port: u16) {
+    push_api_key_to_sidecar_on_port(api_key, None, port);
 }
 
-/// Same as `push_api_key_to_sidecar` but to a specific sidecar port.
+/// Same as `push_api_key_to_sidecar` but to a specific sidecar port and endpoint.
 /// `custom_endpoint` が None の場合は config.json から読み取って補完する。
+/// C2 連携（監査 M5）: `port` は基本 0 を渡さず SidecarManager::actual_port() を渡すこと。
+/// （0 は後方互換フォールバックとして DEFAULT_SIDECAR_PORT に解決される）
 pub fn push_api_key_to_sidecar_on_port(
     api_key: &str,
     custom_endpoint: Option<&str>,
@@ -440,7 +446,10 @@ pub struct SaveKeyResult {
 ///   - If api_key is empty + api_key_configured is false:
 ///     delete all stored keys — user removed the key
 #[tauri::command]
-pub fn save_ai_config(config: AiConfig) -> Result<SaveKeyResult, String> {
+pub fn save_ai_config(
+    sidecar: State<'_, SidecarManager>,
+    config: AiConfig,
+) -> Result<SaveKeyResult, String> {
     let dest_method = if config.storage_method.is_empty() {
         "keychain"
     } else {
@@ -531,7 +540,8 @@ pub fn save_ai_config(config: AiConfig) -> Result<SaveKeyResult, String> {
     // キーが設定されている場合のみ push する（削除時はスキップ）。
     if !actual_method.is_empty() {
         if let Some(key) = load_full_config_for_sidecar() {
-            push_api_key_to_sidecar(&key);
+            // C2 連携（監査 M5）: 実ポート（動的）へ push する
+            push_api_key_to_sidecar(&key, sidecar.actual_port());
         }
     }
 
@@ -584,13 +594,17 @@ pub fn load_ai_config() -> Result<Option<AiConfig>, String> {
 /// 保存済み設定を /v1 プロキシの上流（storedCustomEndpoint）に反映する。
 /// x-upstream ヘッダ廃止（H1）後の代替経路。
 #[tauri::command]
-pub fn sync_sidecar_config(endpoint: Option<String>) -> Result<(), String> {
+pub fn sync_sidecar_config(
+    sidecar: State<'_, SidecarManager>,
+    endpoint: Option<String>,
+) -> Result<(), String> {
     let key = load_full_config_for_sidecar().unwrap_or_default();
     let ep = match endpoint {
         Some(e) if !e.is_empty() => Some(e),
         _ => read_existing_config().and_then(|c| c.custom_endpoint),
     };
-    push_api_key_to_sidecar_on_port(&key, ep.as_deref(), DEFAULT_SIDECAR_PORT);
+    // C2 連携（監査 M5）: フロントからポート引数を受け取らず実ポートを動的に使用する
+    push_api_key_to_sidecar_on_port(&key, ep.as_deref(), sidecar.actual_port());
     Ok(())
 }
 
@@ -600,7 +614,11 @@ pub fn sync_sidecar_config(endpoint: Option<String>) -> Result<(), String> {
 /// 合わせた表示（「OSキーチェーンに保存」/「設定ファイルに保存（平文）」）を
 /// できるようにする。Web 版はこのコマンドが無いため IndexedDB にフォールバックする。
 #[tauri::command]
-pub fn save_api_key(provider: String, api_key: String) -> Result<SaveKeyResult, String> {
+pub fn save_api_key(
+    sidecar: State<'_, SidecarManager>,
+    provider: String,
+    api_key: String,
+) -> Result<SaveKeyResult, String> {
     if api_key.is_empty() {
         delete_api_key(provider.clone())?;
         return Ok(SaveKeyResult {
@@ -609,8 +627,8 @@ pub fn save_api_key(provider: String, api_key: String) -> Result<SaveKeyResult, 
     }
     // デスクトップの既定はキーチェーン（利用不可時は自動でファイルへフォールバック）
     let method = save_key_to_storage(&api_key, &provider, "keychain")?;
-    // サイドカー（メモリ内キーストア）へ同期
-    push_api_key_to_sidecar(&api_key);
+    // サイドカー（メモリ内キーストア）へ同期 — 実ポート（動的）へ push する
+    push_api_key_to_sidecar(&api_key, sidecar.actual_port());
     Ok(SaveKeyResult { method })
 }
 

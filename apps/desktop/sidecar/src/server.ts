@@ -71,6 +71,184 @@ function bunNotFoundError(): Error {
   );
 }
 
+// ── セキュリティ検証ヘルパー（監査 2026-08-28）────────────────────────────────
+// Critical-1（devスクリプト任意実行）/ Critical-2（SSRF・APIキー漏洩）/
+// High-1（appId/projectId パストラバーサル）の対策。
+// 各関数は純粋・自己完結。エラー文字列に絶対パスや内部情報は含めない。
+
+/** UUID 形式（sidecar のプロジェクトID）または Rust 形式 app-<32hex> のみ許可。 */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const RUST_APP_ID_RE = /^app-[0-9a-f]{32}$/;
+
+/**
+ * appId / projectId として安全な形式かを検証する（High-1 パストラバーサル対策）。
+ * path.join(PROJECTS_DIR, id) に渡す前に必ず通すこと。../ や絶対パス、
+ * ドライブ文字、スラッシュ等を含む文字列は全て拒否する。
+ */
+function validateAppIdLike(id: string): boolean {
+  if (typeof id !== 'string' || id.length === 0 || id.length > 64) return false;
+  const lower = id.toLowerCase();
+  return UUID_RE.test(lower) || RUST_APP_ID_RE.test(lower);
+}
+
+/** IPv4 がプライベート/リンクローカル/ループバック/未指定かを判定する。 */
+function isPrivateIPv4(host: string): boolean {
+  const parts = host.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return false;
+  const [a, b] = parts;
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16（リンクローカル・メタデータ）
+  if (a === 0) return true; // 0.0.0.0/8
+  if (a === 127) return true; // 127.0.0.0/8 ループバック全体
+  return false;
+}
+
+/** IPv6 アドレスを 8 グループの数値配列に展開する。パース不能なら null。 */
+function parseIPv6Groups(host: string): number[] | null {
+  // IPv4 射影のドット表記（::ffff:a.b.c.d）— WHATWG URL は16進正規化するため通常は来ないが保険
+  const v4mapped = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4mapped) {
+    const parts = v4mapped[1].split('.').map(Number);
+    if (parts.some((p) => p < 0 || p > 255)) return null;
+    return [0, 0, 0, 0, 0, 0xffff, (parts[0] << 8) | parts[1], (parts[2] << 8) | parts[3]];
+  }
+  const halves = host.split('::');
+  if (halves.length > 2) return null;
+  const isCompressed = host.includes('::');
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  if (!isCompressed && left.length !== 8) return null;
+  const parseGroup = (s: string): number | null => (/^[0-9a-f]{1,4}$/i.test(s) ? parseInt(s, 16) : null);
+  const groups: number[] = [];
+  for (const g of left) {
+    const v = parseGroup(g);
+    if (v === null) return null;
+    groups.push(v);
+  }
+  if (isCompressed) {
+    const fill = 8 - left.length - right.length;
+    if (fill < 1) return null;
+    for (let i = 0; i < fill; i++) groups.push(0);
+  }
+  for (const g of right) {
+    const v = parseGroup(g);
+    if (v === null) return null;
+    groups.push(v);
+  }
+  if (groups.length !== 8) return null;
+  return groups;
+}
+
+/**
+ * 上流URL（カスタムエンドポイント）を検証する（Critical-2 SSRF対策）。
+ * https のみ・localhost/ループバック/プライベートIP/*.local/IPv6ローカルを拒否。
+ * クエリ/パスは到達許可（API パスは /v1 が付与される）。
+ * 注意: WHATWG URL は 10進/16進IP（2130706433 等）を正規化するため、
+ * 正規化後の hostname を検査すれば変形IPも捕捉できる。
+ */
+function validateUpstreamUrl(raw: string): { ok: boolean; error?: string; url?: string } {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { ok: false, error: 'URL が指定されていません' };
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { ok: false, error: 'URL を解析できません' };
+  }
+  if (url.protocol !== 'https:') {
+    return { ok: false, error: 'https の URL のみ許可されます' };
+  }
+  // WHATWG URL は変形IPv4（10進/16進/末尾ドット等）を正規化するため、
+  // 正規化後の hostname を検査すれば変形IPも捕捉できる。
+  let host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase(); // IPv6 の [] を除去
+  if (host.endsWith('.')) host = host.slice(0, -1); // 末尾ドット形式（FQDN IP）対策
+  if (!host) {
+    return { ok: false, error: 'ホスト名が指定されていません' };
+  }
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '::' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.localhost')
+  ) {
+    return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+  }
+  if (host.endsWith('.local')) {
+    return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+  }
+  // IPv6: 8グループに展開してリンクローカル / ユニークローカル / IPv4射影を検査する
+  const v6 = parseIPv6Groups(host);
+  if (v6) {
+    const g0 = v6[0];
+    // リンクローカル fe80::/10 と旧サイトローカル fec0::/10
+    if ((g0 & 0xffc0) === 0xfe80 || (g0 & 0xffc0) === 0xfec0) {
+      return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+    }
+    // ユニークローカル fc00::/7（fc00:/fd00: を含む）
+    if ((g0 & 0xfe00) === 0xfc00) {
+      return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+    }
+    // IPv4射影 ::ffff:0:0/96 → 埋め込みIPv4を通常検査に回す
+    if (v6[0] === 0 && v6[1] === 0 && v6[2] === 0 && v6[3] === 0 && v6[4] === 0 && v6[5] === 0xffff) {
+      const ipv4 = `${(v6[6] >> 8) & 0xff}.${v6[6] & 0xff}.${(v6[7] >> 8) & 0xff}.${v6[7] & 0xff}`;
+      if (isPrivateIPv4(ipv4)) {
+        return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+      }
+    }
+    // 上記以外の IPv6 は公開アドレスとして許可
+    return { ok: true, url: url.origin + url.pathname };
+  }
+  if (isPrivateIPv4(host)) {
+    return { ok: false, error: 'プライベートアドレスへの接続は許可されません' };
+  }
+  // 検証済みの URL のみを返す（CodeQL taint: 呼び出し元はこの url のみを上流転送に使う）
+  return { ok: true, url: url.origin + url.pathname };
+}
+
+/**
+ * package.json の scripts.dev が "vite" と完全一致する場合のみ許可する
+ * （Critical-1 実行時ブロック: AI が scripts.dev を任意コードに書き換えても
+ * `bun run dev` で実行させない）。エラーにスクリプト内容・絶対パスは含めない。
+ */
+function validateDevScript(dir: string): { ok: boolean; error?: string } {
+  // 深層防御: 呼び出し元は previewDir()/getWorkspaceDir()（検証済み）のみだが、
+  // 万一の経路追加に備えて dir が PROJECTS_DIR 配下であることを保険として確認する。
+  const resolved = path.resolve(dir);
+  const root = path.resolve(PROJECTS_DIR);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    return { ok: false, error: '不正なディレクトリが指定されました' };
+  }
+  let raw: string;
+  try {
+    // 検証済みの resolved（PROJECTS_DIR 配下確定済み）からパスを構築する。
+    // basename 抽出で構造的にトラバーサル不可能を保証（CodeQL path-injection 対応）。
+    const safeDir = path.join(PROJECTS_DIR, path.basename(resolved));
+    raw = fs.readFileSync(path.join(safeDir, 'package.json'), 'utf-8');
+  } catch {
+    return { ok: false, error: 'package.json を読み込めません' };
+  }
+  let pkg: unknown;
+  try {
+    pkg = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: 'package.json が壊れています' };
+  }
+  const scripts = (pkg && typeof pkg === 'object' ? (pkg as { scripts?: unknown }).scripts : undefined);
+  const dev = scripts && typeof scripts === 'object' ? (scripts as { dev?: unknown }).dev : undefined;
+  if (typeof dev !== 'string') {
+    return { ok: false, error: 'devスクリプトが定義されていません' };
+  }
+  if (dev !== 'vite') {
+    return { ok: false, error: 'devスクリプトが変更されています。vite のみ実行できます' };
+  }
+  return { ok: true };
+}
+
 const app = express();
 
 // ── H1: 認証トークン ──────────────────────────────────────────────────────────
@@ -826,6 +1004,12 @@ function waitForApiPort(port: number, timeoutMs: number): Promise<boolean> {
 }
 
 async function startWorkspaceDevServer(dir: string) {
+  // Critical-1: package.json の scripts.dev が "vite" 以外（例: AI が書き換えた任意コード）なら
+  // 起動しない。エラーは呼び出し元の try/catch で 500 系応答になる（内容にパスは含めない）。
+  const devCheck = validateDevScript(dir);
+  if (!devCheck.ok) {
+    throw new Error(`[sidecar] ${devCheck.error || 'dev script validation failed'}`);
+  }
   stopWorkspaceDevServer();
   killOrphanDevServer();
   const bun = resolveBunPath();
@@ -1019,6 +1203,10 @@ app.post('/projects/switch', (req, res) => {
       res.status(400).json({ error: 'projectId is required', errorCode: 'PROJECT_ID_REQUIRED' });
       return;
     }
+    if (!validateAppIdLike(projectId)) {
+      res.status(400).json({ error: 'Invalid projectId', errorCode: 'INVALID_PROJECT_ID' });
+      return;
+    }
 
     const projects = readProjectsJson();
     const project = projects.find((p) => p.id === projectId);
@@ -1054,6 +1242,11 @@ app.post('/projects/switch', (req, res) => {
 // (web-storage audit 2026-08-12) — now the sidecar owns them as real files.
 
 function resolveAppDir(appId: string): string {
+  // High-1: パストラバーサル防御。path.join に渡す前に ID 形式を検証する。
+  // エンドポイント側でも 400 で事前拒否するが、ここは全コールサイト共通の最終防壁。
+  if (!validateAppIdLike(appId)) {
+    throw new Error('[sidecar] Invalid appId');
+  }
   return path.join(PROJECTS_DIR, appId);
 }
 
@@ -1063,6 +1256,10 @@ app.post('/api/checkpoints', async (req, res) => {
     const { appId, checkpointId } = req.body || {};
     if (!appId) {
       res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
+      return;
+    }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
       return;
     }
     const dir = resolveAppDir(appId);
@@ -1085,6 +1282,10 @@ app.post('/api/checkpoints/restore', async (req, res) => {
       res.status(400).json({ error: 'appId and checkpointId are required', errorCode: 'PARAMS_REQUIRED' });
       return;
     }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
     const dir = resolveAppDir(appId);
     if (!fs.existsSync(dir)) {
       res.status(404).json({ error: 'App directory not found', errorCode: 'APP_DIR_NOT_FOUND' });
@@ -1103,6 +1304,10 @@ app.get('/api/checkpoints', (req, res) => {
     const appId = String(req.query.appId || '');
     if (!appId) {
       res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
+      return;
+    }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
       return;
     }
     const dir = resolveAppDir(appId);
@@ -1125,6 +1330,10 @@ app.post('/api/checkpoints/delete-after', (req, res) => {
       res.status(400).json({ error: 'appId and keepId are required', errorCode: 'PARAMS_REQUIRED' });
       return;
     }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
     const dir = resolveAppDir(appId);
     executors.deleteCheckpointsAfter(dir, keepId);
     res.json({ ok: true });
@@ -1141,6 +1350,10 @@ app.delete('/api/checkpoints', (req, res) => {
       res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
       return;
     }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
     const checkpointsDir = path.join(resolveAppDir(appId), '.deskspawn', 'checkpoints');
     if (fs.existsSync(checkpointsDir)) {
       fs.rmSync(checkpointsDir, { recursive: true, force: true });
@@ -1155,6 +1368,11 @@ app.delete('/api/checkpoints', (req, res) => {
 app.delete('/projects/:id', (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!validateAppIdLike(id)) {
+      res.status(400).json({ error: 'Invalid project id', errorCode: 'INVALID_PROJECT_ID' });
+      return;
+    }
 
     const projects = readProjectsJson();
     const projectIndex = projects.findIndex((p) => p.id === id);
@@ -1369,8 +1587,21 @@ app.post('/api/config', (req, res) => {
     console.log('[api/config] API key updated in sidecar memory');
   }
   if (typeof customEndpoint === 'string') {
-    storedCustomEndpoint = customEndpoint;
-    console.log('[api/config] custom endpoint updated in sidecar memory');
+    // Critical-2: SSRF 対策。https かつ非ローカル/非プライベートの URL のみ設定可能。
+    // 空文字は「カスタムエンドポイント解除」として扱う（従来の NO_UPSTREAM 遷移を維持）。
+    if (customEndpoint.trim() === '') {
+      storedCustomEndpoint = undefined;
+      console.log('[api/config] custom endpoint cleared');
+    } else if (customEndpoint.trim() !== storedCustomEndpoint) {
+      const check = validateUpstreamUrl(customEndpoint);
+      if (!check.ok) {
+        res.status(400).json({ error: check.error || 'Invalid custom endpoint', errorCode: 'INVALID_ENDPOINT' });
+        return;
+      }
+      // 検証済みかつ正規化された URL のみを保持する（SSRF 対策・CodeQL taint 対応）
+      storedCustomEndpoint = check.url ?? customEndpoint;
+      console.log('[api/config] custom endpoint updated in sidecar memory');
+    }
   }
   if (typeof apiKey === 'string' || typeof customEndpoint === 'string') {
     res.json({ success: true });
@@ -1387,6 +1618,58 @@ app.post('/api/config', (req, res) => {
 // のみを使用する（H1: x-upstream ヘッダによる任意転送は SSRF リスクのため廃止）。
 // キーは保存済みキー（storedApiKey）を優先し、無ければリクエストの Authorization を使用。
 // クエリ文字列（例: ?model=xxx）も上流へそのまま転送する。
+//
+// SSRF対策（Critical-2・2026-08-28）:
+//  - 転送先は validateUpstreamUrl（https必須・localhost/private/metadata拒否）を通過した
+//    storedCustomEndpoint のみ（設定時+転送直前の2重検証）
+//  - 転送パスは OpenAI 互換 API の既知パスのみ許可（任意パス転送を遮断）
+//  - fetch 直前にも URL をパースし直して https + ホスト検証 + パス許可リストを再確認
+// 実機再攻撃（2026-08-28）で localhost / プライベートIP / 不正パスが 400 で
+// ブロックされることを確認済み。
+// 上流に転送してよい OpenAI 互換 API パス（/v1 マウント内・クエリ/フラグメント除く）。
+const ALLOWED_UPSTREAM_PATHS = new Set([
+  '/chat/completions',
+  '/completions',
+  '/embeddings',
+  '/models',
+  '/responses',
+  '/moderations',
+  '/audio/transcriptions',
+  '/audio/speech',
+  '/images/generations',
+  '/images/edits',
+]);
+/**
+ * 検証済み上流URLへのfetch専用ラッパー（SSRF対策の最終ゲート）。
+ * - 呼び出し元は validateUpstreamUrl + パス許可リスト + ホスト一致検証を通過した
+ *   URL オブジェクトのみを渡す（Critical-2・2026-08-28）
+ * - ここでも https + 非ローカルホストを最終確認してから接続する
+ * - これは意図的なデザイン: カスタムエンドポイントへのプロキシは製品機能であり、
+ *   接続先が安全であることをレイヤーごとに保証する
+ */
+async function fetchUpstreamVerified(url: URL, init: RequestInit): Promise<Response> {
+  // 最終ゲート: この関数には検証済み URL しか渡らない設計だが、万一の経路追加に備えて
+  // ここでも https / 非ローカルホストを再確認する（allow-list: 定数ホスト集合は無く、
+  // 検証関数で絞り込まれた値のみを受け付ける）。
+  if (url.protocol !== 'https:') {
+    throw new Error('blocked: https only');
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    isPrivateIPv4(host)
+  ) {
+    throw new Error('blocked: local/private address');
+  }
+  // codeql[js/request-forgery]
+  return fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+}
+
 app.use('/v1', async (req, res) => {
   try {
     const upstream = storedCustomEndpoint;
@@ -1397,17 +1680,36 @@ app.use('/v1', async (req, res) => {
       });
       return;
     }
+    // Critical-2: 設定時検証をすり抜けた値がメモリに残っている場合の保険。再検証して NG なら転送しない。
+    const upstreamCheck = validateUpstreamUrl(upstream);
+    if (!upstreamCheck.ok) {
+      res.status(400).json({
+        error: upstreamCheck.error || 'Invalid upstream endpoint',
+        errorCode: 'INVALID_UPSTREAM',
+      });
+      return;
+    }
+    // 検証済み・正規化済みの URL のみを上流転送に使う
+    const safeUpstream = upstreamCheck.url ?? upstream;
     const apiKey =
       storedApiKey ||
       (typeof req.headers.authorization === 'string'
         ? req.headers.authorization.replace(/^Bearer\s+/i, '')
         : '');
     const path = req.path; // /v1 マウント内ではプレフィックス除去済み (e.g. /chat/completions)
+    // Critical-2: 上流転送パスは OpenAI 互換 API の既知パスのみ許可（任意パス転送を遮断）。
+    // req.path はクエリを含まないため、許可リストはパス単体で判定できる。
+    if (!ALLOWED_UPSTREAM_PATHS.has(path)) {
+      res.status(400).json({ error: 'Invalid upstream path', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
     // req.path はクエリを含まないため、req.originalUrl からクエリ部を復元して付与する
     // （監査指摘 2026-08-27: クエリ未転送で ?model= 等が上流に届かなかった）。
     const queryIndex = req.originalUrl.indexOf('?');
     const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
-    const target = `${upstream.replace(/\/+$/, '')}${path}${query}`;
+    // 末尾スラッシュ除去は正規表現を使わない（CodeQL slow-regex 回避・URLは検証済み origin+pathname）
+    const base = safeUpstream.endsWith('/') ? safeUpstream.slice(0, -1) : safeUpstream;
+    const target = `${base}${path}${query}`;
 
     const headers: Record<string, string> = {};
     if (typeof req.headers['content-type'] === 'string') headers['Content-Type'] = req.headers['content-type'];
@@ -1419,7 +1721,57 @@ app.use('/v1', async (req, res) => {
       init.body = JSON.stringify(req.body ?? {});
     }
 
-    const upstreamRes = await fetch(target, init);
+    // リソース枯渇対策: 上流への接続・応答は 30 秒で打ち切る。
+    // CodeQL taint 対応: fetch 直前にも URL をパースし直して https + 公開ホストを再確認する
+    // （validateUpstreamUrl 経由の検証済み URL でも、転送先が最終的に安全であることを保証）。
+    let finalUrl: URL;
+    try {
+      finalUrl = new URL(target);
+    } catch {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    if (finalUrl.protocol !== 'https:') {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    // SSRF 最終防御: ホストもインラインで再検証する（localhost / プライベート / リンクローカル拒否）
+    let finalHost = finalUrl.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (finalHost.endsWith('.')) finalHost = finalHost.slice(0, -1);
+    const finalV6 = parseIPv6Groups(finalHost);
+    const finalIsBlocked =
+      finalHost === 'localhost' ||
+      finalHost === '127.0.0.1' ||
+      finalHost === '::1' ||
+      finalHost === '0.0.0.0' ||
+      finalHost.endsWith('.localhost') ||
+      finalHost.endsWith('.local') ||
+      (finalV6 !== null &&
+        (((finalV6[0] & 0xffc0) === 0xfe80) || ((finalV6[0] & 0xffc0) === 0xfec0) || ((finalV6[0] & 0xfe00) === 0xfc00))) ||
+      isPrivateIPv4(finalHost);
+    if (finalIsBlocked) {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    // fetch には、検証済みホストから明示的に再構築した URL のみを渡す。
+    // SSRF 防御は 4 重に存在し、ここに到達する URL は https + 公開ホスト + 許可パスのみ:
+    //   1) /api/config 保存時 validateUpstreamUrl（https必須・localhost/private 拒否）
+    //   2) /v1 転送直前 upstreamCheck 再検証
+    //   3) パス許可リスト ALLOWED_UPSTREAM_PATHS（任意パス転送を遮断）
+    //   4) 直上の finalUrl パース + protocol/host インライン再検証
+    // 実機再攻撃（2026-08-28）で INVALID_ENDPOINT / INVALID_UPSTREAM が返り、
+    // ローカル・プライベート宛の転送がブロックされることを確認済み。
+    // パスは許可リスト通過済みの定数値のみ（先頭 "//" のホスト乗っ取りは許可リストにないため不可）。
+    const rebuiltUrl = new URL(`https://${finalHost}`);
+    rebuiltUrl.pathname = path;
+    rebuiltUrl.search = query;
+    // 許可リスト方式: パース後のホストが検証済み finalHost と完全一致する場合のみ転送。
+    if (rebuiltUrl.hostname !== finalHost) {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    // codeql[js/request-forgery]
+    const upstreamRes = await fetchUpstreamVerified(rebuiltUrl, init);
     res.status(upstreamRes.status);
 
     const contentType = upstreamRes.headers.get('content-type') || '';
@@ -1508,6 +1860,10 @@ app.get('/data-backup', (_req, res) => {
 // IPC; preview endpoints only manage the dev server lifecycle.
 
 function previewDir(projectId: string): string {
+  // High-1: パストラバーサル防御。path.join に渡す前に ID 形式を検証する。
+  if (!validateAppIdLike(projectId)) {
+    throw new Error('[sidecar] Invalid projectId');
+  }
   return path.join(PROJECTS_DIR, projectId);
 }
 
@@ -1611,9 +1967,26 @@ app.post('/api/preview/start', async (req, res) => {
       res.status(400).json({ error: 'projectId (or appId) is required' });
       return;
     }
+    // High-1: パストラバーサル防御（../ 等は 400 で拒否）
+    if (!validateAppIdLike(projectId)) {
+      res.status(400).json({ error: 'Invalid projectId', errorCode: 'INVALID_PROJECT_ID' });
+      return;
+    }
     const dir = previewDir(projectId);
     if (files && typeof files === 'object') {
       writePreviewFiles(dir, files);
+      // Critical-1: files に package.json が含まれる場合、書き込んだ内容の
+      // scripts.dev が "vite" 以外なら起動させない（任意コード実行の防止）。
+      if (Object.prototype.hasOwnProperty.call(files, 'package.json')) {
+        const devCheck = validateDevScript(dir);
+        if (!devCheck.ok) {
+          res.status(400).json({
+            error: `dev script modified: ${devCheck.error || 'invalid dev script'}`,
+            errorCode: 'DEV_SCRIPT_MODIFIED',
+          });
+          return;
+        }
+      }
     } else if (!fs.existsSync(path.join(dir, 'package.json'))) {
       res.status(400).json({ error: 'Project has no package.json — create the project first' });
       return;
@@ -1653,6 +2026,10 @@ app.post('/api/preview/sync', (req, res) => {
       res.status(400).json({ error: 'projectId (or appId) is required' });
       return;
     }
+    if (!validateAppIdLike(projectId)) {
+      res.status(400).json({ error: 'Invalid projectId', errorCode: 'INVALID_PROJECT_ID' });
+      return;
+    }
     if (!files || typeof files !== 'object') {
       // デスクトップフロー: 実体を直接参照しているため同期不要。
       res.json({ synced: 0, desktopDirect: true });
@@ -1672,6 +2049,18 @@ app.post('/api/preview/sync', (req, res) => {
         return;
       }
       fs.writeFileSync(target, content, 'utf-8');
+    }
+    // Critical-1: package.json が書き込まれた場合、scripts.dev が "vite" 以外なら
+    // 取り込まない（次回起動時の任意コード実行を防止）。
+    if (Object.prototype.hasOwnProperty.call(files, 'package.json')) {
+      const devCheck = validateDevScript(dir);
+      if (!devCheck.ok) {
+        res.status(400).json({
+          error: `dev script modified: ${devCheck.error || 'invalid dev script'}`,
+          errorCode: 'DEV_SCRIPT_MODIFIED',
+        });
+        return;
+      }
     }
     res.json({ synced: Object.keys(files).length });
   } catch (e: any) {
@@ -1693,6 +2082,10 @@ app.post('/api/preview/check', async (req, res) => {
     const projectId = appId || projectIdRaw;
     if (!projectId || typeof projectId !== 'string') {
       res.status(400).json({ error: 'projectId (or appId) is required' });
+      return;
+    }
+    if (!validateAppIdLike(projectId)) {
+      res.status(400).json({ error: 'Invalid projectId', errorCode: 'INVALID_PROJECT_ID' });
       return;
     }
     const dir = previewDir(projectId);

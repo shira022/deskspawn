@@ -285,6 +285,14 @@ fn execute_file_action(workspace: &Path, action: &crate::models::config::FileAct
         ));
     }
 
+    // Critical-1: package.json の書き込みは scripts.dev が "vite" のときのみ許可。
+    // scripts.dev 改竄 → npm run dev → ホスト RCE 経路の遮断。
+    // エラー内容に絶対パスを含めない（相対 file_path のみ使用）。
+    if Path::new(&action.file_path).file_name().and_then(|n| n.to_str()) == Some("package.json") {
+        security::validate_package_json_scripts(&action.content)
+            .map_err(|e| format!("Rejected writing {}: {}", action.file_path, e))?;
+    }
+
     // Create parent directories if needed
     if let Some(parent) = target_path.parent() {
         std::fs::create_dir_all(parent)
@@ -337,6 +345,12 @@ fn execute_diff_action(workspace: &Path, action: &crate::models::config::DiffAct
 
     let new_content = content.replacen(&action.search, &action.content, 1);
 
+    // Critical-1: diff 適用後の package.json も検証する（scripts.dev 改竄の遮断）。
+    if Path::new(&action.file_path).file_name().and_then(|n| n.to_str()) == Some("package.json") {
+        security::validate_package_json_scripts(&new_content)
+            .map_err(|e| format!("Rejected diff on {}: {}", action.file_path, e))?;
+    }
+
     std::fs::write(&target_path, &new_content)
         .map_err(|e| format!("Failed to write diff to {}: {}", action.file_path, e))?;
 
@@ -358,6 +372,16 @@ fn execute_shell_action(
     if !security::is_command_allowed(command) {
         return Err(format!(
             "Command not in allowlist: {}. Allowed: npm install/run, npx ...",
+            command
+        ));
+    }
+
+    // Critical-1: npm run はスクリプト名 + package.json scripts.dev を検証する。
+    // （is_command_allowed は "npm run" で始まれば true のまま — 実行可否の厳格化はここ）
+    let trimmed = command.trim();
+    if trimmed.starts_with("npm run") && !security::is_npm_run_allowed(command, workspace) {
+        return Err(format!(
+            "Command not allowed: {}. npm run is limited to dev (scripts.dev must be \"vite\"), build, preview.",
             command
         ));
     }
