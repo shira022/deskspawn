@@ -111,11 +111,51 @@ function apiKeyStorageKey(provider: string): string {
  */
 export type ApiKeyStorageMethod = "keychain" | "file" | "browser" | "";
 
+// ── Legacy IDB API key sweep (Medium-1, 監査 2026-08-28) ─────────────────────
+// デスクトップはキーチェーン保存（IPC）に移行済みだが、旧 WebView 時代の
+// IndexedDB（deskspawn DB・settings ストア）に api_key_<provider> が平文で
+// 残ることがある。IPC 保存/読込が成功する環境（= デスクトップ）では、
+// このレガシーコピーを削除して平文残存をなくす。
+// Web 版（IPC 無し）は従来通り IDB 保存（Web は仕様のため掃除しない）。
+// 削除は冪等で、DB が存在しない場合は何もしない。
+
+async function sweepLegacyIdbApiKeys(): Promise<void> {
+  try {
+    // DB が存在しない場合に indexedDB.open() が空 DB を作り直してしまうため、
+    // 先に存在確認する（デスクトップで不要な DB を作らない）。
+    if (typeof indexedDB !== "undefined" && typeof indexedDB.databases === "function") {
+      const dbs = await indexedDB.databases();
+      if (!dbs.some((d) => d.name === DB_NAME)) return;
+    }
+    const db = await openDB();
+    const tx = db.transaction("settings", "readwrite");
+    const store = tx.objectStore("settings");
+    await new Promise<void>((resolve, reject) => {
+      const req = store.getAllKeys();
+      req.onsuccess = () => {
+        const keys = req.result;
+        for (const key of keys) {
+          if (String(key).startsWith("api_key_")) {
+            store.delete(key);
+          }
+        }
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+  } catch (e) {
+    // 掃除はベストエフォート（DB が無い・壊れている等は無視する）
+    console.warn("[storage] Legacy IDB api_key sweep skipped:", e);
+  }
+}
+
 export async function saveApiKey(provider: string, apiKey: string): Promise<ApiKeyStorageMethod> {
   // Try Tauri IPC (Desktop) first, fall back to IndexedDB (Web)
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     const result = await invoke<{ method: string }>("save_api_key", { provider, apiKey });
+    // Desktop: キーチェーン保存が成功したので、IDB に残るレガシー平文キーを掃除する
+    await sweepLegacyIdbApiKeys();
     return (result?.method as ApiKeyStorageMethod) || "";
   } catch {
     // Not in Tauri environment, use IndexedDB
@@ -128,7 +168,11 @@ export async function loadApiKey(provider: string): Promise<string | null> {
   // Try Tauri IPC (Desktop) first
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    return (await invoke("load_api_key", { provider })) as string | null;
+    const key = (await invoke("load_api_key", { provider })) as string | null;
+    // Desktop: キーチェーン読込が成功 = デスクトップ環境。IDB のレガシー平文キーを掃除する
+    // （起動時の loadApiKey が initialize() から呼ばれるため、起動時掃除も兼ねる）。
+    await sweepLegacyIdbApiKeys();
+    return key;
   } catch {
     // Not in Tauri environment
   }
