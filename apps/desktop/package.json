@@ -18,16 +18,16 @@
     "@deskspawn/ui": "workspace:*",
     "@tauri-apps/api": "^2.0.0",
     "flag-icons": "^7.5.0",
-    "i18next": "^26.3.1",
+    "i18next": "^26.4.0",
     "i18next-browser-languagedetector": "^8.2.1",
     "lucide-react": "^0.468.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-i18next": "^17.0.8",
+    "react-i18next": "^17.0.12",
     "react-markdown": "^10.1.0",
-    "react-resizable-panels": "^4.11.2",
+    "react-resizable-panels": "^4.12.3",
     "remark-gfm": "^4.0.1",
-    "zustand": "^5.0.14"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.0.0",
