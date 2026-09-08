@@ -343,6 +343,13 @@ fn execute_file_action(workspace: &Path, action: &SecurityFileAction) -> Result<
             .map_err(|e| format!("Failed to create directories: {}", e))?;
     }
 
+    // Critical-1: package.json の書き込みは scripts.dev が "vite" のときのみ許可。
+    // （scripts.dev 改竄 → npm run dev → ホスト RCE 経路の遮断。harness.rs と同様）
+    if Path::new(&action.file_path).file_name().and_then(|n| n.to_str()) == Some("package.json") {
+        security::validate_package_json_scripts(&action.content)
+            .map_err(|e| format!("Rejected writing {}: {}", action.file_path, e))?;
+    }
+
     std::fs::write(&target_path, &action.content)
         .map_err(|e| format!("Failed to write file: {}", e))?;
 
@@ -376,6 +383,17 @@ fn execute_diff_action(workspace: &Path, action: &SecurityDiffAction) -> Result<
     }
 
     let new_content = content.replacen(&action.search, &action.content, 1);
+
+    // Critical-1: diff 適用後の package.json も検証する（scripts.dev 改竄の遮断）。
+    if Path::new(&action.file_path)
+        .file_name()
+        .and_then(|n| n.to_str())
+        == Some("package.json")
+    {
+        security::validate_package_json_scripts(&new_content)
+            .map_err(|e| format!("Rejected diff on {}: {}", action.file_path, e))?;
+    }
+
     std::fs::write(&target_path, &new_content)
         .map_err(|e| format!("Failed to write diff: {}", e))?;
 
@@ -386,6 +404,16 @@ fn execute_diff_action(workspace: &Path, action: &SecurityDiffAction) -> Result<
 fn execute_shell_action(workspace: &Path, command: &str) -> Result<ShellResult, String> {
     if !security::is_command_allowed(command) {
         return Err(format!("Command not allowed: {}", command));
+    }
+
+    // Critical-1: npm run はスクリプト名 + package.json scripts.dev を検証する。
+    //（is_command_allowed は "npm run" で始まれば true のまま — 実行可否の厳格化はここ）
+    let trimmed = command.trim();
+    if trimmed.starts_with("npm run") && !security::is_npm_run_allowed(command, workspace) {
+        return Err(format!(
+            "Command not allowed: {}. npm run is limited to dev (scripts.dev must be \"vite\"), build, preview.",
+            command
+        ));
     }
 
     let sanitized = security::sanitize_npm_install(command);

@@ -221,22 +221,24 @@ export function PreviewPanel() {
     return unsub;
   }, []);
 
-  // アプリ選択時 → プレビュー起動。
-  // initialized（initialize 完了）を待ってから boot する — 起動直後に
-  // currentAppId が復元される前の競合を避けるため。
+  // プレビュー起動
+  const runPreview = useCallback((appId: string) => {
+    previewManager
+      .boot(appId)
+      .catch((e: any) => {
+        console.error("[preview] Boot failed:", e);
+        setError(e.message || String(e));
+      });
+  }, []);
+
+  // アプリ選択時 → プレビュー起動
   useEffect(() => {
     if (!initialized) return;
     if (!currentAppId) return;
     if (prevAppRef.current === currentAppId) return;
     prevAppRef.current = currentAppId;
-
-    previewManager
-      .boot(currentAppId)
-      .catch((e: any) => {
-        console.error("[preview] Boot failed:", e);
-        setError(e.message || String(e));
-      });
-  }, [initialized, currentAppId]);
+    runPreview(currentAppId);
+  }, [initialized, currentAppId, runPreview]);
 
   // タブが再フォーカスされたときにエラー状態から自動復帰
   useEffect(() => {
@@ -605,7 +607,7 @@ export function PreviewPanel() {
                 className="h-full w-full border-0"
                 src={previewUrl}
                 title="App Preview"
-                sandbox="allow-scripts allow-same-origin allow-forms allow-popups"
+                sandbox="allow-scripts allow-forms allow-popups"
                 onLoad={() => {
                   setIframeLoading(false);
                   if (iframeLoadTimeoutRef.current) {

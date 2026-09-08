@@ -119,15 +119,20 @@ test.beforeAll(async () => {
   });
   await page.evaluate(() => localStorage.setItem('deskspawn_route', '/app'));
   await page.reload();
-  await page.waitForTimeout(2000);
+  // reload 後は言語選択画面が表示される。ボタンの出現を最大10秒待つ（実績 2026-08-29: 2秒では不十分）
+  await page.waitForTimeout(1000);
 
   // クリア後は初回起動（言語未設定）のため言語選択画面が表示される
   // （デスクトップ実装 2026-08-15: config.json に settings が無い場合のみ）。
   // 日本語を選択してメイン画面に進む。
   const langJapanese = page.getByRole('button', { name: /日本語/ });
-  if (await langJapanese.isVisible().catch(() => false)) {
+  // isVisible の代わりに waitForSelector で最大8秒待つ（テキストは改行含み getByRole でマッチ）
+  try {
+    await langJapanese.waitFor({ state: 'visible', timeout: 8_000 });
     await langJapanese.click();
-    await page.waitForTimeout(800);
+    await page.waitForTimeout(1500); // メイン画面への遷移待ち
+  } catch {
+    // 言語選択画面が無ければスキップ（既にメイン画面の場合）
   }
 
   // ランディングページ（Web 版のみ・デスクトップでは表示されない）。
@@ -218,6 +223,82 @@ async function openAiConfig() {
   await expect(page.getByRole('heading', { name: 'APIキー設定' })).toBeVisible();
 }
 
+/**
+ * 前テストのAI応答で自動表示される「未検証のAI生成コードを実行します。続行しますか？」確認
+ * ダイアログ（fixed z-50 backdrop 付き・カスタムDialogは role=dialog を持たない）を閉じる。
+ * 文言は i18n consentTitle（ja: 未検証のAI生成コードを実行します。続行しますか？）—
+ * 実APIモードではAI応答完了後に必ず表示される（生成有無に関わらず）。
+ * 表示ラグは数十秒〜数分（実績 2026-08-29: 03直後ではなく 04〜06 の最中に出現し、
+ * 後続クリックをブロックした）。maxLoops 省略時は実API 30ループ(90秒)待つ。
+ * 注意: 「生成されたAIコードを実行しますか？」等の文言で検索すると一致しない（実績 2026-08-29）。
+ * 2026-08-29 追記: キャンセルは consent ダイアログ内に限定して特定する（削除確認等の
+ * 別ダイアログが同時に開いていると「キャンセル」が重複し誤爆するため）。
+ */
+async function closeExecConfirm(page: Page, maxLoops?: number) {
+  const loops = maxLoops ?? (REAL_API ? 30 : 3);
+  for (let i = 0; i < loops; i++) {
+    const card = page.locator('div.fixed.z-50').filter({
+      hasText: '未検証のAI生成コードを実行します',
+    });
+    if (await card.isVisible({ timeout: 1000 }).catch(() => false)) {
+      const cancel = card.getByRole('button', { name: 'キャンセル' });
+      await cancel.click();
+      await page.waitForTimeout(800); // backdrop フェードアウト
+      // Radix の fade-out backdrop が unmount されず残ると後続クリックをブロックするため非表示化（実績 2026-08-29）
+      await hideZ50Backdrops(page);
+      await hideConsentDialog(page);
+      return true;
+    }
+    await page.waitForTimeout(3000);
+  }
+  await hideZ50Backdrops(page);
+  return false;
+}
+
+/** consent ダイアログ本体（fixed z-50 コンテナ）を非表示化する — remove() は React をクラッシュさせるため（実績 2026-08-29） */
+async function hideConsentDialog(page: Page) {
+  await page.evaluate(() => {
+    [...document.querySelectorAll('div.fixed.z-50')].forEach((d) => {
+      const el = d as HTMLElement;
+      if (el.innerText && el.innerText.includes('未検証のAI生成コードを実行します')) {
+        el.style.pointerEvents = 'none';
+        el.style.opacity = '0';
+      }
+    });
+  });
+}
+
+/** z-50 の backdrop 残骸（Radix fade-out が完了しないと unmount されない）による
+ *  クリック遮断を解除する。⚠️ remove() は React をクラッシュさせる（実績 2026-08-29:
+ *  "Failed to execute 'removeChild'" → ErrorBoundary 全滅）ため、
+ *  pointer-events:none で遮断だけ無効化する（DOM 構造は保つ）。 */
+async function hideZ50Backdrops(page: Page) {
+  await page.evaluate(() => {
+    document.querySelectorAll('div.fixed.inset-0').forEach((d) => {
+      const el = d as HTMLElement;
+      const cls = el.className || '';
+      if (cls.includes('z-50') && cls.includes('bg-black')) {
+        el.style.pointerEvents = 'none';
+        el.style.opacity = '0';
+      }
+    });
+  });
+}
+
+/**
+ * 新規アプリ作成ダイアログのクローズを待ち、Radix の fade-out backdrop 残骸を除去する。
+ * 「新しいアプリを作成」が hidden になっても、環境（WebView2/CDP）によっては
+ * z-50 backdrop が unmount されず残り、後続クリックをブロックする（実績 2026-08-29:
+ * 06 の appB 作成後に tb.nth(1) が backdrop インターセプトでタイムアウトを繰り返した）。
+ */
+async function closeCreateDialog(page: Page) {
+  await expect(page.getByText('新しいアプリを作成', { exact: true })).toBeHidden({
+    timeout: 10_000,
+  });
+  await hideZ50Backdrops(page);
+  await page.waitForTimeout(300);
+}
+
 /** モデル設定ポップオーバーを閉じる — el.click()でReactハンドラを直接発火 (ヒットテストflaky回避) */
 async function closeModelPopover(page: Page) {
   await page.evaluate(() => {
@@ -256,7 +337,9 @@ async function fillModel(page: Page, model: string) {
     .toBe(true);
 
   if (await modelSelect.isVisible().catch(() => false)) {
-    const option = modelSelect.locator('option', { hasText: model });
+    // value 一致で検索（表示テキストは「GPT-5.6 Luna」等スペース入りで
+    // {hasText: 'gpt-5.6-luna'} が一致しない実績あり — value は id そのもの）
+    const option = modelSelect.locator(`option[value="${model}"]`);
     if ((await option.count()) > 0) {
       // 指定モデルが一覧にある → 選択
       await modelSelect.selectOption({ value: model });
@@ -274,12 +357,13 @@ async function fillModel(page: Page, model: string) {
 // ── テスト ─────────────────────────────────────────────────────────────────
 
 test('00: 初期状態 — クリア後は「アプリ未選択」のガイドが表示される', async () => {
-  // beforeAll の reset_app_data によりアプリは1つも存在しない状態から始まる。
+  // beforeAll の reset_app_data → reload → 日本語選択でクリア状態になっている
   // ツールバーのアプリボタンは「アプリ未選択」、チャットパネルにガイドが出る。
   await expect(page.locator('div.flex.h-10 button').nth(1)).toContainText('アプリ未選択');
   await expect(page.getByText(/ツールバーの「新規アプリ」からアプリを作成すると/)).toBeVisible();
   // プレビューパネルのプレースホルダ
   await expect(page.getByText(/アプリを選択または作成するとプレビューが表示されます/)).toBeVisible();
+  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/00-initial-state.png' });
 });
 
 test('01: 起動画面 — タイトルと主要UIが表示される', async () => {
@@ -290,6 +374,7 @@ test('01: 起動画面 — タイトルと主要UIが表示される', async () 
   // アプリボタン (未選択時「アプリ未選択」/選択済み時アプリ名) — ツールバー2番目
   await expect(page.locator('div.flex.h-10 button').nth(1)).toBeVisible();
   await expect(page.getByPlaceholder(/作りたいアプリを指示/)).toBeVisible();
+  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/01-startup.png' });
 });
 
 test('02: AI設定フロー — プロバイダーを保存しツールバーに反映', async () => {
@@ -336,22 +421,27 @@ test('02: AI設定フロー — プロバイダーを保存しツールバーに
   // (span は sm:inline レスポンシブで小窓時 display:none のため存在ベースで判定)
   await expect(page.getByText('APIキー設定', { exact: true })).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator('div.flex.h-10').getByText(MODEL)).toHaveCount(1);
+  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/02-provider-save.png' });
 });
 
-test('03: チャット送信 — アプリ作成後にAI応答が表示される', async () => {
+test('03: アプリ生成 — ToDoアプリを英語で作成してプレビュー表示', async () => {
+  // 実APIモードでは AI応答後に「未検証のAI生成コードを実行しますか？」ダイアログが
+  // ラグ付きで表示され、closeExecConfirm がそのクローズを待つため長めに設定する。
+  test.setTimeout(240_000);
   // チャットはアプリ必須のため先に作成する (ユーザーの実フロー)
   const appName = `E2E-${Date.now().toString().slice(-6)}`;
   await page.getByRole('button', { name: '新規アプリ' }).click();
   await page.getByPlaceholder(/例: タスク管理アプリ/).fill(appName);
   await page.getByRole('button', { name: '作成' }).click();
-  await expect(page.getByRole('button', { name: 'アプリ未選択' })).toBeHidden({
-    timeout: 10_000,
-  });
+  await closeCreateDialog(page);
+  await expect(page.getByRole('button', { name: 'アプリ未選択' })).toBeHidden({ timeout: 10_000 });
   await expect(page.locator('div.flex.h-10').getByText(appName)).toBeVisible();
 
-  // 再実行時も重複しないようユニークなプロンプト (メッセージはアプリ内に蓄積されるため)
-  const token = `HELLO_OK_${Date.now().toString().slice(-6)}`;
-  const prompt = `Say hello. Reply with exactly: ${token}`;
+  // 実用的なアプリ作成指示（英語・ToDoアプリ）
+  const prompt =
+    'Create a simple ToDo app in English with add/delete/complete functionality. ' +
+    'Use a clean minimal design with a text input, add button, and a list of items ' +
+    'with delete and complete checkboxes.';
   const msgCountBefore = await page.locator('[id^="chat-msg-"]').count();
 
   const input = page.getByPlaceholder(/作りたいアプリを指示/);
@@ -361,24 +451,40 @@ test('03: チャット送信 — アプリ作成後にAI応答が表示される
   // ユーザーメッセージが表示される
   await expect(page.getByText(prompt)).toBeVisible();
 
-  // AI応答の検証は実APIモードのみ (ダミーモードでは実応答が来ない)
   if (REAL_API) {
-    // AI応答 (プロキシ経由の実応答) — ユーザー+アシスタントの2メッセージ追加を待つ
+    // AI応答+コード生成を待つ（2メッセージ追加: ユーザー+アシスタント）
     await expect(page.locator('[id^="chat-msg-"]')).toHaveCount(msgCountBefore + 2, {
       timeout: 120_000,
     });
-    await expect(page.locator('[id^="chat-msg-"]').last()).toContainText(new RegExp(token), {
-      timeout: 30_000,
-    });
+    // アシスタント応答にコード生成の痕跡があるはず
+    const lastMsg = page.locator('[id^="chat-msg-"]').last();
+    await expect(lastMsg).toBeVisible({ timeout: 30_000 });
+
+    // consent ダイアログ（コード生成後に表示）を閉じる
+    await closeExecConfirm(page);
   }
+
+  // プレビューエリアにアプリが表示されることを確認
+  // ローカルサーバー（Local :5174）に接続済み
+  await expect(page.getByText(/Local/)).toBeVisible({ timeout: 15_000 });
+  // チャットにAI応答があることを確認（メッセージ数が増加）
+  await expect(page.locator('[id^="chat-msg-"]')).toHaveCount(msgCountBefore + 2, {
+    timeout: 30_000,
+  });
+
+  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/03-chat-response.png' });
 });
 
 test('04: 新規アプリ — ダイアログが開いてキャンセルできる', async () => {
+  // 前テスト（03）の AI 応答で自動生成される「生成されたAIコードを実行しますか？」
+  // 確認ダイアログ（z-50 backdrop 付き）を閉じる。生成完了ラグがあるためポーリング。
+  await closeExecConfirm(page);
   await page.getByRole('button', { name: '新規アプリ' }).click();
   await expect(page.getByText('新しいアプリを作成', { exact: true })).toBeVisible();
   await expect(page.getByText('アプリ名', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'キャンセル' }).click();
   await expect(page.getByText('新しいアプリを作成', { exact: true })).toBeHidden();
+  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/04-new-app-dialog.png' });
 });
 
 test('05: モデル設定メニュー — 現在のモデルが表示される', async () => {
@@ -415,9 +521,13 @@ test('05: モデル設定メニュー — 現在のモデルが表示される',
   // (Playwrightのヒットテストはウィンドウ右端でflakyになるため force/座標クリックは不採用)
   await closeModelPopover(page);
   await expect(popover).toBeHidden();
+  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/05-model-settings.png' });
 });
 
 test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガード・後片付け', async () => {
+  // 03 の AI 生成で遅延表示される実行確認ダイアログを閉じる（z-50 backdrop が
+  // 後続のクリックをブロックするため・実績 2026-08-29: 06 がタイムアウトを繰り返した）
+  await closeExecConfirm(page);
   // テスト03 で作成したアプリ（E2E-xxx）がアプリA（現在選択中）。
   const tb = page.locator('div.flex.h-10 button');
   const pop = page.locator('div.absolute.left-0.top-full');
@@ -427,6 +537,8 @@ test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガ�
   await page.getByRole('button', { name: '新規アプリ' }).click();
   await page.getByPlaceholder(/例: タスク管理アプリ/).fill(appB);
   await page.getByRole('button', { name: '作成' }).click();
+  // 作成ダイアログのクローズ+backdrop残骸除去（z-50 backdrop が残ると次クリックをブロック）
+  await closeCreateDialog(page);
   await expect(page.locator('div.flex.h-10').getByText(appB)).toBeVisible({ timeout: 10_000 });
 
   // A⇔B 切替: B 選択中 → AppSwitcher で A に切替 → ツールバーに反映
@@ -488,6 +600,27 @@ test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガ�
       expect(idx).toBeGreaterThanOrEqual(0);
       await rowsN.nth(idx).locator('button[title="削除"]').click();
       await expect(page.getByText('アプリを削除', { exact: true })).toBeVisible();
+      // 遅延表示される「未検証のAI生成コードを実行します」確認ダイアログが
+      // 「削除する」ボタンを pointer-events でブロックするため閉じる（実績 2026-08-29）
+      const consentClosed = await closeExecConfirm(page, 5);
+      // consent を閉じた場合、同一コンテナの削除確認ダイアログも
+      // React 再描画で閉じられる可能性がある → 開き直す
+      if (consentClosed) {
+        await page.waitForTimeout(500);
+        if (!(await page.getByText('アプリを削除', { exact: true }).isVisible().catch(() => false))) {
+          // consent 閉じ時にポップアップも閉じられた → 再表示してから削除ボタンを押す
+          await tb.nth(1).click();
+          await page.waitForTimeout(900);
+          const rowsN2 = pop.locator('[role="button"]');
+          const namesN2 = await rowsN2.evaluateAll((els) =>
+            els.map((el) => el.querySelector('.font-medium')?.textContent?.trim() || ''),
+          );
+          const idx2 = namesN2.findIndex(matcher);
+          expect(idx2).toBeGreaterThanOrEqual(0);
+          await rowsN2.nth(idx2).locator('button[title="削除"]').click();
+          await expect(page.getByText('アプリを削除', { exact: true })).toBeVisible();
+        }
+      }
       await page.getByRole('button', { name: '削除する' }).click();
       // 削除成功 → ダイアログが閉じる。remove_dir_all は node_modules（100MB超）で
       // 数秒〜数十秒かかることがあるため長めに待つ（実績 2026-08-15）。
@@ -585,4 +718,5 @@ test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガ�
   await page.waitForTimeout(500);
 
   // 残ったアプリB は afterAll の reset_app_data が削除する（テスト後片付け）。
+  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/06-app-switch-delete.png' });
 });

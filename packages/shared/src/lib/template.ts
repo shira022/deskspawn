@@ -202,15 +202,16 @@ export default defineConfig({
  * module is not an entry point, so no server starts — use app.request().
  */
 const SERVER_TS = `import { Hono } from "hono";
-import { cors } from "hono/cors";
 import { openDb, getAll, getById, create, update, remove, clear } from "./lib/db";
 
 // DATABASE_URL abstraction: default to ./data/app.db; override via env
 // (e.g. DATABASE_URL=file:./other.db or a hosted libsql URL in the future).
+// CORS は意図的に設定しない（監査 High-2 2026-08-28）: フロントは vite の
+// proxy（vite.config.ts の /api → 4174）経由の同一オリジンアクセスであり、
+// 任意オリジンからの 127.0.0.1:4174 への読み書きを許す cors() は不要かつ危険。
 const db = openDb();
 
 const app = new Hono();
-app.use("/api/*", cors());
 
 app.get("/api/health", (c) => c.json({ status: "ok" }));
 

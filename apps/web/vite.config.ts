@@ -5,8 +5,6 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 import type { Connect } from "vite";
 
-const SETTINGS_KEY = "deskspawn_settings";
-
 // ── Project Files API Server ──────────────────────────────────────────────────
 // Serves generated project source files from the filesystem to the browser app
 // so they can be seeded into OPFS/IndexedDB for preview.
@@ -109,16 +107,34 @@ export default defineConfig({
     react(),
     tailwindcss(),
     projectFilesPlugin(),
+    // Low-3（監査 2026-08-28）: インライン script は Medium-6 で追加する
+    // CSP meta（script-src 'self'）でブロックされるため、public/theme-init.js
+    // を外部スクリプトとして注入する（'self' で読み込めるので CSP 準拠）。
     {
       name: "inject-theme-script",
       transformIndexHtml() {
         return [
           {
             tag: "script",
+            attrs: { src: "/theme-init.js" },
             injectTo: "head",
-            children: `(function(){try{var s=JSON.parse(localStorage.getItem('${SETTINGS_KEY}'));if(s&&s.theme==='dark'){document.documentElement.classList.add('dark')}else if(!s||s.theme==='system'){if(window.matchMedia('(prefers-color-scheme:dark)').matches){document.documentElement.classList.add('dark')}}}catch(e){}})()`,
           },
         ];
+      },
+    },
+    // Medium-6: index.html の CSP meta は本番向けの strict ポリシー
+    // （script-src 'self'）。dev モードでは @vitejs/plugin-react の Fast Refresh
+    // preamble がインライン script として注入されるため、dev に限り
+    // script-src へ 'unsafe-inline' を追加してブロックを回避する
+    // （過剰ブロックで dev 版が壊れないようにするための dev-only 緩和）。
+    {
+      name: "dev-csp-script-inline",
+      apply: "serve",
+      transformIndexHtml(html) {
+        return html.replace(
+          "script-src 'self'",
+          "script-src 'self' 'unsafe-inline'",
+        );
       },
     },
   ],

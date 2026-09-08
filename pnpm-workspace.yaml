@@ -6,3 +6,10 @@ onlyBuiltDependencies:
   - esbuild
   - msw
   - sharp
+# Medium-3 (監査対応): postcss <= 8.5.22 が CVE-2026-69153 / GHSA-fxqj-rqcc-2cmp
+# (sourceMappingURL 経由で任意の .map ファイルを読める問題, first patched: 8.5.23)。
+# 注意: pnpm 10.4.1 は workspace yaml の overrides を lockfile に反映しない（過渡期仕様・実績 2026-08-27）。
+# 実効させるため同内容を ルート package.json の pnpm.overrides にも記載している。
+# コメントの由来: https://github.com/advisories/GHSA-fxqj-rqcc-2cmp
+overrides:
+  postcss: 8.5.26

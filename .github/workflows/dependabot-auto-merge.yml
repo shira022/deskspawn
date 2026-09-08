@@ -1,28 +1,109 @@
-name: Dependabot auto-merge (patch only)
+name: Dependabot auto-merge (patch only, review-gated)
 
+# 監査対応 (Medium-4): 従来は pull_request_target のみで無審査マージしていた。
+# patch 更新のみ自動マージを維持しつつ、以下のゲートを全て通過した場合のみ
+# auto-merge を有効化する:
+#   1. dependabot が作成した PR である (dependencies ラベルが付いている)
+#   2. update-type が semver-patch である
+#   3. CI (全 check) が全て成功している  — ブランチ保護が未設定のため明示確認
+#   4. APPROVED レビューが存在する      — 人手の承認(レビューゲート)
+# 承認レビューが付いたタイミングでゲートを再評価するため pull_request_review も購読する。
+# ※ セキュリティ: PR のコードは一切 checkout せず、gh api 経由のメタデータのみ参照する。
 on:
   pull_request_target:
     types: [opened, synchronize, reopened]
+  pull_request_review:
+    types: [submitted]
 
 permissions:
   contents: write
   pull-requests: write
+  checks: read
 
 jobs:
   auto-merge:
-    if: ${{ github.actor == 'dependabot[bot]' }}
+    # pull_request_review イベントでは github.actor がレビュアーになるため、
+    # イベント共通で使える PR 作成者 (github.event.pull_request.user.login) で判定する。
+    if: ${{ github.event.pull_request.user.login == 'dependabot[bot]' }}
     runs-on: ubuntu-latest
     steps:
       - name: Fetch Dependabot metadata
         id: metadata
-        uses: dependabot/fetch-metadata@v2
+        uses: dependabot/fetch-metadata@21025c705c08248db411dc16f3619e6b5f9ea21a # v2
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Enable auto-merge for patch updates
+      # ゲート1: patch 更新のみ自動マージ対象 (minor/major は人手レビュー)
+      - name: Gate — patch update only
+        id: gate-patch
         if: ${{ steps.metadata.outputs.update-type == 'version-update:semver-patch' }}
+        run: echo "is-patch=true" >> "$GITHUB_OUTPUT"
+
+      # ゲート2: dependencies ラベルが付いていること (dependabot.yml で全 PR に自動付与)
+      - name: Gate — dependencies label
+        id: gate-label
+        if: ${{ steps.gate-patch.outputs.is-patch == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          gh pr merge --auto --squash "$PR_URL"
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          LABELS=$(gh pr view "$PR_NUMBER" --json labels -q '[.[].name] | join(",")')
+          case ",$LABELS," in
+            *,dependencies,*)
+              echo "is-labeled=true" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "is-labeled=false" >> "$GITHUB_OUTPUT"
+              echo "label 'dependencies' is missing — auto-merge skipped"
+              ;;
+          esac
+
+      # ゲート3: CI が全て成功していること (ブランチ保護が未設定のため明示的に確認)
+      - name: Gate — CI status
+        id: gate-ci
+        if: ${{ steps.gate-patch.outputs.is-patch == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          SUMMARY=$(gh pr checks "$PR_NUMBER" --json state,conclusion -q '.[] | "\(.state)/\(.conclusion)"' 2>/dev/null || true)
+          if [ -z "$SUMMARY" ]; then
+            echo "is-ci-green=false" >> "$GITHUB_OUTPUT"
+            echo "no checks reported yet — waiting for CI"
+            exit 0
+          fi
+          if echo "$SUMMARY" | grep -qv "^COMPLETED/SUCCESS$"; then
+            echo "is-ci-green=false" >> "$GITHUB_OUTPUT"
+            echo "CI not fully green yet:"
+            echo "$SUMMARY"
+          else
+            echo "is-ci-green=true" >> "$GITHUB_OUTPUT"
+            echo "CI green"
+          fi
+
+      # ゲート4: 承認レビュー (APPROVED) が存在すること
+      - name: Gate — approved review
+        id: gate-review
+        if: ${{ steps.gate-patch.outputs.is-patch == 'true' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUMBER="${{ github.event.pull_request.number }}"
+          COUNT=$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER/reviews" \
+            -q '[.[] | select(.state == "APPROVED")] | length')
+          if [ "$COUNT" -ge 1 ]; then
+            echo "is-approved=true" >> "$GITHUB_OUTPUT"
+            echo "approved"
+          else
+            echo "is-approved=false" >> "$GITHUB_OUTPUT"
+            echo "no APPROVED review yet — waiting for human review"
+          fi
+
+      # 全ゲート通過時のみ auto-merge を有効化 (ブランチ保護が無いため、ここで
+      # CI 成功 + 承認の両方を確認しない限りマージは走らない)
+      - name: Enable auto-merge
+        if: ${{ steps.gate-patch.outputs.is-patch == 'true' && steps.gate-label.outputs.is-labeled == 'true' && steps.gate-ci.outputs.is-ci-green == 'true' && steps.gate-review.outputs.is-approved == 'true' }}
+        run: gh pr merge --auto --squash "$PR_URL"
         env:
           PR_URL: ${{ github.event.pull_request.html_url }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

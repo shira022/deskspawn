@@ -171,16 +171,38 @@ async function executeDiffAction(pid: string, action: DiffAction, result: ApplyR
 }
 
 /**
+ * AI 制御の識別子（テーブル名・列名）を TypeScript 識別子として安全な形に
+ * サニタイズする（監査 High-3 2026-08-28）。
+ *
+ * - [^A-Za-z0-9_] を全て除去（引用符・セミコロン・バッククォート等の
+ *   コード注入に使える文字を確実に排除する）
+ * - 先頭が数字なら '_' を前置（数値リテラル化を防止）
+ * - 空になった場合は 'item' を返す（空識別子でコードを壊さない）
+ */
+export function sanitizeIdentifier(raw: string): string {
+  const cleaned = raw.replace(/[^A-Za-z0-9_]/g, "");
+  if (!cleaned) return "item";
+  return /^[0-9]/.test(cleaned) ? `_${cleaned}` : cleaned;
+}
+
+/**
  * CRUDテンプレートアクションを実行する。
  * IndexedDBストレージアダプター用のTypeScriptフックを生成する。
+ *
+ * High-3（監査 2026-08-28）: tableName / 列名は AI 制御の入力であり、
+ * コード補間前に必ず sanitizeIdentifier を通す（引用符突破による
+ * コード注入を防止）。生成後は checkTsSecurity で危険パターンを再検証する。
  */
 async function executeTemplateAction(pid: string, action: TemplateAction, result: ApplyResult): Promise<void> {
   const { tableName, columns: rawColumns } = action;
-  const pascalName = toPascalCase(tableName);
-  const snakeName = toSnakeCase(tableName);
-
   const AUTO_COLUMNS = ["created_at", "updated_at"];
-  const columns = rawColumns.filter((c) => !AUTO_COLUMNS.includes(c.name));
+  // 補間前に必ずサニタイズ。列名はスネークケース化 → ID 化の順で正規化する
+  // （"createdAt" は AUTO_COLUMNS の "created_at" として検出できる）。
+  const snakeName = toSnakeCase(tableName);
+  const pascalName = toPascalCase(snakeName);
+  const columns = rawColumns
+    .map((c) => ({ ...c, name: toSnakeCase(c.name) }))
+    .filter((c) => !AUTO_COLUMNS.includes(c.name));
 
   const idTsType = "string"; // IndexedDBはstring IDを推奨
 
@@ -226,6 +248,9 @@ export async function delete${pascalName}(id: ${idTsType}): Promise<void> {
 `;
 
   const hooksPath = `src/hooks/use${pascalName}.ts`;
+  // High-3: サニタイズ後も、万一の危険パターン混入を検知するため再検証する
+  // （checkTsSecurity は .ts ファイルに対して FORBIDDEN_TS_PATTERNS を検査）。
+  checkTsSecurity(hooksPath, tsHooks);
   await writeAppFile(pid, hooksPath, tsHooks);
   result.filesChanged.push(hooksPath);
 }
@@ -1076,11 +1101,18 @@ export async function loadChatHistory(appId: string): Promise<any[]> {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 function toPascalCase(s: string): string {
-  return s.split("_").filter(Boolean).map((p) => p.charAt(0).toUpperCase() + p.slice(1)).join("");
+  return s
+    .split("_")
+    .filter(Boolean)
+    .map((p) => sanitizeIdentifier(p.charAt(0).toUpperCase() + p.slice(1)))
+    .join("");
 }
 
 function toSnakeCase(s: string): string {
-  return s.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase()).replace(/^_/, "");
+  // camelCase → snake_case 変換後、識別子として安全な形にサニタイズする
+  // （High-3: AI 制御入力に含まれる引用符等のコード注入文字を確実に排除）。
+  const snake = s.replace(/[A-Z]/g, (c) => "_" + c.toLowerCase()).replace(/^_/, "");
+  return sanitizeIdentifier(snake);
 }
 
 function sqlToTsType(sqlType: string, nullable: boolean): string {
