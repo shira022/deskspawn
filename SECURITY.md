@@ -53,6 +53,23 @@ taken). It provides:
 Because the server listens on loopback, **any local process** that can reach
 `127.0.0.1` sits inside the same trust boundary as the app itself.
 
+### Generated Code Execution
+
+AI-generated application code is executed **on the user's host**: the local
+preview of a generated app runs on a **Vite dev server**, and tooling scripts
+run via **Bun**. Script execution is restricted to an **allowlist** (dev
+scripts are template-fixed values only — arbitrary user-supplied commands are
+not run), and the **first preview shows a confirmation dialog** before the
+generated app is started on the host.
+
+This containerization is **not an OS-level sandbox**: malicious code inside a
+generated app is *not* isolated by the operating system. The iframe `sandbox`
+attribute (desktop) and WebContainer (web demo) limit the generated app's
+access to host storage and origins, but code running via the local Vite/Bun
+processes executes with the privileges of the user. Therefore, treat
+AI-generated code as untrusted: review it before use, and never grant it
+additional host access.
+
 ### Data at Rest
 
 | Data | Desktop (main product) | Web demo (evaluation only) |
@@ -75,7 +92,7 @@ Because the server listens on loopback, **any local process** that can reach
 | Threat | Mitigation |
 |--------|-----------|
 | **XSS via dependency vulnerability** | CSP restricts script execution to `'self'` + `'wasm-unsafe-eval'`. `connect-src` limits data-exfiltration targets. |
-| **Malicious AI-generated code** | Runs in an isolated preview: iframe `sandbox` attribute on desktop (local Vite), WebContainer on web — no access to the host origin's storage. |
+| **Malicious AI-generated code** | Generated code runs **on the user's host** (local Vite dev server / Bun tooling). Script execution is restricted to an **allowlist** (dev scripts are template-fixed values only), and the **first preview requires a confirmation dialog**. The code itself is **not isolated by an OS-level sandbox** — treat it as untrusted and review before use. On desktop the preview uses an iframe `sandbox` attribute; on web it runs in WebContainer — both prevent access to the host origin's storage. |
 | **API key exfiltration via supply chain** | No backend to exfiltrate to. The sidecar proxies only the user-configured upstream; arbitrary `x-upstream` forwarding is rejected (SSRF guard). |
 | **Sidecar abused by other local processes** | Listens on loopback only, requires a token (401 without it), grants no CORS to foreign origins. |
 | **Plaintext key fallback (`credentials.json`)** | Used only when the OS keychain is unavailable; file mode 600; confined to the user profile (writes outside are refused). |
