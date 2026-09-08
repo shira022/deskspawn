@@ -8,6 +8,11 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
+
+// HTML entity escaping helper — prevents XSS when embedding user input in HTML templates
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+}
 import os from 'os';
 import { ChildProcess, spawn, spawnSync, execSync, execFileSync } from 'child_process';
 import * as executors from './tool-executors.js';
@@ -89,6 +94,11 @@ function validateAppIdLike(id: string): boolean {
   if (typeof id !== 'string' || id.length === 0 || id.length > 64) return false;
   const lower = id.toLowerCase();
   return UUID_RE.test(lower) || RUST_APP_ID_RE.test(lower);
+}
+
+/** Checkpoint ID — alphanumeric, hyphens, underscores, max 64 chars. */
+function validateCheckpointId(id: string): boolean {
+  return typeof id === 'string' && id.length > 0 && id.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(id);
 }
 
 /** IPv4 がプライベート/リンクローカル/ループバック/未指定かを判定する。 */
@@ -391,7 +401,7 @@ import ReactDOM from 'react-dom/client';
 function App() {
   return <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-8">
     <div className="text-center space-y-4">
-      <h1 className="text-2xl font-bold">${name}</h1>
+      <h1 className="text-2xl font-bold">${escapeHtml(name)}</h1>
       <p className="text-muted-foreground">Your new app has been created.</p>
       <p className="text-sm text-muted-foreground">Use the AI chat to build your app.</p>
     </div>
@@ -402,7 +412,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
 `);
     fs.writeFileSync(path.join(projectDir, 'index.html'), `<!DOCTYPE html>
 <html lang="en">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%236366f1%22/><polygon points=%2256,12 20,54 46,54 40,88 78,40 52,40%22 fill=%22white%22/></svg>" /><title>${name}</title></head>
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%236366f1%22/><polygon points=%2256,12 20,54 46,54 40,88 78,40 52,40%22 fill=%22white%22/></svg>" /><title>${escapeHtml(name)}</title></head>
   <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
 </html>`);
 
@@ -456,8 +466,6 @@ export default defineConfig({
   return projectDir;
 }
 
-const BACKUP_FILENAME = '.deskspawn/data-backup.json';
-
 /**
  * Generate IndexedDB storage adapter files in src/lib/.
  */
@@ -510,8 +518,6 @@ export async function initStorage(appId?: string): Promise<StorageAdapter> {
 // ============================================================
 
 import type { StorageAdapter } from './storage';
-
-const BACKUP_URL = "http://localhost:3009/data-backup";
 
 export class IndexedDBAdapter implements StorageAdapter {
   private db: IDBDatabase | null = null;
@@ -1151,6 +1157,10 @@ app.post('/projects/new', async (req, res) => {
       res.status(400).json({ error: 'Project name is required', errorCode: 'PROJECT_NAME_REQUIRED' });
       return;
     }
+    if (name.length > 100) {
+      res.status(400).json({ error: 'Project name must be 100 characters or less', errorCode: 'PROJECT_NAME_TOO_LONG' });
+      return;
+    }
 
     const projectId = crypto.randomUUID();
     const now = new Date().toISOString();
@@ -1267,6 +1277,10 @@ app.post('/api/checkpoints', async (req, res) => {
       res.status(404).json({ error: 'App directory not found', errorCode: 'APP_DIR_NOT_FOUND' });
       return;
     }
+    if (checkpointId && !validateCheckpointId(checkpointId)) {
+      res.status(400).json({ error: 'Invalid checkpointId', errorCode: 'INVALID_CHECKPOINT_ID' });
+      return;
+    }
     const id = await executors.createCheckpoint(dir, checkpointId);
     res.json({ id });
   } catch (e: any) {
@@ -1284,6 +1298,10 @@ app.post('/api/checkpoints/restore', async (req, res) => {
     }
     if (!validateAppIdLike(appId)) {
       res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
+    if (!validateCheckpointId(checkpointId)) {
+      res.status(400).json({ error: 'Invalid checkpointId', errorCode: 'INVALID_CHECKPOINT_ID' });
       return;
     }
     const dir = resolveAppDir(appId);
@@ -1332,6 +1350,10 @@ app.post('/api/checkpoints/delete-after', (req, res) => {
     }
     if (!validateAppIdLike(appId)) {
       res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
+    if (!validateCheckpointId(keepId)) {
+      res.status(400).json({ error: 'Invalid keepId', errorCode: 'INVALID_CHECKPOINT_ID' });
       return;
     }
     const dir = resolveAppDir(appId);
@@ -1482,6 +1504,10 @@ app.post('/projects/restore', async (req, res) => {
     const { checkpointId } = req.body;
     if (!checkpointId) {
       res.status(400).json({ error: 'checkpointId is required', errorCode: 'CHECKPOINT_ID_REQUIRED' });
+      return;
+    }
+    if (!validateCheckpointId(checkpointId)) {
+      res.status(400).json({ error: 'Invalid checkpointId', errorCode: 'INVALID_CHECKPOINT_ID' });
       return;
     }
     const workspaceDir = executors.getWorkspaceDir();
@@ -1816,38 +1842,6 @@ app.get('/health', (_req, res) => {
     workspace: executors.getWorkspaceDir(),
     apiServer: { ready: apiReady, port: apiActualPort },
   });
-});
-
-// ── Data backup endpoint ─────────────────────────────────────────────────────
-
-// Backup: store app data to project file
-app.put('/data-backup', (req, res) => {
-  try {
-    const workspaceDir = executors.getWorkspaceDir();
-    const backupPath = path.join(workspaceDir, BACKUP_FILENAME);
-    const dir = path.dirname(backupPath);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(backupPath, JSON.stringify(req.body), 'utf-8');
-    res.json({ success: true });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
-  }
-});
-
-// Backup: read app data from project file
-app.get('/data-backup', (_req, res) => {
-  try {
-    const workspaceDir = executors.getWorkspaceDir();
-    const backupPath = path.join(workspaceDir, BACKUP_FILENAME);
-    if (!fs.existsSync(backupPath)) {
-      res.status(404).json({ error: 'No backup found', errorCode: 'NO_BACKUP_FOUND' });
-      return;
-    }
-    const raw = fs.readFileSync(backupPath, 'utf-8');
-    res.json(JSON.parse(raw));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
-  }
 });
 
 // ── Desktop Preview Endpoints (local Vite dev server) ──────────────────────
