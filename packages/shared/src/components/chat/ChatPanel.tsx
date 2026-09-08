@@ -23,8 +23,6 @@ export function ChatPanel() {
   const currentCheckpointIndex = useAppStore((s) => s.currentCheckpointIndex);
   const agentStatus = useAppStore((s) => s.agentStatus);
   const saveFailed = useAppStore((s) => s.saveFailed);
-  const agentStepCount = useAppStore((s) => s.agentStepCount);
-  const agentMaxSteps = useAppStore((s) => s.agentMaxSteps);
   const aiConfig = useAppStore((s) => s.aiConfig);
   const currentAppId = useAppStore((s) => s.currentAppId);
   const apps = useAppStore((s) => s.apps);
@@ -47,8 +45,6 @@ export function ChatPanel() {
   const {
     liveStepLogs,
     phaseOutputs,
-    continuationRound,
-    maxContinuations,
     rateLimitInfo,
     startGeneration,
     handleStop,
@@ -413,20 +409,12 @@ export function ChatPanel() {
           </button>
 
           {rateLimitInfo && (
-          <span className="ml-auto text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
-            <Clock className="h-3 w-3 animate-pulse" />
-            {t('chat.rateLimit', { waitMs: rateLimitInfo.waitMs, retryCount: rateLimitInfo.retryCount, maxRetries: rateLimitInfo.maxRetries })}
-          </span>
-        )}
-        {agentStatus === "running" && !rateLimitInfo && (
-          <span className="ml-auto text-xs text-muted-foreground animate-pulse flex items-center gap-1">
-            <Loader2 className="h-3 w-3 animate-spin" />
-            {agentStepCount > 0
-              ? `Step ${agentStepCount}/${agentMaxSteps}${continuationRound > 0 ? ` (${t('chat.continuation', { round: continuationRound, max: maxContinuations })})` : ""}: ${t('chat.generating')}`
-              : t('chat.aiGenerating')}
-          </span>
-        )}
-        {agentStatus !== "running" && (previewStatus === "booting" || previewStatus === "installing" || previewStatus === "starting-dev" || previewStatus === "syncing") && (
+            <span className="ml-auto text-xs text-amber-600 dark:text-amber-400 flex items-center gap-1">
+              <Clock className="h-3 w-3 animate-pulse" />
+              {t('chat.rateLimit', { waitMs: rateLimitInfo.waitMs, retryCount: rateLimitInfo.retryCount, maxRetries: rateLimitInfo.maxRetries })}
+            </span>
+          )}
+          {agentStatus !== "running" && (previewStatus === "booting" || previewStatus === "installing" || previewStatus === "starting-dev" || previewStatus === "syncing") && (
           <span className="ml-auto text-xs text-muted-foreground/60 flex items-center gap-1">
             <Loader2 className="h-2.5 w-2.5 animate-spin" />
             {previewStatus === "booting" && t("preview.statusBooting")}
@@ -612,7 +600,7 @@ export function ChatPanel() {
                 </div>
               )}
 
-              {agentStatus === "running" && Object.keys(phaseOutputs).length > 0 && (
+              {agentStatus === "running" && liveStepLogs.length > 0 && (
                 <div className="pl-11">
                   <PhaseDetailPanel
                     phaseOutputs={Object.entries(phaseOutputs).map(([phase, { label, text }]) => ({ phase, label, text }))}
@@ -623,21 +611,6 @@ export function ChatPanel() {
               {liveStepLogs.length > 0 && (
                 <div className="pl-11">
                   <StepLogPanel stepLogs={liveStepLogs} isLive searchQuery={searchQuery || undefined} />
-                </div>
-              )}
-
-              {agentStatus === "running" && liveStepLogs.length === 0 && (
-                <div className="flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300">
-                  <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-muted">
-                    <Bot className="h-4 w-4 text-foreground" />
-                  </div>
-                  <div className="rounded-2xl rounded-bl-md bg-muted/50 border border-border/30 px-4 py-3">
-                    <div className="flex gap-1.5">
-                      <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0ms" }} />
-                      <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "150ms" }} />
-                      <span className="h-2 w-2 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "300ms" }} />
-                    </div>
-                  </div>
                 </div>
               )}
 

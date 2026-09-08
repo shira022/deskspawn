@@ -17,8 +17,6 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
   const [value, setValue] = useState("");
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const agentStatus = useAppStore((s) => s.agentStatus);
-  const agentStepCount = useAppStore((s) => s.agentStepCount);
-  const agentMaxSteps = useAppStore((s) => s.agentMaxSteps);
   const isRunning = agentStatus === "running";
 
   const handleSend = () => {
@@ -48,26 +46,14 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
 
   return (
     <div className="border-t border-border/50">
-      {/* Generation overlay bar */}
+      {/* Generation stop button (thinking indicator lives in ChatPanel/ChatMessage) */}
       {isRunning && (
         <div className="px-3 pt-2 pb-1.5">
-          <div className="flex items-center justify-between rounded-lg bg-destructive/10 border border-destructive/20 px-3 py-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <span className="relative flex h-3 w-3 shrink-0">
-                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-destructive/40 opacity-75" />
-                <span className="relative inline-flex h-3 w-3 rounded-full bg-destructive" />
-              </span>
-              <span className="text-xs text-destructive font-medium truncate">
-                {agentStepCount > 0
-                  ? `Step ${agentStepCount}/${agentMaxSteps}`
-                  : t('chat.aiGenerating')}
-              </span>
-            </div>
+          <div className="flex items-center justify-end">
             <button
               onClick={onStop}
               className="shrink-0 flex items-center gap-1.5 rounded-full bg-destructive text-destructive-foreground pl-2.5 pr-3 py-1 text-xs font-medium shadow-sm shadow-destructive/20 hover:bg-destructive/90 active:scale-95 transition-all duration-150"
               title={t('chat.stopGenerating')}
-              style={{ animation: "pulse-ring-subtle 2s infinite" }}
             >
               <Square className="h-3 w-3 fill-current" />
               <span>{t('chat.stop')}</span>

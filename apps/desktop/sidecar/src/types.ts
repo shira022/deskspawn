@@ -230,7 +230,8 @@ export interface Usage {
 
 /** Triage result */
 export interface TriageResult {
-  mode: 'single' | 'multi';
+  /** 1 (= trivial) through 5 (= major, full pipeline required) */
+  level: number;
   reason: string;
 }
 
