@@ -110,11 +110,16 @@ export interface FileNode {
 // App Types
 // ============================================================
 
+/** 難易度レベル — ユーザーがアプリ作成時に選択する */
+export type DifficultyLevel = "simple" | "medium" | "complex";
+
 export interface AppMeta {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
+  /** 難易度（未設定の場合は triage に委ねる） */
+  difficulty?: DifficultyLevel;
 }
 
 export interface CheckpointInfo {

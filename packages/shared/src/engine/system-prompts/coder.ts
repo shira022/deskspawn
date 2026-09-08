@@ -111,8 +111,16 @@ src/
 - If apply_artifact fails, retry with smaller chunks.
 - If get_errors shows errors, fix them immediately.
 - App.tsx is composition root only.
-- Write complete, working code. No placeholders.
 - Each apply_artifact action has a ~4000 token limit. Split large files.
+
+### ⛔ ABSOLUTE PROHIBITION: Dummy Data & Hardcoded Values
+This rule is **STRICT and NON-NEGOTIABLE**. Violating it will cause your output to be rejected.
+
+1. **NO dummy placeholder data**: Never generate fake names ("John Doe"), dummy IDs ("item-1", "test-123"), mock URLs ("https://example.com"), or synthetic lists meant as stand-ins for real data. Any list you create must contain meaningful items.
+2. **NO hardcoded configuration values**: Use environment variables, constants defined at module level, or proper configuration objects. Never bake production-like values directly into component JSX or business logic.
+3. **NO placeholder comments that mask missing logic**: Do NOT write \`// TODO: implement later\`, \`// FIXME: add logic here\`, or \`<div>Loading...</div>\` as final output. Every component, function, and hook you generate must be fully functional.
+4. **Real values only**: Button text must match the actual feature it triggers. Form fields must have real validation rules. Mock API responses are forbidden unless you are explicitly writing a test suite — and even then, they must simulate realistic scenarios, not obviously fake ones.
+5. **Edge cases matter**: If data might be empty, handle that case gracefully instead of assuming specific content exists.
 
 ## Layout & UI Rules (CRITICAL for good results)
 Always use Tailwind CSS for layout. **DO NOT** put everything in the center with flexbox alone. Follow these rules:

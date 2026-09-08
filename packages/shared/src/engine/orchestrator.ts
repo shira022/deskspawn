@@ -13,9 +13,11 @@ import { withRateLimitRetry } from "./retry";
 import { triageRequest } from "./triage";
 import { plannerPrompt } from "./system-prompts/planner";
 import { coderPrompt } from "./system-prompts/coder";
+import i18n from "../lib/i18n";
 import { verifierPrompt } from "./system-prompts/verifier";
 import { visualQAPrompt } from "./system-prompts/visual-qa";
 import type { Phase, Usage } from "@deskspawn/ai-core";
+import type { DifficultyLevel } from "../types";
 
 // ── Timeouts ──────────────────────────────────────────────────────────────────
 
@@ -81,7 +83,7 @@ export interface PipelineHooks {
   onRateLimit?: (phase: Phase, retryCount: number, maxRetries: number, waitMs: number) => void;
   onContinuation?: (phase: Phase, round: number, maxRounds: number) => void;
   onCheckpoint?: (phase: Phase, checkpointId: string) => void;
-  onTriageResult?: (result: { mode: "single" | "multi"; reason: string }) => void;
+  onTriageResult?: (result: { level: number; reason: string }) => void;
 }
 
 export interface PhaseRunResult {
@@ -305,8 +307,25 @@ export async function runPhase(
       plan,
     };
   } catch (error: any) {
+    const errMsg = String(error?.message || error || '').toLowerCase();
+    // Determine i18n key based on error type
+    let errorText: string;
+    if (errMsg.includes('failed to fetch') || errMsg.includes('networkerror') || errMsg.includes('econnrefused') || errMsg.includes('network')) {
+      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.networkError') });
+    } else if (errMsg.includes('429') || errMsg.includes('rate limit')) {
+      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.rateLimit', { waitMs: '', retryCount: '', maxRetries: '' }) });
+    } else if (errMsg.includes('401') || errMsg.includes('403') || errMsg.includes('api key') || errMsg.includes('unauthorized')) {
+      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.apiKeyInvalid') });
+    } else if (errMsg.includes('404') || errMsg.includes('model') && (errMsg.includes('not found') || errMsg.includes('does not exist'))) {
+      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.modelNotFound', { model: '' }) });
+    } else if (errMsg.includes('timeout') || errMsg.includes('aborted')) {
+      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.timeout') });
+    } else {
+      errorText = allResultText || i18n.t('chat.error.phaseFailedDetail', { phase, message: error?.message || String(error) });
+    }
+
     return {
-      text: allResultText || `⚠️ Phase "${phase}" failed: ${error?.message || error}`,
+      text: errorText,
       toolCalls: [],
       usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
       stepCount: 0,
@@ -329,6 +348,7 @@ export async function runWithTriage(
   hooks?: PipelineHooks,
   isDesktop?: boolean,
   maxSteps?: number,
+  difficulty?: DifficultyLevel,
 ): Promise<PipelineResult> {
   // 全体タイムアウト（10分）を UI の abort signal と合成してトリアージ以降の全生成に適用する
   const triageSignal = withPipelineTimeout(signal);
@@ -336,8 +356,46 @@ export async function runWithTriage(
   const triageResult = await triageRequest(requestMessages, model, triageSignal);
   hooks?.onTriageResult?.(triageResult);
 
-  // 分岐確定後にフェーズ開始を通知する（トリアージ前に "planner" を発火しない）
-  if (triageResult.mode === "single") {
+  // ── Difficulty override ────────────────────────────────────────────────
+  // ユーザーが難易度を選択している場合は triage 結果にかかわらず
+  // 選択されたパイプラインを使用する。
+  if (difficulty === "simple") {
+    // シンプル: coder のみ（自動調整 — triage level に委ねる）
+    // triage が低いなら coder のみ、高いなら現在のルーティングにフォールバック
+    if (triageResult.level <= 2) {
+      hooks?.onPhaseStart?.("coder");
+      const coderResult = await runPhase(
+        model, "coder", requestMessages, buildTools, triageSignal, hooks, undefined, _simpleMode, language, isDesktop, maxSteps,
+      );
+      return {
+        text: coderResult.text,
+        usage: coderResult.usage,
+        phases: ["coder"],
+      };
+    }
+    // triage が高い場合は現在のルーティングにフォールバック
+  }
+
+  if (difficulty === "medium") {
+    // 中程度: planner + coder（verifier / visual_qa を省略 → 品質チェックループを軽減）
+    return runPipelineForLevel(
+      model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps,
+      ["planner", "coder"],
+      triageResult.level,
+    );
+  }
+
+  if (difficulty === "complex") {
+    // 複雑: 全フェーズ + 品質チェックループ（既存の runPipeline にフォールバック）
+    return runPipeline(model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps, triageResult.level);
+  }
+
+  // ── Triage-based routing (difficulty not set) ──────────────────────────
+  // Map complexity level to pipeline configuration
+  // Level 1 (trivial) → coder only, no plan needed
+  // Levels 2-3 (minor/standard) → planner + coder + verifier
+  // Levels 4-5 (complex/major) → full pipeline with visual QA + fix rounds
+  if (triageResult.level <= 1) {
     hooks?.onPhaseStart?.("coder");
     const coderResult = await runPhase(
       model, "coder", requestMessages, buildTools, triageSignal, hooks, undefined, _simpleMode, language, isDesktop, maxSteps,
@@ -349,7 +407,19 @@ export async function runWithTriage(
     };
   }
 
-  return runPipeline(model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps);
+  if (triageResult.level === 2 || triageResult.level === 3) {
+    // Minor / Standard: planner + coder + verifier (skip visual QA for minor)
+    const level2Phases: Phase[] = [
+      "planner",
+      "coder",
+      "verifier",
+    ];
+    if (triageResult.level === 3) level2Phases.push("visual_qa");
+    return runPipelineForLevel(model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps, level2Phases, triageResult.level);
+  }
+
+  // Level 4 / Major: full pipeline with all phases including fix rounds
+  return runPipeline(model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps, triageResult.level);
 }
 
 const MAX_FIX_ROUNDS = 2;
@@ -383,7 +453,112 @@ function visualQaReportsIssues(text: string): boolean {
   return negativeMarkers.some(marker => lower.includes(marker.toLowerCase()));
 }
 
-export async function runPipeline(
+// ── Dummy Data Detection ──────────────────────────────────────────────────────
+
+/**
+ * Analyze the coder phase output to detect if the app contains real functionality
+ * vs. static/dummy content. Returns whether the app needs regeneration.
+ *
+ * Checks for:
+ * - Hardcoded/mock data patterns (e.g., `const data = [...]`, `mockData`, `dummyData`)
+ * - Lack of data fetching (no `fetch(`, `axios`, `useSWR`, `useQuery`, `useState`)
+ * - Static HTML with hardcoded values (no dynamic rendering)
+ * - Missing interactive functionality (no event handlers, forms, state management)
+ */
+function coderOutputHasDummyData(coderText: string, triageLevel: number): boolean {
+  // ── Static data indicators ────────────────────────────────────────────────
+  const dummyDataPatterns = [
+    /const\s+(data|items|users?|products?|messages?|tasks?|todos?|posts?)\s*=\s*\[/,
+    /mockData|dummyData|sampleData|fakeData|hardcoded|static\s*data/i,
+    /Lorem\s+ipsum/i,
+    /["']John\s+Doe["']|["']Jane\s+Smith["']|["']example\.com["']/,
+    /TODO:\s*(implement|add|create|fetch|connect)/i,
+    /placeholder\s+(data|content|text)/i,
+  ];
+
+  const hasDummyPatterns = dummyDataPatterns.some(p => p.test(coderText));
+
+  // ── Dynamic functionality indicators (positive signals) ───────────────────
+  const dynamicPatterns = [
+    /fetch\s*\(/,
+    /axios\./,
+    /useSWR|useQuery|useMutation/,
+    /useState|useReducer|createContext/,
+    /addEventListener|onClick|onChange|onSubmit/,
+    /useEffect\s*\(\s*\(\)\s*=>/,
+    /\.get\(|\.post\(|\.put\(|\.delete\(/,
+    /supabase\.|prisma\.|mongoose\.|firebase\./,
+    /WebSocket|socket\.io|EventSource/,
+    /localStorage|sessionStorage|IndexedDB/,
+    /dynamic\s+import|lazy\s*\(/,
+  ];
+
+  const hasDynamicFeatures = dynamicPatterns.filter(p => p.test(coderText)).length;
+
+  // ── Triage-level thresholds ───────────────────────────────────────────────
+  // Level 1 (trivial): skip check entirely — small apps may legitimately be static
+  if (triageLevel <= 1) return false;
+
+  // Level 2 (minor): only flag obvious dummy patterns
+  if (triageLevel <= 2) {
+    return hasDummyPatterns && hasDynamicFeatures === 0;
+  }
+
+  // Level 3 (standard): flag if dummy patterns AND no dynamic features
+  if (triageLevel <= 3) {
+    return hasDummyPatterns && hasDynamicFeatures < 2;
+  }
+
+  // Level 4-5 (complex/major): strict — any dummy pattern with insufficient dynamic features
+  return hasDummyPatterns && hasDynamicFeatures < 3;
+}
+
+/**
+ * Generate the re-generation instruction to send to the coder for fixing dummy data.
+ */
+function getDummyDataFixInstruction(language?: string): string {
+  const isJa = language === "ja";
+  if (isJa) {
+    return [
+      "[Dummy Data Detected — Re-generation Required]",
+      "",
+      "The previous code generation produced an app with hardcoded/static dummy data.",
+      "Please re-generate the app with the following requirements:",
+      "",
+      "1. Use REAL data fetching (fetch API, axios, or similar)",
+      "2. Add proper state management (useState, useReducer, or context)",
+      "3. Include interactive elements (forms, buttons with event handlers)",
+      "4. Remove all hardcoded/mock/sample data",
+      "5. If no external API is available, create a local data layer with",
+      "   realistic mock data that can be easily replaced with a real API",
+      "",
+      "The app must demonstrate REAL functionality, not just static content.",
+    ].join("\n");
+  }
+  return [
+    "[Dummy Data Detected — Re-generation Required]",
+    "",
+    "The previous code generation produced an app with hardcoded/static dummy data.",
+    "Please re-generate the app with the following requirements:",
+    "",
+    "1. Use REAL data fetching (fetch API, axios, or similar)",
+    "2. Add proper state management (useState, useReducer, or context)",
+    "3. Include interactive elements (forms, buttons with event handlers)",
+    "4. Remove all hardcoded/mock/sample data",
+    "5. If no external API is available, create a local data layer with",
+    "   realistic mock data that can be easily replaced with a real API",
+    "",
+    "The app must demonstrate REAL functionality, not just static content.",
+  ].join("\n");
+}
+
+/**
+ * Generic pipeline runner for a configurable phase sequence.
+ * Supports fix rounds (visual_qa → coder → verifier → visual_qa) just like runPipeline,
+ * but the initial phase order is supplied by the caller — allowing level-specific
+ * pipelines (e.g. skip visual_qa for Level 2).
+ */
+export async function runPipelineForLevel(
   model: LanguageModel,
   requestMessages: Array<Record<string, unknown>>,
   buildTools: ToolBuilderFn,
@@ -393,17 +568,25 @@ export async function runPipeline(
   language?: string,
   isDesktop?: boolean,
   maxSteps?: number,
+  initialPhases?: Phase[],
+  triageLevel?: number,
 ): Promise<PipelineResult> {
+  // Use the provided phase order or fall back to default
+  const phases = initialPhases ?? ["planner", "coder", "verifier", "visual_qa"];
+
   // runWithTriage から直接呼ばれる場合も含め、パイプライン全体にタイムアウトを適用する
   const phaseSignal = withPipelineTimeout(signal);
 
   // phaseQueue を使って動的に修正ラウンドを追加できるようにする
-  const phaseQueue: Phase[] = ["planner", "coder", "verifier", "visual_qa"];
+  const phaseQueue: Phase[] = [...phases];
   let planContext: string | undefined;
   let accumulatedText = "";
   const totalUsage: Usage = { inputTokens: 0, outputTokens: 0 };
   let fixRound = 0;
   let visualQaFeedback: string | null = null;
+  let dummyDataFeedback: string | null = null;
+  let dummyDataFixRound = 0;
+  const MAX_DUMMY_FIX_ROUNDS = 1;
   const executedPhases: Phase[] = [];
 
   while (phaseQueue.length > 0) {
@@ -422,6 +605,13 @@ export async function runPipeline(
         messages.push({
           role: "user" as const,
           content: `[Fix Round ${fixRound}/${MAX_FIX_ROUNDS}]\nThe previous verification found these issues that need to be fixed:\n\n${visualQaFeedback}\n\nPlease fix the issues described above.`,
+        });
+      }
+      // Dummy data fix: add re-generation instruction
+      if (dummyDataFeedback && phase === "coder") {
+        messages.push({
+          role: "user" as const,
+          content: dummyDataFeedback,
         });
       }
     }
@@ -457,6 +647,19 @@ export async function runPipeline(
     totalUsage.inputTokens += result.usage.inputTokens;
     totalUsage.outputTokens += result.usage.outputTokens;
 
+    // ── Dummy Data Detection (after coder phase) ────────────────────────────
+    if (phase === "coder" && result.text && triageLevel && !dummyDataFeedback) {
+      if (coderOutputHasDummyData(result.text, triageLevel)) {
+        if (dummyDataFixRound < MAX_DUMMY_FIX_ROUNDS) {
+          dummyDataFixRound++;
+          dummyDataFeedback = getDummyDataFixInstruction(language);
+          console.log(`[pipeline] Dummy data detected in coder output — triggering re-generation (round ${dummyDataFixRound}/${MAX_DUMMY_FIX_ROUNDS})`);
+          // Add coder back to queue for re-generation
+          phaseQueue.unshift("coder");
+        }
+      }
+    }
+
     // ── Visual QA 終了後の処理 ──────────────────────────────────────────────
     // 問題があれば coder → verifier → visual_qa の fix round
     if (phase === "visual_qa" && result.text) {
@@ -487,4 +690,28 @@ export async function runPipeline(
     usage: totalUsage,
     phases: executedPhases,
   };
+}
+
+/**
+ * Convenience wrapper for the standard 4-phase pipeline.
+ * Equivalent to `runPipelineForLevel(..., ["planner","coder","verifier","visual_qa"])`.
+ * Kept for backward compatibility.
+ */
+export function runPipeline(
+  model: LanguageModel,
+  requestMessages: Array<Record<string, unknown>>,
+  buildTools: ToolBuilderFn,
+  signal: AbortSignal,
+  hooks?: PipelineHooks,
+  _simpleMode?: boolean,
+  language?: string,
+  isDesktop?: boolean,
+  maxSteps?: number,
+  triageLevel?: number,
+): Promise<PipelineResult> {
+  return runPipelineForLevel(
+    model, requestMessages, buildTools, signal, hooks, _simpleMode, language, isDesktop, maxSteps,
+    ["planner", "coder", "verifier", "visual_qa"],
+    triageLevel,
+  );
 }

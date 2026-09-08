@@ -83,7 +83,16 @@ function getErrorHint(provider: string | undefined, cfg: { model?: string; custo
     : '';
   const errMsg = String((error as any)?.message || error || '').toLowerCase();
 
-  // Auth / invalid API key
+  // Rate limit (429)
+  if (errMsg.includes('429') || errMsg.includes('rate limit') || errMsg.includes('rate_limit')) {
+    return i18n.t('chat.error.rateLimit', {
+      waitMs: String((error as any)?.retryAfter || ''),
+      retryCount: String((error as any)?.retryCount || ''),
+      maxRetries: String((error as any)?.maxRetries || ''),
+    });
+  }
+
+  // Auth / invalid API key (401, 403)
   if (
     errMsg.includes('api key') ||
     errMsg.includes('unauthorized') ||
@@ -92,35 +101,216 @@ function getErrorHint(provider: string | undefined, cfg: { model?: string; custo
     errMsg.includes('not authorized') ||
     errMsg.includes('invalid')
   ) {
-    return i18n.t('chat.error.checkProviderSettings', { provider: providerLabel });
+    return i18n.t('chat.error.apiKeyInvalid');
   }
 
-  // Model not found or not supported
+  // Model not found (404 or model-specific messages)
   if (
     errMsg.includes('model') &&
     (errMsg.includes('not found') || errMsg.includes('does not exist') || errMsg.includes('not support'))
   ) {
-    return i18n.t('chat.error.checkModelSettings', {
+    return i18n.t('chat.error.modelNotFound', {
       model: cfg?.model || '',
     });
   }
 
-  // Connection / network errors (especially Ollama)
+  // Timeout / abort
+  if (
+    errMsg.includes('timeout') ||
+    errMsg.includes('aborted') ||
+    errMsg.includes('aborterror')
+  ) {
+    return i18n.t('chat.error.timeout');
+  }
+
+  // Network / connection errors (Failed to fetch, NetworkError, etc.)
   if (
     provider === 'ollama' ||
     errMsg.includes('connection refused') ||
     errMsg.includes('fetch failed') ||
+    errMsg.includes('failed to fetch') ||
     errMsg.includes('networkerror') ||
-    errMsg.includes('econnrefused')
+    errMsg.includes('econnrefused') ||
+    errMsg.includes('network') ||
+    errMsg.includes('econnreset') ||
+    errMsg.includes('enotfound')
   ) {
-    return i18n.t('chat.error.checkOllamaConnection', {
-      endpoint: cfg?.customEndpoint || 'http://localhost:11434/v1',
-      model: cfg?.model || '',
-    });
+    if (provider === 'ollama') {
+      return i18n.t('chat.error.checkOllamaConnection', {
+        endpoint: cfg?.customEndpoint || 'http://localhost:11434/v1',
+        model: cfg?.model || '',
+      });
+    }
+    return i18n.t('chat.error.networkError');
   }
 
   // Fallback
   return i18n.t('chat.error.checkProviderSettings', { provider: providerLabel });
+}
+
+// ── Pipeline Summary Agent ────────────────────────────────────────────────────
+
+/**
+ * Summarize all phase outputs into a single clean response.
+ * In simpleMode: user-friendly summary (what was built, key features, errors).
+ * In !simpleMode: includes technical details (files, tests, build status).
+ */
+function summarizePipelineResult(
+  phaseOutputs: Record<string, { label: string; text: string }>,
+  simpleMode?: boolean,
+  language?: string,
+): string {
+  const phases = ["planner", "coder", "verifier", "visual_qa"];
+  const availablePhases = phases.filter((p) => phaseOutputs[p]?.text?.trim());
+  if (availablePhases.length === 0) return "";
+
+  const coderText = phaseOutputs["coder"]?.text || "";
+  const verifierText = phaseOutputs["verifier"]?.text || "";
+  const visualQaText = phaseOutputs["visual_qa"]?.text || "";
+  const plannerText = phaseOutputs["planner"]?.text || "";
+
+  // Extract key information from phase outputs
+  const fileChanges = coderText.match(/(?:created?|updated?|modified?|written?|written to|changes? (?:made|in)|files? (?:created?|modified?))[\s:]+([^\n]+)/gi) || [];
+  const hasErrors = /❌|error|failed|exception/i.test(verifierText) || /❌|error|failed|exception/i.test(visualQaText);
+  const hasWarnings = /⚠️|warning/i.test(verifierText) || /⚠️|warning/i.test(visualQaText);
+  const passStatus = /✅|PASS|passed|success/i.test(visualQaText);
+  const failStatus = /❌|FAIL|failed|critical/i.test(visualQaText);
+
+  // Extract file list from coder output
+  const fileListMatch = coderText.match(/```[\s\S]*?(?:created?|files?)[\s\S]*?```/gi) || [];
+  const fileCount = fileListMatch.length || (fileChanges.length > 0 ? fileChanges.length : null);
+
+  // Simple mode: user-friendly summary
+  if (simpleMode) {
+    const parts: string[] = [];
+    const isJa = language === "ja";
+
+    if (isJa) {
+      parts.push("## 生成完了\n");
+      // Extract user-facing description from planner output
+      const descMatch = plannerText.match(/(?:summary|概要|description|説明)[\s:]+([^\n]+)/i);
+      if (descMatch) {
+        parts.push(`**アプリ概要**: ${descMatch[1].trim()}\n`);
+      }
+
+      if (fileCount) {
+        parts.push(`**ファイル数**: ${fileCount} ファイルを作成・更新しました\n`);
+      }
+
+      if (failStatus) {
+        parts.push("⚠️ **ステータス**: 一部の問題が検出されました。詳細は下の「フェーズ詳細」で確認できます。\n");
+      } else if (passStatus || !hasErrors) {
+        parts.push("✅ **ステータス**: 正常に生成されました\n");
+      }
+
+      if (hasErrors) {
+        parts.push("⚠️ **注意**: エラーが検出されました。修正が必要な場合があります。\n");
+      } else if (hasWarnings) {
+        parts.push("💡 **ヒント**: 一部の警告がありますが、アプリは動作します。\n");
+      }
+
+      parts.push("\nアプリはチャット下のプレビューパネルで確認できます。");
+    } else {
+      parts.push("## Generation Complete\n");
+      const descMatch = plannerText.match(/(?:summary|description)[\s:]+([^\n]+)/i);
+      if (descMatch) {
+        parts.push(`**App Overview**: ${descMatch[1].trim()}\n`);
+      }
+
+      if (fileCount) {
+        parts.push(`**Files**: ${fileCount} file(s) created/updated\n`);
+      }
+
+      if (failStatus) {
+        parts.push("⚠️ **Status**: Some issues were detected. Check 'Phase Details' below for more info.\n");
+      } else if (passStatus || !hasErrors) {
+        parts.push("✅ **Status**: Generated successfully\n");
+      }
+
+      if (hasErrors) {
+        parts.push("⚠️ **Note**: Errors were detected. You may need to make corrections.\n");
+      } else if (hasWarnings) {
+        parts.push("💡 **Tip**: Some warnings were found, but the app should work.\n");
+      }
+
+      parts.push("\nYou can preview the app in the preview panel below.");
+    }
+
+    return parts.join("\n");
+  }
+
+  // Technical mode: include details
+  const parts: string[] = [];
+  const isJa = language === "ja";
+
+  if (isJa) {
+    parts.push("## 生成完了 — 詳細レポート\n");
+
+    if (plannerText) {
+      parts.push("### プランナー\n");
+      parts.push(plannerText.substring(0, 500) + (plannerText.length > 500 ? "..." : "") + "\n");
+    }
+
+    parts.push("### コーダー\n");
+    if (fileCount) {
+      parts.push(`**ファイル変更**: ${fileCount} ファイル\n`);
+    }
+    // Show first 300 chars of coder output for technical users
+    parts.push(coderText.substring(0, 300) + (coderText.length > 300 ? "..." : "") + "\n");
+
+    parts.push("### バリデーター\n");
+    if (failStatus) {
+      parts.push("❌ **失敗**: 問題が検出されました\n");
+    } else if (passStatus) {
+      parts.push("✅ **パス**: 問題なし\n");
+    } else if (hasErrors) {
+      parts.push("⚠️ **警告付きパス**: エラーあり\n");
+    }
+    if (verifierText) {
+      parts.push(verifierText.substring(0, 500) + (verifierText.length > 500 ? "..." : "") + "\n");
+    }
+
+    parts.push("### ビジュアルQA\n");
+    if (visualQaText) {
+      parts.push(visualQaText.substring(0, 500) + (visualQaText.length > 500 ? "..." : "") + "\n");
+    }
+
+    parts.push("\n> 完全なフェーズ出力は下の「フェーズ詳細」パネルで確認できます。");
+  } else {
+    parts.push("## Generation Complete — Detailed Report\n");
+
+    if (plannerText) {
+      parts.push("### Planner\n");
+      parts.push(plannerText.substring(0, 500) + (plannerText.length > 500 ? "..." : "") + "\n");
+    }
+
+    parts.push("### Coder\n");
+    if (fileCount) {
+      parts.push(`**File Changes**: ${fileCount} file(s)\n`);
+    }
+    parts.push(coderText.substring(0, 300) + (coderText.length > 300 ? "..." : "") + "\n");
+
+    parts.push("### Verifier\n");
+    if (failStatus) {
+      parts.push("❌ **Failed**: Issues detected\n");
+    } else if (passStatus) {
+      parts.push("✅ **Passed**: No issues\n");
+    } else if (hasErrors) {
+      parts.push("⚠️ **Passed with warnings**: Errors found\n");
+    }
+    if (verifierText) {
+      parts.push(verifierText.substring(0, 500) + (verifierText.length > 500 ? "..." : "") + "\n");
+    }
+
+    parts.push("### Visual QA\n");
+    if (visualQaText) {
+      parts.push(visualQaText.substring(0, 500) + (visualQaText.length > 500 ? "..." : "") + "\n");
+    }
+
+    parts.push("\n> Full phase outputs are available in the 'Phase Details' panel below.");
+  }
+
+  return parts.join("\n");
 }
 
 // ── Hook ──────────────────────────────────────────────────────────────────────
@@ -150,7 +340,8 @@ export function useChatStream(): UseChatStreamReturn {
       generationActive.current = true;
 
       const state = useAppStore.getState();
-      const { aiConfig: cfg, currentAppId: pid, addMessage, updateMessage, setAgentStatus, setAgentStepCount } = state;
+      const { aiConfig: cfg, currentAppId: pid, addMessage, updateMessage, setAgentStatus, setAgentStepCount, apps } = state;
+      const currentApp = apps.find((a) => a.id === pid);
 
       // Validate config
       if (!cfg) {
@@ -485,6 +676,7 @@ export function useChatStream(): UseChatStreamReturn {
           isDesktopEnv(),
           // AiConfig.maxSteps — 動的ステップ管理のベース値（未設定ならエンジン既定値）
           cfg.maxSteps,
+          currentApp?.difficulty,
         );
 
         generationActive.current = false;
@@ -518,8 +710,14 @@ export function useChatStream(): UseChatStreamReturn {
             };
           }
 
+          // Generate summary from phase outputs instead of showing raw pipeline text
+          const summaryText = summarizePipelineResult(
+            localPhaseOutputs,
+            settings.simpleMode,
+            settings.language,
+          );
           updateMessage(botMsgId, {
-            content: pipelineResult.text,
+            content: summaryText || pipelineResult.text,
             checkpointId,
             stepLogs: [...stepLogs],
             phaseOutputs: Object.entries(localPhaseOutputs).map(([phase, { label, text }]) => ({

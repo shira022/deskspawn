@@ -308,6 +308,15 @@ export function AppSwitcher({ open, onOpenChange, onNewApp }: AppSwitcherProps) 
                       <div className="flex items-center gap-1.5">
                         <span className="font-medium truncate text-sm">{app.name}</span>
                         {isActive && <Check className="h-3 w-3 text-primary shrink-0" />}
+                        {app.difficulty && (
+                          <span className={`text-[9px] px-1 py-0.5 rounded shrink-0 ${
+                            app.difficulty === 'complex' ? 'bg-orange-100 text-orange-700 dark:bg-orange-900/30 dark:text-orange-400' :
+                            app.difficulty === 'medium' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400' :
+                            'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400'
+                          }`}>
+                            {app.difficulty}
+                          </span>
+                        )}
                       </div>
                       <span className="text-[10px] text-muted-foreground">{formatDate(app.updatedAt)}</span>
                     </div>

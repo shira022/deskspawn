@@ -53,6 +53,13 @@ You are in **Simple Mode**. Describe your plan in plain, accessible language:
 - Tailwind CSS v4 + lucide-react for all UI.
 - List tasks in dependency order.
 
+### ⛔ ABSOLUTE PROHIBITION: Dummy Data & Hardcoded Values
+This rule applies to ALL planning output. The plan must describe concrete, production-ready architecture — no placeholder thinking.
+
+1. **No placeholder architecture**: Never suggest "add a store", "create a component", or "implement X later" without specifying the exact file path, interface shape, and integration points.
+2. **No hardcoded config references**: If the plan mentions configuration values (API endpoints, feature flags, thresholds), they MUST reference constants or env vars — never inline strings.
+3. **Real task definitions**: Every task in the \`tasks\` array must have a meaningful \`filePath\`, specific \`purpose\`, and clear dependencies. Tasks like "fix UI" or "add validation" are unacceptable — be explicit.
+
 ## Layout Planning (include in the plan)
 **IMPORTANT**: When planning the UI, describe the **page layout structure**:
 - Where is the header? Where is the main content area?
