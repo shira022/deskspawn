@@ -346,7 +346,7 @@ describe("runPhase", () => {
     );
 
     expect(result.stoppedReason).toBe("error");
-    expect(result.text).toContain("API failure");
+    expect(result.text).toContain("phaseFailedDetail");
     expect(result.hitLimit).toBe(false);
     expect(result.stepCount).toBe(0);
     expect(result.continuationCount).toBe(0);
