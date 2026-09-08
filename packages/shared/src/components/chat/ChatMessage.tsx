@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
-import { Bot, User, Pencil, Check, X, Copy, CheckCheck, ChevronLeft, ChevronRight, RotateCcw, RefreshCw } from "lucide-react";
+import { Bot, User, Pencil, Check, X, Copy, CheckCheck, ChevronLeft, ChevronRight, RotateCcw, RefreshCw, Clipboard } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { StepLogPanel } from "./StepLogPanel";
@@ -49,8 +49,10 @@ export function ChatMessage({
   const [isEditing, setIsEditing] = useState(false);
   const [editValue, setEditValue] = useState(message.content);
   const [copied, setCopied] = useState(false);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const { t } = useTranslation();
   const editTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const editingMessageId = useAppStore((s) => s.editingMessageId);
   const agentStatus = useAppStore((s) => s.agentStatus);
   const isThisEditing = editingMessageId === message.id;
@@ -105,6 +107,26 @@ export function ChatMessage({
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  // Close context menu on click outside or Escape
+  useEffect(() => {
+    if (!contextMenu) return;
+    const handleClick = () => setContextMenu(null);
+    const handleKey = (e: KeyboardEvent) => { if (e.key === "Escape") setContextMenu(null); };
+    document.addEventListener("click", handleClick);
+    document.addEventListener("contextmenu", handleClick);
+    document.addEventListener("keydown", handleKey);
+    return () => {
+      document.removeEventListener("click", handleClick);
+      document.removeEventListener("contextmenu", handleClick);
+      document.removeEventListener("keydown", handleKey);
+    };
+  }, [contextMenu]);
+
   // Auto-resize edit textarea
   useEffect(() => {
     const el = editTextareaRef.current;
@@ -127,6 +149,7 @@ export function ChatMessage({
   return (
     <div
       id={`chat-msg-${message.id}`}
+      onContextMenu={handleContextMenu}
       className={cn(
         "group flex gap-3 animate-in fade-in slide-in-from-bottom-2 duration-300 ease-out",
         isUser ? "flex-row-reverse" : "flex-row",
@@ -134,7 +157,63 @@ export function ChatMessage({
         isActiveMatch && "chat-message-active-match"
       )}
       style={{ animationFillMode: "both" }}
-    >
+      >
+
+      {/* Context menu */}
+      {contextMenu && (
+      <div
+        ref={contextMenuRef}
+        className="fixed z-50 min-w-[140px] rounded-md border border-border/40 bg-popover shadow-md py-1 animate-in fade-in zoom-in-95 duration-100"
+        style={{ left: contextMenu.x, top: contextMenu.y }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        {isUser && onEdit && (
+          <button
+            onClick={() => { setContextMenu(null); handleStartEdit(); }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+          >
+            <Pencil className="h-3.5 w-3.5" />
+            {t('chat.edit')}
+          </button>
+        )}
+        {isAssistant && onRegenerate && (
+          <button
+            onClick={() => { setContextMenu(null); onRegenerate(); }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+          >
+            <RefreshCw className="h-3.5 w-3.5" />
+            {t('chat.regenerate')}
+          </button>
+        )}
+        {isUser && onRegenerate && (
+          <button
+            onClick={() => { setContextMenu(null); onRegenerate(); }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t('chat.retry')}
+          </button>
+        )}
+        {isAssistant && (
+          <button
+            onClick={() => { setContextMenu(null); handleCopy(); }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+          >
+            {copied ? <CheckCheck className="h-3.5 w-3.5 text-success" /> : <Clipboard className="h-3.5 w-3.5" />}
+            {copied ? t('chat.copied') : t('chat.copy')}
+          </button>
+        )}
+        {isUser && !onEdit && onRegenerate && (
+          <button
+            onClick={() => { setContextMenu(null); onRegenerate(); }}
+            className="flex w-full items-center gap-2 px-3 py-1.5 text-sm hover:bg-accent hover:text-accent-foreground transition-colors text-left"
+          >
+            <RotateCcw className="h-3.5 w-3.5" />
+            {t('chat.retry')}
+          </button>
+        )}
+      </div>
+      )}
       {/* Avatar */}
       {showAvatar ? (
         <div

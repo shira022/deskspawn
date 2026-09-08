@@ -100,12 +100,22 @@ describe("runWithTriage", () => {
   it("dispatches to coder only in single mode", async () => {
     // Triage returns single (triage.ts の JSON 形式)
     vi.mocked(generateText).mockResolvedValueOnce({
-      text: JSON.stringify({ mode: "single", reason: "Simple CSS fix" }),
+      text: JSON.stringify({ level: 2, reason: "Simple CSS fix" }),
     } as any);
-    // Coder phase (second call to generateText)
+    // planner
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: "Planned the fix",
+      usage: { inputTokens: 10, outputTokens: 5 },
+    } as any);
+    // coder
     vi.mocked(generateText).mockResolvedValueOnce({
       text: "Changed button color",
       usage: { inputTokens: 20, outputTokens: 10 },
+    } as any);
+    // verifier
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: "No errors found",
+      usage: { inputTokens: 5, outputTokens: 3 },
     } as any);
 
     const result = await runWithTriage(
@@ -115,16 +125,15 @@ describe("runWithTriage", () => {
       controller.signal,
     );
 
-    expect(result.phases).toEqual(["coder"]);
+    expect(result.phases).toEqual(["planner", "coder", "verifier"]);
     expect(result.text).toBe("Changed button color");
-    expect(result.usage).toEqual({ inputTokens: 20, outputTokens: 10 });
-    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(generateText).toHaveBeenCalledTimes(4); // triage + 3 phases
   });
 
   it("dispatches to full pipeline in multi mode", async () => {
     // Triage returns multi (triage.ts の JSON 形式)
     vi.mocked(generateText)
-      .mockResolvedValueOnce({ text: JSON.stringify({ mode: "multi", reason: "Full feature needed" }) } as any)
+      .mockResolvedValueOnce({ text: JSON.stringify({ level: 4, reason: "Full feature needed" }) } as any)
       // planner
       .mockResolvedValueOnce({
         text: "Planned the feature",
@@ -159,7 +168,7 @@ describe("runWithTriage", () => {
 
   it("calls onTriageResult hook with the triage result", async () => {
     vi.mocked(generateText)
-      .mockResolvedValueOnce({ text: JSON.stringify({ mode: "single", reason: "Tiny tweak" }) } as any)
+      .mockResolvedValueOnce({ text: JSON.stringify({ level: 2, reason: "Tiny tweak" }) } as any)
       .mockResolvedValueOnce({
         text: "done",
         usage: { inputTokens: 1, outputTokens: 1 },
@@ -178,7 +187,7 @@ describe("runWithTriage", () => {
     );
 
     expect(onTriageResult).toHaveBeenCalledWith({
-      mode: "single",
+      level: 2,
       reason: expect.stringContaining("Tiny"),
     });
   });
@@ -337,7 +346,7 @@ describe("runPhase", () => {
     );
 
     expect(result.stoppedReason).toBe("error");
-    expect(result.text).toContain("API failure");
+    expect(result.text).toContain("phaseFailedDetail");
     expect(result.hitLimit).toBe(false);
     expect(result.stepCount).toBe(0);
     expect(result.continuationCount).toBe(0);

@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useAppStore } from "../../store/useAppStore";
+import type { DifficultyLevel } from "../../types";
 import {
   Dialog,
   DialogContent,
@@ -27,6 +28,7 @@ interface NewAppDialogProps {
 
 export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
   const [appName, setAppName] = useState("");
+  const [difficulty, setDifficulty] = useState<DifficultyLevel>("medium");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
   const { t } = useTranslation();
@@ -66,6 +68,7 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
         name,
         createdAt: now,
         updatedAt: now,
+        difficulty,
       };
 
       // Save to IndexedDB (web) or Rust registry (desktop).
@@ -166,6 +169,30 @@ export const APP_ID = "${realAppId}";
               <span>{t('app.templateAutoBackup')}</span><br />
               <span>{t('app.templateShare')}</span>
             </p>
+          </div>
+
+          {/* 難易度セレクター */}
+          <div className="space-y-2">
+            <Label>{t('app.difficulty')}</Label>
+            <div className="flex gap-2">
+              {(["simple", "medium", "complex"] as const).map((level) => (
+                <button
+                  key={level}
+                  type="button"
+                  onClick={() => setDifficulty(level)}
+                  className={`flex-1 rounded-md border px-3 py-2 text-xs transition-colors ${
+                    difficulty === level
+                      ? "border-primary bg-primary/10 text-primary font-medium"
+                      : "border-muted hover:bg-muted/50 text-muted-foreground"
+                  }`}
+                >
+                  <div>{t(`app.difficulty${level.charAt(0).toUpperCase() + level.slice(1)}`)}</div>
+                  <div className="text-[10px] font-normal mt-0.5 opacity-70">
+                    {t(`app.difficulty${level.charAt(0).toUpperCase() + level.slice(1)}Desc`)}
+                  </div>
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 

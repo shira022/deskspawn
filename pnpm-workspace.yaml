@@ -13,3 +13,4 @@ onlyBuiltDependencies:
 # コメントの由来: https://github.com/advisories/GHSA-fxqj-rqcc-2cmp
 overrides:
   postcss: 8.5.26
+  qs: "^6.14.0"
