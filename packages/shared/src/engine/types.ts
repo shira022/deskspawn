@@ -39,8 +39,24 @@ export interface Usage {
   outputTokens: number;
 }
 
+/**
+ * Complexity levels returned by Triage.
+ *
+ * ┌──────┬─────────────────────────────────────────────┐
+ * │ Lvl  │ Description                                 │
+ * ├──────┼─────────────────────────────────────────────┤
+ * │  1   │ Trivial – typo / style / one-line fix       │
+ * │  2   │ Minor – small feature, ≤ 2 files            │
+ * │  3   │ Standard – full feature, multi-file         │
+ * │  4   │ Complex – cross-cutting changes, testing    │
+ * │  5   │ Major – new app / architecture / migrations │
+ * └──────┴─────────────────────────────────────────────┘
+ */
+export type ComplexityLevel = 1 | 2 | 3 | 4 | 5;
+
 export interface TriageResult {
-  mode: 'single' | 'multi';
+  /** 1 (= trivial) through 5 (= major, full pipeline required) */
+  level: ComplexityLevel;
   reason: string;
 }
 

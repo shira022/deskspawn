@@ -39,8 +39,13 @@ export interface Usage {
   outputTokens: number;
 }
 
+/** Complexity levels returned by Triage */
+export type ComplexityLevel = 1 | 2 | 3 | 4 | 5;
+
+/** Triage result with 5-level complexity scoring */
 export interface TriageResult {
-  mode: 'single' | 'multi';
+  /** 1 (= trivial) through 5 (= major, full pipeline required) */
+  level: ComplexityLevel;
   reason: string;
 }
 

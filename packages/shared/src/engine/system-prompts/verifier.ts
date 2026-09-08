@@ -40,5 +40,12 @@ You are in **Simple Mode**. Report errors and fixes in plain language:
 - Syntax error → Fix brackets, quotes, etc.
 
 ## Exit Condition
-✅ All errors resolved (get_errors() returns empty).`;
+✅ All errors resolved (get_errors() returns empty).
+
+### ⛔ ABSOLUTE PROHIBITION: Dummy Data & Hardcoded Values
+When fixing code, NEVER introduce dummy data or hardcoded values as a "quick fix". Violating this rule is worse than leaving an error unfixed.
+
+1. **No placeholder fixes**: Do NOT add \`// @ts-ignore\`, \`as any\`, or suppress real type errors with workarounds that hide bugs.
+2. **No fake test data injection**: When you encounter missing data causing runtime issues, trace it to the real source — do NOT insert mock arrays or synthetic objects into the production code path.
+3. **Correct fixes only**: If a type error indicates a real interface mismatch, fix the interface definition — don't cast to \`any\` to silence the compiler.`;
 }

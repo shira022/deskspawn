@@ -23,7 +23,7 @@ describe("triageRequest", () => {
 
   it("calls generateText with correct prompt parameters", async () => {
     vi.mocked(generateText).mockResolvedValue({
-      text: '{"mode": "single", "reason": "Simple fix"}',
+      text: '{"level": 2, "reason": "Simple fix"}',
     } as any);
 
     const messages = [{ role: "user", content: "Fix the button color" }];
@@ -42,9 +42,9 @@ describe("triageRequest", () => {
     expect(callArgs.maxOutputTokens).toBe(100);
   });
 
-  it('returns "simple" for a simple single-file fix request', async () => {
+  it('returns level 1 for a simple single-file fix request', async () => {
     vi.mocked(generateText).mockResolvedValue({
-      text: JSON.stringify({ mode: "single", reason: "Simple fix, running in single mode" }),
+      text: JSON.stringify({ level: 1, reason: "Simple fix" }),
     } as any);
 
     const result = await triageRequest(
@@ -52,15 +52,15 @@ describe("triageRequest", () => {
       mockModel,
     );
 
-    expect(result.mode).toBe("single");
+    expect(result.level).toBe(1);
     expect(result.reason).toContain("Simple");
   });
 
-  it('returns "complex" for a multi-file feature request', async () => {
+  it('returns level 5 for a multi-file feature request', async () => {
     vi.mocked(generateText).mockResolvedValue({
       text: JSON.stringify({
-        mode: "multi",
-        reason: "Multiple files needed, running multi-agent mode",
+        level: 5,
+        reason: "Full application requires all phases",
       }),
     } as any);
 
@@ -69,13 +69,13 @@ describe("triageRequest", () => {
       mockModel,
     );
 
-    expect(result.mode).toBe("multi");
-    expect(result.reason).toContain("Multiple");
+    expect(result.level).toBe(5);
+    expect(result.reason).toContain("Full application");
   });
 
   it("handles JSON response format with backtick code fence", async () => {
     vi.mocked(generateText).mockResolvedValue({
-      text: "```json\n{\"mode\": \"single\", \"reason\": \"Quick style change\"}\n```",
+      text: "```json\n{\"level\": 2, \"reason\": \"Quick style change\"}\n```",
     } as any);
 
     const result = await triageRequest(
@@ -83,13 +83,13 @@ describe("triageRequest", () => {
       mockModel,
     );
 
-    expect(result.mode).toBe("single");
+    expect(result.level).toBe(2);
     expect(result.reason).toBe("Quick style change");
   });
 
   it("handles JSON without code fence but with extra text", async () => {
     vi.mocked(generateText).mockResolvedValue({
-      text: 'Here is my analysis:\n{"mode": "multi", "reason": "Complex feature"}\nEnd.',
+      text: 'Here is my analysis:\n{"level": 4, "reason": "Complex feature"}\nEnd.',
     } as any);
 
     const result = await triageRequest(
@@ -97,10 +97,10 @@ describe("triageRequest", () => {
       mockModel,
     );
 
-    expect(result.mode).toBe("multi");
+    expect(result.level).toBe(4);
   });
 
-  it("falls back to single when generateText returns unparseable text", async () => {
+  it("falls back to level 2 when generateText returns unparseable text", async () => {
     vi.mocked(generateText).mockResolvedValue({
       text: "I think this is a simple change",
     } as any);
@@ -110,11 +110,11 @@ describe("triageRequest", () => {
       mockModel,
     );
 
-    expect(result.mode).toBe("single");
+    expect(result.level).toBe(2);
     expect(result.reason).toContain("Could not determine");
   });
 
-  it("falls back to single when generateText throws", async () => {
+  it("falls back to level 2 when generateText throws", async () => {
     vi.mocked(generateText).mockRejectedValue(new Error("API error"));
 
     const result = await triageRequest(
@@ -122,24 +122,24 @@ describe("triageRequest", () => {
       mockModel,
     );
 
-    expect(result.mode).toBe("single");
+    expect(result.level).toBe(2);
     expect(result.reason).toContain("Analysis error");
   });
 
-  it("returns single when no user message is found", async () => {
+  it("returns level 1 when no user message is found", async () => {
     const result = await triageRequest(
       [{ role: "assistant", content: "Hello" }],
       mockModel,
     );
 
-    expect(result.mode).toBe("single");
+    expect(result.level).toBe(1);
     expect(result.reason).toContain("No user message");
     expect(generateText).not.toHaveBeenCalled();
   });
 
   it("extracts the last user message from a conversation", async () => {
     vi.mocked(generateText).mockResolvedValue({
-      text: JSON.stringify({ mode: "single", reason: "Final fix" }),
+      text: JSON.stringify({ level: 3, reason: "Final fix" }),
     } as any);
 
     const messages = [
@@ -164,13 +164,13 @@ describe("triageRequest", () => {
 
     const result = await triageRequest(messages, mockModel);
 
-    expect(result.mode).toBe("single");
+    expect(result.level).toBe(1);
     expect(result.reason).toContain("No user message");
   });
 
   it("extracts text from multimodal content array", async () => {
     vi.mocked(generateText).mockResolvedValue({
-      text: JSON.stringify({ mode: "single", reason: "Text fix" }),
+      text: JSON.stringify({ level: 2, reason: "Text fix" }),
     } as any);
 
     const messages = [

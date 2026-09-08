@@ -62,6 +62,8 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
     existingConfig?.apiKey ?? "",
   );
   const [model, setModel] = useState(existingConfig?.model ?? "");
+  // __custom__（手動入力）選択中は auto-select で先頭モデルに上書きしない
+  const [customModelMode, setCustomModelMode] = useState(false);
   const [customEndpoint, setCustomEndpoint] = useState(
     existingConfig?.customEndpoint ?? "",
   );
@@ -105,13 +107,13 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
     if (open) fetchModels();
   }, [open, fetchModels]);
 
-  // Auto-select first model when list loads
+  // Auto-select first model when list loads (skip while in manual-input mode)
   useEffect(() => {
-    if (models.length > 0 && !model) {
+    if (models.length > 0 && !model && !customModelMode) {
       setModel(models[0].id);
       setSelectedModelInfo(models[0]);
     }
-  }, [models, model]);
+  }, [models, model, customModelMode]);
 
   // Update selected model info on model change
   useEffect(() => {
@@ -127,6 +129,7 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
         setProvider("openai");
         setApiKey("");
         setModel("");
+        setCustomModelMode(false);
         setCustomEndpoint("");
         setRegion("");
         return;
@@ -134,6 +137,7 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
       setProvider(existingConfig.provider);
       setApiKey(existingConfig.apiKey ?? "");
       setModel(existingConfig.model ?? "");
+      setCustomModelMode(false);
       setCustomEndpoint(existingConfig.customEndpoint ?? "");
       setRegion(existingConfig.region ?? "");
     }
@@ -157,6 +161,7 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
     if (p === "google-vertex" || p === "azure-openai") return; // 未実装
     setProvider(p);
     setModel("");
+    setCustomModelMode(false);
     setSelectedModelInfo(null);
     setRegion("");
     setCustomEndpoint("");
@@ -181,9 +186,11 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
     const value = e.target.value;
     if (value === "__custom__") {
       setModel("");
+      setCustomModelMode(true);
       setSelectedModelInfo(null);
     } else {
       setModel(value);
+      setCustomModelMode(false);
     }
   };
 
@@ -356,12 +363,12 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
                 />
               )}
 
-              {/* Manual fallback */}
-              {model === "" && hasModels && (
+              {/* Manual fallback — stays visible while "Other (manual input)" is selected */}
+              {customModelMode && (
                 <Input
                   className="mt-2"
                   placeholder={t('ai.manualModelId')}
-                  value=""
+                  value={model}
                   onChange={(e) => setModel(e.target.value)}
                 />
               )}
