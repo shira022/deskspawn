@@ -146,6 +146,7 @@ export function getModel(config: ProviderConfig): LanguageModel {
       }
       const client = createVertex({
         apiKey,
+        location: config.region,
       });
       return client(model) as unknown as LanguageModel;
     }
