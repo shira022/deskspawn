@@ -246,6 +246,8 @@ export async function runPhase(
               hooks.onRateLimit?.(phase, retryEvent.retryCount, retryEvent.maxRetries, retryEvent.waitMs);
             }
           : undefined,
+        undefined, // config (default)
+        signal,    // abort signal for sleep interruption
       );
 
       allResultText += (result.text || "");

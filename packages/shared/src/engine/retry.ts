@@ -58,14 +58,38 @@ export function detectRateLimit(error: unknown): RateLimitInfo {
   return { isRateLimit: true, suggestedWaitMs: null };
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+/**
+ * AbortSignal対応のsleep。
+ * signal が提供されると、待機中に abort された場合でも即座に reject する。
+ */
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) {
+    return Promise.reject(new DOMException('Aborted', 'AbortError'));
+  }
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(resolve, ms);
+    if (signal) {
+      const onAbort = () => {
+        clearTimeout(timer);
+        reject(new DOMException('Aborted', 'AbortError'));
+      };
+      signal.addEventListener('abort', onAbort, { once: true });
+      // タイマー完了時にイベントリスナーをクリーンアップ
+      const origResolve = resolve;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (resolve as any) = () => {
+        signal.removeEventListener('abort', onAbort);
+        origResolve();
+      };
+    }
+  });
 }
 
 export async function withRateLimitRetry<T>(
   fn: () => Promise<T>,
   onRetry?: (event: RetryEvent) => void,
   config: RetryConfig = DEFAULT_RETRY_CONFIG,
+  signal?: AbortSignal,
 ): Promise<T> {
   let lastError: unknown;
 
@@ -75,6 +99,9 @@ export async function withRateLimitRetry<T>(
     } catch (error) {
       lastError = error;
       if (attempt >= config.maxRetries) throw error;
+
+      // AbortError はリトライせずに即座に再スロー
+      if (error instanceof DOMException && error.name === 'AbortError') throw error;
 
       const { isRateLimit, suggestedWaitMs } = detectRateLimit(error);
       if (!isRateLimit) throw error;
@@ -92,7 +119,7 @@ export async function withRateLimitRetry<T>(
         });
       }
 
-      await sleep(waitMs);
+      await sleep(waitMs, signal);
     }
   }
 
