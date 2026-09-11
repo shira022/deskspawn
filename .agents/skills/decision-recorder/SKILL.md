@@ -75,7 +75,7 @@ NNN-title-in-kebab-case.md
 **ADRは公開リポジトリ（OSS）にコミットされる。以下を絶対に記載してはならない：**
 
 - ❌ ユーザー名・実在する個人名・メールアドレス
-- ❌ 絶対パス（例: `C:\Users\shira\...`、`/home/<user>/...`）
+- ❌ 絶対パス（例: `C:\Users\<user>\...`、`/home/<user>/...`）
 - ❌ APIキー・トークン・シークレット・パスワード
 - ❌ マシン固有情報（ホスト名・MACアドレス・ライセンスキー・ディスクシリアル等）
 - ❌ プライベートな組織名・クライアント名
@@ -83,7 +83,7 @@ NNN-title-in-kebab-case.md
 **パスの表記は常に汎化する：**
 - ✅ `~/deskspawn/projects/`（ユーザーホーム基準の相対表現）
 - ✅ `<USER_HOME>/deskspawn/config/`（プレースホルダ）
-- ❌ `C:\Users\shira\deskspawn\projects\`（実パス）
+- ❌ `C:\Users\<user>\deskspawn\projects\`（実パス）
 
 **作成後チェックリスト（コミット前に必ず実施）：**
 1. `C:\Users\` や `/home/` で始まる実パスが無いか

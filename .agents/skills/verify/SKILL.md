@@ -211,3 +211,9 @@ Write to `.agents/artifacts/verify-report-<slug>.json`:
 - The verification report is the single source of truth for gate decisions — no verbal "it's fine" bypasses
 - If the plan specifies additional verification steps beyond this pipeline, include them
 - Verification runs on the feature branch by default. Integration verification on `develop` HEAD is permitted only when gating a develop→main merge (run by Orchestrator via `merge` skill).
+
+## Troubleshooting
+
+| Symptom | Cause | Fix |
+|---------|-------|-----|
+| `pnpm install --frozen-lockfile` fails / lockfile mismatch | `pnpm-lock.yaml` out of sync with `package.json` (e.g. after workspace `overrides` changes) | Regenerate with `pnpm install --force`, then commit the updated `pnpm-lock.yaml`. Never hand-edit the lockfile. |
