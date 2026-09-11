@@ -3,10 +3,13 @@ name: CI
 on:
   pull_request:
     branches: [develop, main]
-    paths-ignore:
-      - '.agents/**'
-      - 'docs/**'
-      - '*.md'
+    # ⚠️ pull_request では paths-ignore を付けない。
+    # develop/main の ruleset "ci-checks" が lint-and-typecheck / frontend-test /
+    # frontend-build / npm-audit を必須チェックとして要求するため、docs や .agents
+    # のみの PR ではこのワークフロー自体が起動せず、4つの必須チェックが "expected"
+    # のまま永久に報告されない = マージ不能になる (required status checks は
+    # admin バイパス不可)。2026-09-11 に PR #141 で実際に発生。
+    # push 側は引き続き paths-ignore でランナー消費を抑える。
   push:
     branches: [develop, main]
     paths-ignore:
