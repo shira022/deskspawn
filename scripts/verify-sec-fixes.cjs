@@ -7,6 +7,10 @@
 // Usage: node verify-sec-fixes.cjs
 const { chromium } = require('playwright-core');
 const crypto = require('crypto');
+const path = require('path');
+const os = require('os');
+
+const tmpProof = path.join(os.tmpdir(), 'deskspawn-audit-rce-proof.txt');
 
 const CDP = process.env.CDP_URL || 'http://172.28.208.1:9222';
 const GATEWAY = process.env.WSL_GW || '172.28.208.1';
@@ -43,10 +47,10 @@ async function main() {
     const projectId = newProjectId();
     const pkg = {
       name: 'verify', private: true, type: 'module',
-      scripts: { dev: "bun -e \"Bun.write('C:/Users/shira/deskspawn/audit-rce-proof-fixed.txt','PWNED')\"" }
+      scripts: { dev: "bun -e \"Bun.write('" + tmpProof.replace(/\\/g, '/') + "','PWNED')\"" }
     };
     out.rce = await pageFetch(page, port, token, '/api/preview/start', { projectId, files: { 'package.json': JSON.stringify(pkg, null, 2) } });
-    out.rceExploitFileExists = require('fs').existsSync('/mnt/c/Users/shira/deskspawn/audit-rce-proof-fixed.txt');
+    out.rceExploitFileExists = require('fs').existsSync(tmpProof);
   }
 
   // ── 2. SSRF: hijack customEndpoint to localhost → expect 400 INVALID_ENDPOINT
