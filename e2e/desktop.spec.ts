@@ -40,7 +40,10 @@
  *   確認すること（エージェントは AGENTS.md の注意事項も参照）。
  *   実行時は必ず開発環境（WSL staging ビルド）で行う。
  */
+import path from 'node:path';
 import { test, expect, chromium, type Browser, type Page } from '@playwright/test';
+
+const SHOT_DIR = path.join(__dirname, 'screenshots');
 
 const CDP_URL = process.env.CDP_URL || 'http://172.28.208.1:9222';
 
@@ -363,7 +366,7 @@ test('00: 初期状態 — クリア後は「アプリ未選択」のガイド�
   await expect(page.getByText(/ツールバーの「新規アプリ」からアプリを作成すると/)).toBeVisible();
   // プレビューパネルのプレースホルダ
   await expect(page.getByText(/アプリを選択または作成するとプレビューが表示されます/)).toBeVisible();
-  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/00-initial-state.png' });
+  await page.screenshot({ path: path.join(SHOT_DIR, '00-initial-state.png') });
 });
 
 test('01: 起動画面 — タイトルと主要UIが表示される', async () => {
@@ -374,7 +377,7 @@ test('01: 起動画面 — タイトルと主要UIが表示される', async () 
   // アプリボタン (未選択時「アプリ未選択」/選択済み時アプリ名) — ツールバー2番目
   await expect(page.locator('div.flex.h-10 button').nth(1)).toBeVisible();
   await expect(page.getByPlaceholder(/作りたいアプリを指示/)).toBeVisible();
-  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/01-startup.png' });
+  await page.screenshot({ path: path.join(SHOT_DIR, '01-startup.png') });
 });
 
 test('02: AI設定フロー — プロバイダーを保存しツールバーに反映', async () => {
@@ -421,7 +424,7 @@ test('02: AI設定フロー — プロバイダーを保存しツールバーに
   // (span は sm:inline レスポンシブで小窓時 display:none のため存在ベースで判定)
   await expect(page.getByText('APIキー設定', { exact: true })).toHaveCount(0, { timeout: 10_000 });
   await expect(page.locator('div.flex.h-10').getByText(MODEL)).toHaveCount(1);
-  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/02-provider-save.png' });
+  await page.screenshot({ path: path.join(SHOT_DIR, '02-provider-save.png') });
 });
 
 test('03: アプリ生成 — ToDoアプリを英語で作成してプレビュー表示', async () => {
@@ -472,7 +475,7 @@ test('03: アプリ生成 — ToDoアプリを英語で作成してプレビュ�
     timeout: 30_000,
   });
 
-  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/03-chat-response.png' });
+  await page.screenshot({ path: path.join(SHOT_DIR, '03-chat-response.png') });
 });
 
 test('04: 新規アプリ — ダイアログが開いてキャンセルできる', async () => {
@@ -484,7 +487,7 @@ test('04: 新規アプリ — ダイアログが開いてキャンセルでき�
   await expect(page.getByText('アプリ名', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'キャンセル' }).click();
   await expect(page.getByText('新しいアプリを作成', { exact: true })).toBeHidden();
-  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/04-new-app-dialog.png' });
+  await page.screenshot({ path: path.join(SHOT_DIR, '04-new-app-dialog.png') });
 });
 
 test('05: モデル設定メニュー — 現在のモデルが表示される', async () => {
@@ -521,7 +524,7 @@ test('05: モデル設定メニュー — 現在のモデルが表示される',
   // (Playwrightのヒットテストはウィンドウ右端でflakyになるため force/座標クリックは不採用)
   await closeModelPopover(page);
   await expect(popover).toBeHidden();
-  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/05-model-settings.png' });
+  await page.screenshot({ path: path.join(SHOT_DIR, '05-model-settings.png') });
 });
 
 test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガード・後片付け', async () => {
@@ -718,5 +721,5 @@ test('06: アプリ切替と削除 — 2アプリの作成・切替・削除ガ�
   await page.waitForTimeout(500);
 
   // 残ったアプリB は afterAll の reset_app_data が削除する（テスト後片付け）。
-  await page.screenshot({ path: '/home/shira/hermes-project/project/deskspawn/e2e/screenshots/06-app-switch-delete.png' });
+  await page.screenshot({ path: path.join(SHOT_DIR, '06-app-switch-delete.png') });
 });
