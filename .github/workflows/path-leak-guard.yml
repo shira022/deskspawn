@@ -12,5 +12,5 @@ permissions:
 jobs:
   scan:
     # NOTE: this ref points at the template's feature/path-leak-guard branch.
-    # Switch it to @main once shira022/loop-engineering-template#50 is merged.
+    # Switch it to @main once shira022/loop-engineering-template#52 is merged.
     uses: shira022/loop-engineering-template/.github/workflows/path-leak-check.yml@feature/path-leak-guard
