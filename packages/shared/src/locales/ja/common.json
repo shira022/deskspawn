@@ -203,18 +203,34 @@
     "usageTokens": "トークン",
     "totalTokensAndCost": "合計トークン数と推定費用",
     "agentTier": {
-      "label": "エージェント構成",
-      "auto": "オート",
-      "level": "L{{level}}",
-      "autoScale": "オート（規模: L{{level}}）",
-      "autoScaleIdle": "オート（未判定）",
-      "manualScale": "手動: L{{level}}",
-      "descAuto": "自動判定（triage）",
-      "desc1": "coder のみ（単発で完了）",
-      "desc2": "coder + verifier（計画なし）",
-      "desc3": "planner + coder + verifier",
-      "desc4": "+ visual QA（修正1回・dummy 再生成）",
-      "desc5": "フル＋修正2回・dummy 再生成"
+      "groupLabel": "エージェント構成",
+      "label": {
+        "auto": "オート",
+        "t1": "最小",
+        "t2": "基本",
+        "t3": "標準",
+        "t4": "しっかり",
+        "t5": "最大"
+      },
+      "hint": {
+        "auto": "内容に合わせて自動で選ぶ",
+        "t1": "まず1回で作る",
+        "t2": "作って見直す",
+        "t3": "計画してから作って見直す",
+        "t4": "画面まで確認して直す",
+        "t5": "何度も直して仕上げる"
+      },
+      "agents": {
+        "auto": "複雑さを判定して構成を自動で決めます",
+        "t1": "L1: coder",
+        "t2": "L2: coder + verifier",
+        "t3": "L3: planner + coder + verifier",
+        "t4": "L4: planner + coder + verifier + visual QA（修正1回・ダミーデータ再生成）",
+        "t5": "L5: 全工程（修正2回まで・ダミーデータ再生成）"
+      },
+      "autoScale": "自動判定: {{name}}",
+      "autoScaleIdle": "自動判定: 未判定",
+      "manualScale": "手動: {{name}}"
     },
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI設定が行われていません。ツールバーの「{{notConfiguredLabel}}」ボタンから設定してください。",

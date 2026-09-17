@@ -14,20 +14,20 @@ accepted
 1. **難易度機能を完全撤去**する。後方互換・マイグレーションは不要（開発段階・未リリースのため）。`DifficultyLevel` 型、`AppMeta.difficulty`、作成ダイアログのセレクタ、AppSwitcher のバッジをすべて削除する。
 2. `orchestrator.ts` に単一テーブル `PIPELINE_TIERS` を新設し、レベル→構成の対応を**1箇所**に集約する。`runWithTriage` は表を引くだけにする。
 
-   | レベル | phases | fixRounds | dummyDataRegen |
-   |---|---|---|---|
-   | L1 | coder | 0 | false |
-   | L2 | coder, verifier | 0 | false |
-   | L3 | planner, coder, verifier | 0 | false |
-   | L4 | planner, coder, verifier, visual_qa | 1 | true |
-   | L5 | planner, coder, verifier, visual_qa | 2 | true |
+   | レベル | 表示名 | phases | fixRounds | dummyDataRegen |
+   |---|---|---|---|---|
+   | L1 | 最小 | coder | 0 | false |
+   | L2 | 基本 | coder, verifier | 0 | false |
+   | L3 | 標準 | planner, coder, verifier | 0 | false |
+   | L4 | しっかり | planner, coder, verifier, visual_qa | 1 | true |
+   | L5 | 最大 | planner, coder, verifier, visual_qa | 2 | true |
 
    修正ループは `visual_qa` の出力から起動するため、`visual_qa` を含まない L1〜L3 の `fixRounds` は 0（L3 の「検証・修正1回」という以前の記述は事実に反していたため訂正）。
    5段階すべてが異なる `(phases, fixRounds, dummyDataRegen)` の組を持つ。
 3. `MAX_FIX_ROUNDS = 2` のハードコードを廃止し、テーブルの `fixRounds` を参照する。dummy-data 再生成は `maxFixRounds >= 2` というマジック値ではなく、テーブルの `dummyDataRegen` フラグ（L4/L5 で true）で制御する。
 4. triage の判定ロジック・プロンプト・レベル定義の意味は変更しない（ルーティングのみ変更）。
-5. チャット入力近傍に「オート + L1〜L5」の手動ティアセレクタを追加する。既定はオート。手動選択時は triage の LLM 判定をスキップして即時反映する（コスト削減）。
-6. 直近の triage 結果（`{ level, source: "auto" | "manual", reason? }`）をストアに保持し、セレクタ近傍に1行で規模を可視化する。
+5. チャット入力近傍に「オート + 最小〜最大」の手動ティアセレクタを追加する。既定はオート。手動選択時は triage の LLM 判定をスキップして即時反映する（コスト削減）。UI には技術用語（L1〜L5、coder/planner/verifier）を出さず、表示名（オート/最小/基本/標準/しっかり/最大）だけを見せる。エージェント構成はホバー/フォーカス時のツールチップにのみ表示する。内部では level 番号（1〜5）を保持し、表示名は i18n で対応付ける。
+6. 直近の triage 結果（`{ level, source: "auto" | "manual", reason? }`）をストアに保持し、セレクタ近傍に1行で「自動判定: 標準」「手動: 標準」のように表示名で可視化する。
 
 ## Alternatives Considered
 
@@ -39,7 +39,7 @@ accepted
 
 ## Consequences
 
-- ユーザーはオートのまま triage に委ねることも、L1〜L5 を明示的に選ぶこともできる。
+- ユーザーはオートのまま triage に委ねることも、表示名（最小〜最大）で L1〜L5 を明示的に選ぶこともできる。
 - 既定のオートでは難易度による上書きが消え、triage の自動判定が正しく機能する。
 - 5段階それぞれが異なるエージェント構成になり、レベルと構成の対応がコード上で自明になる。
 - 手動選択は triage 呼び出しを1回分スキップするため、レイテンシとコストがわずかに減る。

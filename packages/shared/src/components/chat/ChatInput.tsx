@@ -47,7 +47,7 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
 
   return (
     <div className="border-t border-border/50">
-      {/* エージェント構成（オート + L1〜L5）と規模表示 */}
+      {/* エージェント構成（オート/最小〜最大の表示名）と判定結果の表示 */}
       <div className="flex items-center gap-2 px-3 pt-2">
         <AgentTierSelector />
       </div>

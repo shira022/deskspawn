@@ -16,9 +16,12 @@ Each release is documented on **GitHub Releases**. See the full history at
 - 🗑️ Removed the user-selected app difficulty (`simple` / `medium` /
   `complex`). Its default `medium` overrode the triage decision, which
   effectively disabled automatic routing.
-- 🎛️ Added a compact `Auto` + `L1`–`L5` tier selector near the chat input
-  (default `Auto`). Manual selection skips the triage LLM call.
-- 📊 Inline scale display (`Auto (scale: Lx)` / `Manual: Lx`) backed by the
+- 🎛️ Added a compact tier selector near the chat input (default `Auto`).
+  The UI shows only friendly display names (`Auto` / `Minimal` / `Basic` /
+  `Standard` / `Thorough` / `Maximum`); the underlying agent composition is
+  revealed in a hover/focus tooltip. Manual selection skips the triage LLM
+  call.
+- 📊 Inline status display (`Auto: <name>` / `Manual: <name>`) backed by the
   new `lastTriage` store state.
 
 ---

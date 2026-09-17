@@ -122,20 +122,22 @@ Multi-agent pipeline. Triage classifies the request (level 1–5), and
 `PIPELINE_TIERS` in `engine/orchestrator.ts` maps each level to a distinct
 agent composition:
 
-| Level | Phases | Fix rounds | Dummy-data regen | Intent |
-|---|---|---|---|---|
-| L1 | coder | 0 | no | single-shot completion |
-| L2 | coder, verifier | 0 | no | verification only (no planner) |
-| L3 | planner, coder, verifier | 0 | no | plan + implement + verify |
-| L4 | planner, coder, verifier, visual_qa | 1 | yes | adds visual QA |
-| L5 | planner, coder, verifier, visual_qa | 2 | yes | full + max 2 fix loops |
+| Level | Display name | Phases | Fix rounds | Dummy-data regen | Intent |
+|---|---|---|---|---|---|
+| L1 | 最小 / Minimal | coder | 0 | no | single-shot completion |
+| L2 | 基本 / Basic | coder, verifier | 0 | no | verification only (no planner) |
+| L3 | 標準 / Standard | planner, coder, verifier | 0 | no | plan + implement + verify |
+| L4 | しっかり / Thorough | planner, coder, verifier, visual_qa | 1 | yes | adds visual QA |
+| L5 | 最大 / Maximum | planner, coder, verifier, visual_qa | 2 | yes | full + max 2 fix loops |
 
 - **Multi-provider**: OpenAI, Anthropic, Gemini, Bedrock, Azure, Vertex,
   Ollama, any OpenAI-compatible endpoint
 - **Manual tier override**: a compact control near the chat input offers
-  `Auto` + `L1`–`L5` (default `Auto`). Selecting a level skips the triage
-  LLM call and runs that composition directly; the current scale
-  (`Auto (scale: Lx)` / `Manual: Lx`) is shown inline.
+  `Auto` + `Minimal`–`Maximum` (default `Auto`); the UI shows only the
+  friendly display names. Selecting a tier skips the triage LLM call and runs
+  that composition directly. The inline status is `Auto: <name>` /
+  `Manual: <name>`, and the agent composition for the hovered/focused tier is
+  revealed in a tooltip.
 - **Desktop proxy**: custom/self-hosted endpoints go through the sidecar
   (`/v1` proxy with `x-upstream` header) to avoid CORS failures (ADR-003)
 - **Quality loop** (ADR-012, ADR-016): generated apps ship with tests; the coder agent

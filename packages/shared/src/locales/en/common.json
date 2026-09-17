@@ -203,18 +203,34 @@
     "usageTokens": "tokens",
     "totalTokensAndCost": "Total tokens and estimated cost",
     "agentTier": {
-      "label": "Agent setup",
-      "auto": "Auto",
-      "level": "L{{level}}",
-      "autoScale": "Auto (scale: L{{level}})",
-      "autoScaleIdle": "Auto (not yet analyzed)",
-      "manualScale": "Manual: L{{level}}",
-      "descAuto": "Automatic (triage)",
-      "desc1": "Coder only (single shot)",
-      "desc2": "Coder + verifier (no planner)",
-      "desc3": "Planner + coder + verifier",
-      "desc4": "+ Visual QA (1 fix round, dummy-data regen)",
-      "desc5": "Full + 2 fix rounds, dummy-data regen"
+      "groupLabel": "Agent setup",
+      "label": {
+        "auto": "Auto",
+        "t1": "Minimal",
+        "t2": "Basic",
+        "t3": "Standard",
+        "t4": "Thorough",
+        "t5": "Maximum"
+      },
+      "hint": {
+        "auto": "Picks a composition automatically",
+        "t1": "Build in one pass",
+        "t2": "Build then review",
+        "t3": "Plan, build, then review",
+        "t4": "Check the screen and fix",
+        "t5": "Keep fixing until polished"
+      },
+      "agents": {
+        "auto": "Detects complexity and picks the composition automatically",
+        "t1": "L1: coder",
+        "t2": "L2: coder + verifier",
+        "t3": "L3: planner + coder + verifier",
+        "t4": "L4: planner + coder + verifier + visual QA (1 fix round, dummy-data regen)",
+        "t5": "L5: full pipeline (up to 2 fix rounds, dummy-data regen)"
+      },
+      "autoScale": "Auto: {{name}}",
+      "autoScaleIdle": "Auto: not yet analyzed",
+      "manualScale": "Manual: {{name}}"
     },
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI is not configured. Please configure it from the \"{{notConfiguredLabel}}\" button in the toolbar.",
