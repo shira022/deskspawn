@@ -202,6 +202,20 @@
     "generationComplete": "App generation complete{{sparkle}}{{cost}}",
     "usageTokens": "tokens",
     "totalTokensAndCost": "Total tokens and estimated cost",
+    "agentTier": {
+      "label": "Agent setup",
+      "auto": "Auto",
+      "level": "L{{level}}",
+      "autoScale": "Auto (scale: L{{level}})",
+      "autoScaleIdle": "Auto (not yet analyzed)",
+      "manualScale": "Manual: L{{level}}",
+      "descAuto": "Automatic (triage)",
+      "desc1": "Coder only (single shot)",
+      "desc2": "Coder + verifier (no planner)",
+      "desc3": "Planner + coder + verifier",
+      "desc4": "+ Visual QA (1 fix round, dummy-data regen)",
+      "desc5": "Full + 2 fix rounds, dummy-data regen"
+    },
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI is not configured. Please configure it from the \"{{notConfiguredLabel}}\" button in the toolbar.",
       "noAppSelected": "⚠️ No app is selected. Create an app from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
@@ -217,7 +231,10 @@
       "ollamaModelRequired": "{{provider}} requires a model name (e.g. {{example}}). Please enter it in the provider settings.",
       "checkProviderSettings": "Check your {{provider}} settings in the toolbar.",
       "checkModelSettings": "Check that the model \"{{model}}\" exists and your API key is valid.",
-      "checkOllamaConnection": "Make sure Ollama is running ({{endpoint}}) and the model \"{{model}}\" is available."
+      "checkOllamaConnection": "Make sure Ollama is running ({{endpoint}}) and the model \"{{model}}\" is available.",
+      "apiKeyInvalid": "The API key is invalid or not configured.",
+      "networkError": "A network error occurred. Please check your connection.",
+      "timeout": "The request timed out. Please try again."
     }
   },
   "step": {

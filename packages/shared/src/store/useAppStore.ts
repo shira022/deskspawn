@@ -34,6 +34,8 @@ import type {
   CheckpointInfo,
   AppSettings,
   Toast,
+  AgentTier,
+  TriageState,
 } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
 import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, saveCurrentAppId, loadCurrentAppId, saveSettingsDesktop, loadSettingsDesktop, listApps, type ApiKeyStorageMethod } from "../lib/storage";
@@ -115,6 +117,14 @@ interface Store {
   setAgentStepCount: (count: number) => void;
   agentMaxSteps: number;
   setAgentMaxSteps: (count: number) => void;
+
+  // Agent tier (manual override of triage-based composition)
+  /** 手動ティア選択。既定は "auto"（triage の自動判定に委ねる） */
+  agentTier: AgentTier;
+  setAgentTier: (tier: AgentTier) => void;
+  /** 直近の triage 判定結果（規模の可視化用） */
+  lastTriage: TriageState | null;
+  setLastTriage: (triage: TriageState | null) => void;
 
   // File Tree
   fileTree: FileNode[];
@@ -409,6 +419,12 @@ export const useAppStore = create<Store>((set, get) => ({
   setAgentStepCount: (agentStepCount) => set({ agentStepCount }),
   agentMaxSteps: 20,
   setAgentMaxSteps: (agentMaxSteps) => set({ agentMaxSteps }),
+
+  // ── Agent tier ─────────────────────────────────────────────────────
+  agentTier: "auto",
+  setAgentTier: (agentTier) => set({ agentTier }),
+  lastTriage: null,
+  setLastTriage: (lastTriage) => set({ lastTriage }),
 
   // ── File Tree ──────────────────────────────────────────────────────
   fileTree: [],

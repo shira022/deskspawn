@@ -25,6 +25,10 @@ const mockStore = {
   agentStatus: "idle" as string,
   agentStepCount: 0,
   agentMaxSteps: 20,
+  agentTier: "auto" as string,
+  setAgentTier: vi.fn(),
+  lastTriage: null as { level: number; source: string; reason?: string } | null,
+  setLastTriage: vi.fn(),
 };
 
 vi.mock("../../store/useAppStore", () => ({

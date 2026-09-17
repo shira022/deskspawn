@@ -202,6 +202,20 @@
     "generationComplete": "アプリ生成が完了しました{{sparkle}}{{cost}}",
     "usageTokens": "トークン",
     "totalTokensAndCost": "合計トークン数と推定費用",
+    "agentTier": {
+      "label": "エージェント構成",
+      "auto": "オート",
+      "level": "L{{level}}",
+      "autoScale": "オート（規模: L{{level}}）",
+      "autoScaleIdle": "オート（未判定）",
+      "manualScale": "手動: L{{level}}",
+      "descAuto": "自動判定（triage）",
+      "desc1": "coder のみ（単発で完了）",
+      "desc2": "coder + verifier（計画なし）",
+      "desc3": "planner + coder + verifier",
+      "desc4": "+ visual QA（修正1回・dummy 再生成）",
+      "desc5": "フル＋修正2回・dummy 再生成"
+    },
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI設定が行われていません。ツールバーの「{{notConfiguredLabel}}」ボタンから設定してください。",
       "noAppSelected": "⚠️ アプリが選択されていません。ツールバーの「{{newAppLabel}}」からアプリを作成するか、アプリ履歴から選択してください。",
@@ -217,7 +231,10 @@
       "ollamaModelRequired": "「{{provider}}」にはモデル名の指定が必要です（例: {{example}}）。プロバイダー設定でモデル名を入力してください。",
       "checkProviderSettings": "「{{provider}}」の設定を確認してください。",
       "checkModelSettings": "モデル「{{model}}」が存在し、APIキーが有効か確認してください。",
-      "checkOllamaConnection": "Ollamaが起動しているか（{{endpoint}}）、モデル「{{model}}」が利用可能か確認してください。"
+      "checkOllamaConnection": "Ollamaが起動しているか（{{endpoint}}）、モデル「{{model}}」が利用可能か確認してください。",
+      "apiKeyInvalid": "APIキーが無効か設定されていません。",
+      "networkError": "ネットワークエラーが発生しました。接続を確認してください。",
+      "timeout": "応答がタイムアウトしました。もう一度お試しください。"
     }
   },
   "step": {

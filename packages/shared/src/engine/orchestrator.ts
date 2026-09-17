@@ -17,7 +17,7 @@ import i18n from "../lib/i18n";
 import { verifierPrompt } from "./system-prompts/verifier";
 import { visualQAPrompt } from "./system-prompts/visual-qa";
 import type { Phase, Usage } from "@deskspawn/ai-core";
-import type { DifficultyLevel } from "../types";
+import type { PipelineTierLevel } from "../types";
 
 // ── Timeouts ──────────────────────────────────────────────────────────────────
 
@@ -58,6 +58,45 @@ const PHASE_TOOLS: Record<Phase, string[]> = {
   verifier:  ["read_file", "get_errors", "apply_artifact", "take_screenshot"],
   visual_qa: ["take_screenshot", "read_file"],
 };
+
+// ── Agent Tier Table ──────────────────────────────────────────────────────────
+//
+// triage レベル（1–5）→ エージェント構成の唯一の対応表。
+// runWithTriage はこの表を引くだけにし、構成のロジックをここへ集約する。
+//
+//   L1: coder のみ（単体で完了）
+//   L2: coder + verifier（検証だけ追加・planner なし）
+//   L3: planner + coder + verifier（計画＋実装＋検証・visual_qa なし）
+//   L4: planner + coder + verifier + visual_qa（視覚QA追加・修正1回＋dummy-data 再生成）
+//   L5: planner + coder + verifier + visual_qa（フル＋修正ループ最大2＋dummy-data 再生成）
+//
+// 修正ループは visual_qa の出力から起動するため、visual_qa を含まない
+// L1〜L3 の fixRounds は 0。fixRounds が有効なのは L4=1, L5=2 のみ。
+
+export interface PipelineTierConfig {
+  /** 実行するフェーズの並び（修正ラウンドで追加されうる） */
+  phases: Phase[];
+  /** visual_qa 由来の修正ループ上限。L1〜L3 は visual_qa を含まないため 0 */
+  fixRounds: number;
+  /** coder 出力に dummy-data を検出した際の再生成を有効にするか（品質ゲート） */
+  dummyDataRegen: boolean;
+}
+
+export const PIPELINE_TIERS: Record<PipelineTierLevel, PipelineTierConfig> = {
+  1: { phases: ["coder"], fixRounds: 0, dummyDataRegen: false },
+  2: { phases: ["coder", "verifier"], fixRounds: 0, dummyDataRegen: false },
+  3: { phases: ["planner", "coder", "verifier"], fixRounds: 0, dummyDataRegen: false },
+  4: { phases: ["planner", "coder", "verifier", "visual_qa"], fixRounds: 1, dummyDataRegen: true },
+  5: { phases: ["planner", "coder", "verifier", "visual_qa"], fixRounds: 2, dummyDataRegen: true },
+};
+
+/** triage が返した任意の数値を 1–5 のティアレベルへ正規化する。 */
+function normalizeTierLevel(level: number): PipelineTierLevel {
+  if (!Number.isFinite(level)) return 2;
+  if (level <= 1) return 1;
+  if (level >= 5) return 5;
+  return Math.round(level) as PipelineTierLevel;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -350,81 +389,34 @@ export async function runWithTriage(
   hooks?: PipelineHooks,
   isDesktop?: boolean,
   maxSteps?: number,
-  difficulty?: DifficultyLevel,
+  manualTier?: PipelineTierLevel | null,
 ): Promise<PipelineResult> {
   // 全体タイムアウト（10分）を UI の abort signal と合成してトリアージ以降の全生成に適用する
   const triageSignal = withPipelineTimeout(signal);
 
-  const triageResult = await triageRequest(requestMessages, model, triageSignal);
-  hooks?.onTriageResult?.(triageResult);
+  let level: PipelineTierLevel;
 
-  // ── Difficulty override ────────────────────────────────────────────────
-  // ユーザーが難易度を選択している場合は triage 結果にかかわらず
-  // 選択されたパイプラインを使用する。
-  if (difficulty === "simple") {
-    // シンプル: coder のみ（自動調整 — triage level に委ねる）
-    // triage が低いなら coder のみ、高いなら現在のルーティングにフォールバック
-    if (triageResult.level <= 2) {
-      hooks?.onPhaseStart?.("coder");
-      const coderResult = await runPhase(
-        model, "coder", requestMessages, buildTools, triageSignal, hooks, undefined, _simpleMode, language, isDesktop, maxSteps,
-      );
-      return {
-        text: coderResult.text,
-        usage: coderResult.usage,
-        phases: ["coder"],
-      };
-    }
-    // triage が高い場合は現在のルーティングにフォールバック
+  if (manualTier != null && PIPELINE_TIERS[manualTier]) {
+    // 手動選択時は triage の LLM 判定をスキップ（コスト削減＋即時反映）。
+    // 規模表示のために手動レベルをそのまま通知する。
+    level = manualTier;
+    hooks?.onTriageResult?.({ level, reason: "" });
+  } else {
+    const triageResult = await triageRequest(requestMessages, model, triageSignal);
+    hooks?.onTriageResult?.(triageResult);
+    level = normalizeTierLevel(triageResult.level);
   }
 
-  if (difficulty === "medium") {
-    // 中程度: planner + coder（verifier / visual_qa を省略 → 品質チェックループを軽減）
-    return runPipelineForLevel(
-      model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps,
-      ["planner", "coder"],
-      triageResult.level,
-    );
-  }
-
-  if (difficulty === "complex") {
-    // 複雑: 全フェーズ + 品質チェックループ（既存の runPipeline にフォールバック）
-    return runPipeline(model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps, triageResult.level);
-  }
-
-  // ── Triage-based routing (difficulty not set) ──────────────────────────
-  // Map complexity level to pipeline configuration
-  // Level 1 (trivial) → coder only, no plan needed
-  // Levels 2-3 (minor/standard) → planner + coder + verifier
-  // Levels 4-5 (complex/major) → full pipeline with visual QA + fix rounds
-  if (triageResult.level <= 1) {
-    hooks?.onPhaseStart?.("coder");
-    const coderResult = await runPhase(
-      model, "coder", requestMessages, buildTools, triageSignal, hooks, undefined, _simpleMode, language, isDesktop, maxSteps,
-    );
-    return {
-      text: coderResult.text,
-      usage: coderResult.usage,
-      phases: ["coder"],
-    };
-  }
-
-  if (triageResult.level === 2 || triageResult.level === 3) {
-    // Minor / Standard: planner + coder + verifier (skip visual QA for minor)
-    const level2Phases: Phase[] = [
-      "planner",
-      "coder",
-      "verifier",
-    ];
-    if (triageResult.level === 3) level2Phases.push("visual_qa");
-    return runPipelineForLevel(model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps, level2Phases, triageResult.level);
-  }
-
-  // Level 4 / Major: full pipeline with all phases including fix rounds
-  return runPipeline(model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps, triageResult.level);
+  // ── ティア表引き（構成ロジックは PIPELINE_TIERS に集約）────────────────
+  const tier = PIPELINE_TIERS[level];
+  return runPipelineForLevel(
+    model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps,
+    tier.phases,
+    level,
+    tier.fixRounds,
+    tier.dummyDataRegen,
+  );
 }
-
-const MAX_FIX_ROUNDS = 2;
 
 /**
  * Visual QA の結果テキストを解析し、修正が必要な問題が報告されたかを判定する。
@@ -467,7 +459,7 @@ function visualQaReportsIssues(text: string): boolean {
  * - Static HTML with hardcoded values (no dynamic rendering)
  * - Missing interactive functionality (no event handlers, forms, state management)
  */
-function coderOutputHasDummyData(coderText: string, triageLevel: number): boolean {
+function coderOutputHasDummyData(coderText: string, triageLevel?: number): boolean {
   // ── Static data indicators ────────────────────────────────────────────────
   const dummyDataPatterns = [
     /const\s+(data|items|users?|products?|messages?|tasks?|todos?|posts?)\s*=\s*\[/,
@@ -498,16 +490,17 @@ function coderOutputHasDummyData(coderText: string, triageLevel: number): boolea
   const hasDynamicFeatures = dynamicPatterns.filter(p => p.test(coderText)).length;
 
   // ── Triage-level thresholds ───────────────────────────────────────────────
+  const level = triageLevel ?? 3;
   // Level 1 (trivial): skip check entirely — small apps may legitimately be static
-  if (triageLevel <= 1) return false;
+  if (level <= 1) return false;
 
   // Level 2 (minor): only flag obvious dummy patterns
-  if (triageLevel <= 2) {
+  if (level <= 2) {
     return hasDummyPatterns && hasDynamicFeatures === 0;
   }
 
   // Level 3 (standard): flag if dummy patterns AND no dynamic features
-  if (triageLevel <= 3) {
+  if (level <= 3) {
     return hasDummyPatterns && hasDynamicFeatures < 2;
   }
 
@@ -572,6 +565,8 @@ export async function runPipelineForLevel(
   maxSteps?: number,
   initialPhases?: Phase[],
   triageLevel?: number,
+  maxFixRounds = 0,
+  dummyDataRegen = false,
 ): Promise<PipelineResult> {
   // Use the provided phase order or fall back to default
   const phases = initialPhases ?? ["planner", "coder", "verifier", "visual_qa"];
@@ -589,6 +584,8 @@ export async function runPipelineForLevel(
   let dummyDataFeedback: string | null = null;
   let dummyDataFixRound = 0;
   const MAX_DUMMY_FIX_ROUNDS = 1;
+  // dummy-data 再生成はティア表のフラグで制御する（L4/L5 で有効）
+  const dummyDataDetectionEnabled = dummyDataRegen;
   const executedPhases: Phase[] = [];
 
   while (phaseQueue.length > 0) {
@@ -606,7 +603,7 @@ export async function runPipelineForLevel(
       if (visualQaFeedback && (phase === "coder" || phase === "verifier")) {
         messages.push({
           role: "user" as const,
-          content: `[Fix Round ${fixRound}/${MAX_FIX_ROUNDS}]\nThe previous verification found these issues that need to be fixed:\n\n${visualQaFeedback}\n\nPlease fix the issues described above.`,
+          content: `[Fix Round ${fixRound}/${maxFixRounds}]\nThe previous verification found these issues that need to be fixed:\n\n${visualQaFeedback}\n\nPlease fix the issues described above.`,
         });
       }
       // Dummy data fix: add re-generation instruction
@@ -649,8 +646,8 @@ export async function runPipelineForLevel(
     totalUsage.inputTokens += result.usage.inputTokens;
     totalUsage.outputTokens += result.usage.outputTokens;
 
-    // ── Dummy Data Detection (after coder phase) ────────────────────────────
-    if (phase === "coder" && result.text && triageLevel && !dummyDataFeedback) {
+    // ── Dummy Data Detection (after coder phase, full-tier only) ────────────
+    if (dummyDataDetectionEnabled && phase === "coder" && result.text && !dummyDataFeedback) {
       if (coderOutputHasDummyData(result.text, triageLevel)) {
         if (dummyDataFixRound < MAX_DUMMY_FIX_ROUNDS) {
           dummyDataFixRound++;
@@ -667,9 +664,9 @@ export async function runPipelineForLevel(
     if (phase === "visual_qa" && result.text) {
       if (visualQaReportsIssues(result.text)) {
         visualQaFeedback = result.text;
-        if (fixRound < MAX_FIX_ROUNDS) {
+        if (fixRound < maxFixRounds) {
           fixRound++;
-          console.log(`[pipeline] Visual QA reports issues — starting fix round ${fixRound}/${MAX_FIX_ROUNDS}`);
+          console.log(`[pipeline] Visual QA reports issues — starting fix round ${fixRound}/${maxFixRounds}`);
           phaseQueue.unshift("visual_qa");
           phaseQueue.unshift("verifier");
           phaseQueue.unshift("coder");
@@ -695,9 +692,9 @@ export async function runPipelineForLevel(
 }
 
 /**
- * Convenience wrapper for the standard 4-phase pipeline.
- * Equivalent to `runPipelineForLevel(..., ["planner","coder","verifier","visual_qa"])`.
- * Kept for backward compatibility.
+ * Convenience wrapper for the standard 4-phase pipeline (full fix loop).
+ * Equivalent to L5 (`runPipelineForLevel(..., ["planner","coder","verifier","visual_qa"], triageLevel, 2, true)`).
+ * Kept for backward compatibility. `runWithTriage` uses `PIPELINE_TIERS` directly.
  */
 export function runPipeline(
   model: LanguageModel,
@@ -715,5 +712,7 @@ export function runPipeline(
     model, requestMessages, buildTools, signal, hooks, _simpleMode, language, isDesktop, maxSteps,
     ["planner", "coder", "verifier", "visual_qa"],
     triageLevel,
+    PIPELINE_TIERS[5].fixRounds,
+    PIPELINE_TIERS[5].dummyDataRegen,
   );
 }
