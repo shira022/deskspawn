@@ -14,11 +14,14 @@
 
 // ── Types (mirror of storage.ts) ──────────────────────────────────────────────
 
+import type { DifficultyLevel } from "../types";
+
 export interface StoredApp {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
+  difficulty?: DifficultyLevel;
 }
 
 // ── Tauri IPC helper ──────────────────────────────────────────────────────────
@@ -36,12 +39,14 @@ function mapAppMeta(meta: {
   name: string;
   created_at: string;
   updated_at: string;
+  difficulty?: DifficultyLevel;
 }): StoredApp {
   return {
     id: meta.id,
     name: meta.name,
     createdAt: meta.created_at,
     updatedAt: meta.updated_at,
+    difficulty: meta.difficulty,
   };
 }
 
@@ -51,6 +56,7 @@ export async function listAppsDesktop(): Promise<StoredApp[]> {
     name: string;
     created_at: string;
     updated_at: string;
+    difficulty?: DifficultyLevel;
   }>>("list_apps");
   return metas.map(mapAppMeta);
 }
@@ -76,7 +82,8 @@ export async function saveAppDesktop(app: StoredApp): Promise<string> {
     name: string;
     created_at: string;
     updated_at: string;
-  }>("create_app", { name: app.name });
+    difficulty?: DifficultyLevel;
+  }>("create_app", { name: app.name, difficulty: app.difficulty });
   return created.id;
 }
 

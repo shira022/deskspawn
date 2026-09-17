@@ -18,17 +18,41 @@ pub struct AppMeta {
     pub name: String,
     pub created_at: String,
     pub updated_at: String,
+    /// 難易度（simple / medium / complex）。旧バージョンが書いた apps.json には
+    /// このフィールドが無いため `#[serde(default)]` で後方互換を保つ。
+    #[serde(default)]
+    pub difficulty: Option<String>,
 }
 
 impl AppMeta {
-    pub fn new(id: String, name: String) -> Self {
+    pub fn new(id: String, name: String, difficulty: Option<String>) -> Self {
         let now = now_iso8601();
         Self {
             id,
             name,
             created_at: now.clone(),
             updated_at: now,
+            difficulty,
         }
+    }
+}
+
+/// 難易度の正規化 + 検証。
+/// None / 空 / 空白のみは "medium" とし、それ以外は
+/// {simple, medium, complex} の完全一致のみ許可する。
+fn normalize_difficulty(difficulty: Option<String>) -> Result<String, String> {
+    let trimmed = difficulty
+        .map(|d| d.trim().to_string())
+        .filter(|d| !d.is_empty());
+    match trimmed.as_deref() {
+        None => Ok("medium".to_string()),
+        Some("simple") => Ok("simple".to_string()),
+        Some("medium") => Ok("medium".to_string()),
+        Some("complex") => Ok("complex".to_string()),
+        Some(other) => Err(format!(
+            "Invalid difficulty: {}. Must be one of simple, medium, complex",
+            other
+        )),
     }
 }
 
@@ -101,13 +125,15 @@ pub fn list_apps() -> Result<Vec<AppMeta>, String> {
 
 /// Create a new app: registers metadata and creates the on-disk directory.
 #[tauri::command]
-pub fn create_app(name: String) -> Result<AppMeta, String> {
+pub fn create_app(name: String, difficulty: Option<String>) -> Result<AppMeta, String> {
     let trimmed = name.trim().to_string();
     if trimmed.is_empty() {
         return Err("App name is required".to_string());
     }
+    // 不正な難易度はディレクトリ作成前に弾く（永続化させない）。
+    let difficulty = normalize_difficulty(difficulty)?;
     let id = uuid_v4();
-    let meta = AppMeta::new(id.clone(), trimmed);
+    let meta = AppMeta::new(id.clone(), trimmed, Some(difficulty));
 
     // Create on-disk directory first.
     ensure_app_dir(&id)?;
@@ -617,7 +643,7 @@ pub fn import_app_zip(app: tauri::AppHandle) -> Result<AppMeta, String> {
         fs::write(&target, content).map_err(|e| format!("Failed to write {}: {}", path, e))?;
     }
 
-    let meta = AppMeta::new(id, name);
+    let meta = AppMeta::new(id, name, None);
     let mut apps = read_registry()?;
     apps.push(meta.clone());
     write_registry(&apps)?;
@@ -671,7 +697,7 @@ mod tests {
     #[test]
     fn create_and_list_app() {
         with_temp_root(|| {
-            let meta = create_app("My App".to_string()).unwrap();
+            let meta = create_app("My App".to_string(), None).unwrap();
             assert!(!meta.id.is_empty());
             assert_eq!(meta.name, "My App");
 
@@ -684,17 +710,68 @@ mod tests {
     #[test]
     fn create_app_trims_whitespace_and_rejects_empty() {
         with_temp_root(|| {
-            let meta = create_app("   Spaced Name   ".to_string()).unwrap();
+            let meta = create_app("   Spaced Name   ".to_string(), None).unwrap();
             assert_eq!(meta.name, "Spaced Name");
 
-            assert!(create_app("   ".to_string()).is_err());
+            assert!(create_app("   ".to_string(), None).is_err());
+        });
+    }
+
+    #[test]
+    fn create_app_persists_and_lists_difficulty() {
+        with_temp_root(|| {
+            let meta = create_app("Complex App".to_string(), Some("complex".to_string())).unwrap();
+            assert_eq!(meta.difficulty.as_deref(), Some("complex"));
+
+            let apps = list_apps().unwrap();
+            assert_eq!(apps.len(), 1);
+            assert_eq!(apps[0].difficulty.as_deref(), Some("complex"));
+        });
+    }
+
+    #[test]
+    fn legacy_registry_without_difficulty_still_loads() {
+        with_temp_root(|| {
+            let path = registry_path().unwrap();
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            // 旧バージョン（difficulty フィールド無し）が書いた apps.json
+            fs::write(
+                &path,
+                r#"[{"id":"app-0123456789abcdef0123456789abcdef","name":"Legacy","created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z"}]"#,
+            )
+            .unwrap();
+
+            let apps = list_apps().unwrap();
+            assert_eq!(apps.len(), 1);
+            assert_eq!(apps[0].name, "Legacy");
+            assert_eq!(apps[0].difficulty, None);
+        });
+    }
+
+    #[test]
+    fn create_app_rejects_invalid_difficulty() {
+        with_temp_root(|| {
+            assert!(create_app("Bad".to_string(), Some("EXTREME".to_string())).is_err());
+            // 不正値は永続化されない
+            assert_eq!(list_apps().unwrap().len(), 0);
+        });
+    }
+
+    #[test]
+    fn create_app_defaults_difficulty_to_medium() {
+        with_temp_root(|| {
+            let meta = create_app("Default".to_string(), None).unwrap();
+            assert_eq!(meta.difficulty.as_deref(), Some("medium"));
+
+            let blank = create_app("Blank".to_string(), Some("   ".to_string())).unwrap();
+            assert_eq!(blank.difficulty.as_deref(), Some("medium"));
         });
     }
 
     #[test]
     fn write_and_read_app_file() {
         with_temp_root(|| {
-            let meta = create_app("Files".to_string()).unwrap();
+            let meta = create_app("Files".to_string(), None).unwrap();
             write_app_file(meta.id.clone(), "src/main.tsx".to_string(), "export const x = 1;".to_string()).unwrap();
 
             let content = read_app_file(meta.id.clone(), "src/main.tsx".to_string()).unwrap();
@@ -708,7 +785,7 @@ mod tests {
     #[test]
     fn app_file_path_traversal_is_blocked() {
         with_temp_root(|| {
-            let meta = create_app("Secure".to_string()).unwrap();
+            let meta = create_app("Secure".to_string(), None).unwrap();
             assert!(write_app_file(meta.id.clone(), "../escape.txt".to_string(), "x".to_string()).is_err());
             assert!(read_app_file(meta.id.clone(), "../../etc/passwd".to_string()).is_err());
         });
@@ -717,7 +794,7 @@ mod tests {
     #[test]
     fn delete_app_removes_dir_and_registry() {
         with_temp_root(|| {
-            let meta = create_app("DeleteMe".to_string()).unwrap();
+            let meta = create_app("DeleteMe".to_string(), None).unwrap();
             let dir = workspace::app_dir(&meta.id).unwrap();
             assert!(dir.exists());
 
@@ -733,7 +810,7 @@ mod tests {
     #[test]
     fn delete_app_clears_current_app_reference() {
         with_temp_root(|| {
-            let meta = create_app("CurrentRef".to_string()).unwrap();
+            let meta = create_app("CurrentRef".to_string(), None).unwrap();
             // このアプリを current_app として保存
             crate::commands::ai_config::save_current_app(Some(meta.id.clone())).unwrap();
             assert_eq!(
@@ -750,8 +827,8 @@ mod tests {
     #[test]
     fn delete_app_keeps_current_app_when_other_app_deleted() {
         with_temp_root(|| {
-            let keep = create_app("Keep".to_string()).unwrap();
-            let del = create_app("Delete".to_string()).unwrap();
+            let keep = create_app("Keep".to_string(), None).unwrap();
+            let del = create_app("Delete".to_string(), None).unwrap();
             crate::commands::ai_config::save_current_app(Some(keep.id.clone())).unwrap();
 
             // 別アプリを削除しても current_app は維持される
@@ -766,7 +843,7 @@ mod tests {
     #[test]
     fn list_app_files_excludes_node_modules() {
         with_temp_root(|| {
-            let meta = create_app("ListFiles".to_string()).unwrap();
+            let meta = create_app("ListFiles".to_string(), None).unwrap();
             write_app_files(
                 meta.id.clone(),
                 vec![
@@ -787,7 +864,7 @@ mod tests {
     #[test]
     fn write_app_files_bulk() {
         with_temp_root(|| {
-            let meta = create_app("Bulk".to_string()).unwrap();
+            let meta = create_app("Bulk".to_string(), None).unwrap();
             let n = write_app_files(
                 meta.id.clone(),
                 vec![
@@ -805,7 +882,7 @@ mod tests {
     #[test]
     fn app_id_traversal_and_invalid_format_is_rejected() {
         with_temp_root(|| {
-            let meta = create_app("Secure2".to_string()).unwrap();
+            let meta = create_app("Secure2".to_string(), None).unwrap();
 
             // app_id に ../ を含む攻撃 → 形式検証で構造的に拒否（C1）
             assert!(read_app_file("..".to_string(), "config/config.json".to_string()).is_err());
@@ -828,7 +905,7 @@ mod tests {
     #[test]
     fn forbidden_ts_pattern_blocks_ai_generated_code() {
         with_temp_root(|| {
-            let meta = create_app("TsGuard".to_string()).unwrap();
+            let meta = create_app("TsGuard".to_string(), None).unwrap();
             // M4: 危険パターンは書き込み拒否
             assert!(write_app_file(
                 meta.id.clone(),
@@ -935,7 +1012,7 @@ mod chat_save_tests {
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
         let rt = tokio::runtime::Runtime::new().unwrap();
 
-        let meta = create_app("Chat".to_string()).unwrap();
+        let meta = create_app("Chat".to_string(), None).unwrap();
         let msgs = vec![
             ChatMessageInput {
                 client_id: "msg-a".into(),

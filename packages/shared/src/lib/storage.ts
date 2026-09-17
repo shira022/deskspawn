@@ -14,7 +14,7 @@
  * Only outbound communication is to AI provider APIs and CDNs.
  */
 
-import type { AppSettings } from "../types";
+import type { AppSettings, DifficultyLevel } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
 import { SETTINGS_KEY } from "./constants";
 import { isDesktopEnv } from "./platform";
@@ -31,6 +31,7 @@ export interface StoredApp {
   name: string;
   createdAt: string;
   updatedAt: string;
+  difficulty?: DifficultyLevel;
 }
 
 /**

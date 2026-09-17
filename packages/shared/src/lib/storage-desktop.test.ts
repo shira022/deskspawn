@@ -38,6 +38,7 @@ describe("storage-desktop", () => {
         name: "My App",
         created_at: "2026-01-01T00:00:00Z",
         updated_at: "2026-01-02T00:00:00Z",
+        difficulty: "complex",
       },
     ]);
     const apps = await listAppsDesktop();
@@ -47,6 +48,7 @@ describe("storage-desktop", () => {
         name: "My App",
         createdAt: "2026-01-01T00:00:00Z",
         updatedAt: "2026-01-02T00:00:00Z",
+        difficulty: "complex",
       },
     ]);
     expect(invokeMock).toHaveBeenCalledWith("list_apps", undefined);
@@ -76,11 +78,20 @@ describe("storage-desktop", () => {
       updated_at: "t",
     });
 
-    const id = await saveAppDesktop({ id: "caller-id", name: "New App", createdAt: "t", updatedAt: "t" });
+    const id = await saveAppDesktop({
+      id: "caller-id",
+      name: "New App",
+      createdAt: "t",
+      updatedAt: "t",
+      difficulty: "complex",
+    });
 
     expect(id).toBe("app-backend-1");
     expect(invokeMock).toHaveBeenNthCalledWith(1, "list_apps", undefined);
-    expect(invokeMock).toHaveBeenNthCalledWith(2, "create_app", { name: "New App" });
+    expect(invokeMock).toHaveBeenNthCalledWith(2, "create_app", {
+      name: "New App",
+      difficulty: "complex",
+    });
   });
 
   it("saveAppDesktop returns existing app id without creating", async () => {
