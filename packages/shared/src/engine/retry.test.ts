@@ -239,4 +239,41 @@ describe("withRateLimitRetry", () => {
       "rate limit",
     );
   });
+
+  it("rejects promptly with an AbortError when the signal aborts during the backoff wait", async () => {
+    const fn = vi.fn().mockRejectedValueOnce(new Error("rate limit"));
+    const controller = new AbortController();
+
+    const promise = withRateLimitRetry(
+      fn,
+      undefined,
+      { maxRetries: 3, baseDelayMs: 10_000, maxDelayMs: 10_000 },
+      controller.signal,
+    );
+
+    // Let fn() reject and reach the backoff sleep before aborting.
+    await Promise.resolve();
+    controller.abort();
+
+    await expect(promise).rejects.toMatchObject({ name: "AbortError" });
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves after the retry delay when the signal never aborts", async () => {
+    const fn = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("rate limit"))
+      .mockResolvedValueOnce("success");
+    const controller = new AbortController();
+
+    const result = await withRateLimitRetry(
+      fn,
+      undefined,
+      { maxRetries: 3, baseDelayMs: 5, maxDelayMs: 50 },
+      controller.signal,
+    );
+
+    expect(result).toBe("success");
+    expect(fn).toHaveBeenCalledTimes(2);
+  });
 });
