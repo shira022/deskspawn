@@ -28,16 +28,49 @@ for lang in ("ja", "en"):
         locales[lang] = set(flatten(json.load(f)))
 
 # --- 2. Enumerate t("...") literal keys from source ---
+# NOTE: the closing paren is intentionally NOT part of the pattern so that
+# calls passing interpolation arguments -- t("key", {...}) and
+# i18n.t("key", {...}) -- are collected too. Those were previously missed.
 t_re = re.compile(
-    r"\bt\s*\(\s*(['\"])([^'\"]+?)\1\s*\)"
+    r"\bt\s*\(\s*(['\"])([^'\"]+?)\1"
 )
 t_import_re = re.compile(r"\bt\s*\(")  # any t( call for counting
 
 # keys referenced with template interpolation, e.g. t(`chat.${x}`) or t(`step.${...}`)
-t_template_re = re.compile(r"\bt\s*\(\s*`([^`]*\$\{[^`]*\}[^`]*)`\s*\)")
+t_template_re = re.compile(r"\bt\s*\(\s*`([^`]*\$\{[^`]*\}[^`]*)`")
+
+# Whitelist of known dynamic template patterns -> candidate literal keys.
+# Every candidate is validated against the locale files. Any template whose
+# interpolation shape is not listed here is reported and makes the check fail,
+# so a new dynamic key can never be silently skipped.
+TEMPLATE_KEY_PATTERNS = {
+    "app.difficulty${Cap}": [
+        "app.difficultySimple",
+        "app.difficultyMedium",
+        "app.difficultyComplex",
+    ],
+    "app.difficulty${Cap}Desc": [
+        "app.difficultySimpleDesc",
+        "app.difficultyMediumDesc",
+        "app.difficultyComplexDesc",
+    ],
+    "phase.${Cap}": [
+        "phase.planner",
+        "phase.coder",
+        "phase.verifier",
+        "phase.visual_qa",
+    ],
+}
+
+
+def normalize_template(template):
+    """Collapse every ${...} interpolation to a canonical ${Cap} token."""
+    return re.sub(r"\$\{[^}]*\}", "${Cap}", template)
+
 
 used = {}          # key -> set(files)
-template_uses = [] # (pattern, file)
+template_uses = [] # (pattern, file, candidates)
+unknown_templates = []  # (pattern, file)
 dynamic_uses = []  # non-literal non-template t() calls (file, snippet)
 
 source_dirs = [
@@ -56,13 +89,20 @@ for d in source_dirs:
 for f in files:
     text = f.read_text(encoding="utf-8")
     rel = f.relative_to(ROOT)
-    # literal keys
+    # literal keys (with or without interpolation arguments)
     for m in t_re.finditer(text):
         key = m.group(2)
         used.setdefault(key, set()).add(str(rel))
-    # template keys (record pattern)
+    # template keys (resolve via whitelist)
     for m in t_template_re.finditer(text):
-        template_uses.append((m.group(1), str(rel)))
+        pattern = normalize_template(m.group(1))
+        candidates = TEMPLATE_KEY_PATTERNS.get(pattern)
+        if candidates is None:
+            unknown_templates.append((pattern, str(rel)))
+        else:
+            template_uses.append((pattern, str(rel), candidates))
+            for key in candidates:
+                used.setdefault(key, set()).add(str(rel))
     # dynamic: find t( calls that are not literal and not template
     for m in t_import_re.finditer(text):
         start = m.start()
@@ -92,8 +132,13 @@ for lang, missing in (("ja", missing_ja), ("en", missing_en)):
 
 print()
 if template_uses:
-    print("== template-literal t() patterns (not statically verifyable) ==")
-    for pat, f in template_uses:
+    print("== dynamic template keys resolved via whitelist ==")
+    for pat, f, candidates in template_uses:
+        print(f"  {f}: t(`{pat}`) -> {', '.join(candidates)}")
+if unknown_templates:
+    status = 1
+    print(f"--- UNKNOWN dynamic t() template pattern(s) ({len(unknown_templates)}) ---")
+    for pat, f in unknown_templates:
         print(f"  {f}: t(`{pat}`)")
 if dynamic_uses:
     print("== dynamic t() calls (not statically verifyable) ==")

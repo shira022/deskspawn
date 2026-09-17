@@ -85,7 +85,7 @@ function getErrorHint(provider: string | undefined, cfg: { model?: string; custo
 
   // Rate limit (429)
   if (errMsg.includes('429') || errMsg.includes('rate limit') || errMsg.includes('rate_limit')) {
-    return i18n.t('chat.error.rateLimit', {
+    return i18n.t('chat.rateLimit', {
       waitMs: String((error as any)?.retryAfter || ''),
       retryCount: String((error as any)?.retryCount || ''),
       maxRetries: String((error as any)?.maxRetries || ''),

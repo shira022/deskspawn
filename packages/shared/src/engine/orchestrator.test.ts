@@ -193,6 +193,100 @@ describe("runWithTriage", () => {
   });
 });
 
+describe("runWithTriage difficulty routing", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  // Queue one generateText response (triage or phase). Calls go through the
+  // real runWithTriage, so the assertions validate the orchestrator's own
+  // difficulty-to-pipeline mapping rather than a duplicated copy of it.
+  function mockResponse(text: string) {
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text,
+      usage: { inputTokens: 1, outputTokens: 1 },
+    } as any);
+  }
+
+  it('difficulty "simple" runs the coder phase only', async () => {
+    mockResponse(JSON.stringify({ level: 1, reason: "trivial" }));
+    mockResponse("coder output using useState and fetch()");
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("tweak"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "simple",
+    );
+
+    expect(result.phases).toEqual(["coder"]);
+  });
+
+  it('difficulty "medium" runs planner + coder', async () => {
+    mockResponse(JSON.stringify({ level: 3, reason: "standard" }));
+    mockResponse("planned");
+    mockResponse("coded using useState and fetch()");
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("feature"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "medium",
+    );
+
+    expect(result.phases).toEqual(["planner", "coder"]);
+  });
+
+  it('difficulty "complex" runs the full pipeline', async () => {
+    mockResponse(JSON.stringify({ level: 3, reason: "standard" }));
+    mockResponse("planned");
+    mockResponse("coded using useState and fetch()");
+    mockResponse("verified");
+    mockResponse("✅ PASS");
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("big feature"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      "complex",
+    );
+
+    expect(result.phases).toEqual(["planner", "coder", "verifier", "visual_qa"]);
+  });
+
+  it("difficulty undefined lets the triage level decide", async () => {
+    mockResponse(JSON.stringify({ level: 1, reason: "trivial" }));
+    mockResponse("coder output using useState and fetch()");
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("tweak"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(result.phases).toEqual(["coder"]);
+  });
+});
+
 describe("runPipeline", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -346,7 +440,7 @@ describe("runPhase", () => {
     );
 
     expect(result.stoppedReason).toBe("error");
-    expect(result.text).toContain("phaseFailedDetail");
+    expect(result.text).toContain("API failure");
     expect(result.hitLimit).toBe(false);
     expect(result.stepCount).toBe(0);
     expect(result.continuationCount).toBe(0);

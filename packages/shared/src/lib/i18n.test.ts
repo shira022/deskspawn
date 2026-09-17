@@ -106,4 +106,33 @@ describe("i18n language detection", () => {
     expect(typeof mod.default.language).toBe("string");
     expect(typeof mod.default.t).toBe("function");
   });
+
+  it("resolves all difficulty and chat.error keys in both locales", async () => {
+    const ls = createLocalStorageMock();
+    const mod = await importI18n(ls);
+
+    const requiredKeys = [
+      "app.difficulty",
+      "app.difficultySimple",
+      "app.difficultyMedium",
+      "app.difficultyComplex",
+      "app.difficultySimpleDesc",
+      "app.difficultyMediumDesc",
+      "app.difficultyComplexDesc",
+      "chat.error.phaseFailedDetail",
+      "chat.error.networkError",
+      "chat.error.apiKeyInvalid",
+      "chat.error.timeout",
+      "chat.error.modelNotFound",
+      "chat.error.rateLimit",
+      "chat.rateLimit",
+    ];
+
+    for (const lng of ["ja", "en"]) {
+      for (const key of requiredKeys) {
+        const value = mod.default.t(key, { lng });
+        expect(value, `${lng}:${key} should be translated`).not.toBe(key);
+      }
+    }
+  });
 });

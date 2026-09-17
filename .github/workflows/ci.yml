@@ -33,6 +33,16 @@ jobs:
       # 何もチェックしない no-op になる。tsc -b で apps/web + packages/shared を型チェックする。
       - run: pnpm --filter web exec tsc -b --noEmit
 
+  # i18n キー整合チェック: コードが参照する t("...") キーが ja/en 両方の
+  # common.json に存在することを検証する。locales 配下の変更は push の
+  # paths-ignore (.agents/docs/*.md のみ) に含まれないため、このジョブは
+  # ロケール変更でスキップされない。
+  i18n-keys:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - run: python3 scripts/check-i18n-keys.py
+
   frontend-test:
     runs-on: ubuntu-latest
     steps:
