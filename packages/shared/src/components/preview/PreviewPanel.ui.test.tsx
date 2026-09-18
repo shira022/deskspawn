@@ -120,4 +120,15 @@ describe("PreviewPanel", () => {
     // Web 専用の HMR バッジは出ない
     expect(screen.queryByText("HMR")).toBeNull();
   });
+
+  it("renders the preview iframe with allow-same-origin and allow-scripts sandbox", async () => {
+    render(<PreviewPanel />);
+
+    const iframe = await screen.findByTitle("App Preview");
+    const sandbox = iframe.getAttribute("sandbox") ?? "";
+    // allow-same-origin が無いと sandbox フレームのオリジンが null になり、
+    // Vite の ES モジュールリクエストが CORS でブロックされる（白画面化）
+    expect(sandbox).toContain("allow-same-origin");
+    expect(sandbox).toContain("allow-scripts");
+  });
 });
