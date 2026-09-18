@@ -9,6 +9,46 @@
 import { sidecarFetch } from "../sidecar";
 import type { PreviewState, PreviewStatus, StateListener } from "./types";
 
+// ── boot() の有限リトライ設定 ────────────────────────────────────────────────
+// 新規アプリ作成直後、テンプレート書き込みとプレビュー boot の間に競合が
+// 起き得る（currentAppId 変更を契機に PreviewPanel が即 boot する）。
+// サイドカーは package.json が無い間は 400 "Project has no package.json"
+// を返すため、その 400 のみ計3回（500ms/1s/2s バックオフ）自動リトライする。
+
+/** リトライの最大試行回数（初回含む） */
+const MAX_BOOT_ATTEMPTS = 3;
+/** 初回失敗後のリトライ間隔（インデックス = 失敗回数-1） */
+const BOOT_RETRY_DELAYS_MS = [500, 1000, 2000];
+
+/** HTTP ステータスを保持する /api/preview/start のエラー（リトライ判定用） */
+class PreviewStartHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "PreviewStartHttpError";
+  }
+}
+
+/**
+ * 「アプリがまだスキャフォールドされていない」側の 400 かどうか。
+ * HTTP 400 かつエラーメッセージに package.json が含まれる場合のみ
+ * リトライ対象とする（appId の値では判定しない）。それ以外の 400・
+ * 500・ネットワーク断は即座に失敗させる。
+ */
+function isNotScaffoldedHttpError(e: unknown): e is PreviewStartHttpError {
+  return (
+    e instanceof PreviewStartHttpError &&
+    e.status === 400 &&
+    e.message.includes("package.json")
+  );
+}
+
+/** setTimeout ベースのスリープ（テストで fake timers 化できるよう分離） */
+const sleep = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
 export class DesktopPreviewManager {
   private _status: PreviewStatus = "idle";
   private _url: string | null = null;
@@ -101,21 +141,43 @@ export class DesktopPreviewManager {
     try {
       // デスクトップ版は実体ディレクトリを直接参照するためファイル送信は
       // 不要。sidecarは実体でbun install→vite起動する（ADR-008）。
-      const res = await sidecarFetch("/api/preview/start", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ appId }),
-      });
-      const data = await res.json().catch(() => ({}));
-      if (!res.ok) {
-        throw new Error(data.error || `Preview start failed (${res.status})`);
+      // package.json 無しの 400（＝まだスキャフォールドされていない）の
+      // みバックオフ付きで自動リトライし、テンプレート書き込みの完了を
+      // 待って復帰する。それ以外のエラーは即座に失敗（リトライ連発防止）。
+      let attempt = 0;
+      for (;;) {
+        attempt++;
+        this.addLog(`Starting dev server (attempt ${attempt}/${MAX_BOOT_ATTEMPTS})...`);
+        const res = await sidecarFetch("/api/preview/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ appId }),
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          const err = new PreviewStartHttpError(
+            data.error || `Preview start failed (${res.status})`,
+            res.status,
+          );
+          if (isNotScaffoldedHttpError(err) && attempt < MAX_BOOT_ATTEMPTS) {
+            const delay = BOOT_RETRY_DELAYS_MS[attempt - 1];
+            this.addLog(
+              `Project not scaffolded yet (no package.json) — retrying in ${delay}ms...`,
+            );
+            await sleep(delay);
+            continue;
+          }
+          throw err;
+        }
+        this._url = data.url;
+        this.setState({ url: data.url, status: "ready", error: null });
+        this.addLog(`Dev server ready at ${data.url}`);
+        return;
       }
-      this._url = data.url;
-      this.setState({ url: data.url, status: "ready" });
-      this.addLog(`Dev server ready at ${data.url}`);
     } catch (e: any) {
       const msg = e.message || String(e);
       console.error("[preview] start failed:", e);
+      this.addLog(`Preview start failed: ${msg}`);
       this.setState({ status: "error", error: msg, url: null });
     } finally {
       timers.forEach(clearTimeout);

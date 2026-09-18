@@ -74,21 +74,12 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
       // actual on-disk app dir (ADR-008).
       const realAppId = await saveApp(app);
 
-      // Set current app in engine
-      setAppId(realAppId);
-
-      // Refresh app list
-      const updatedApps = await listApps();
-      setApps(updatedApps);
-      setCurrentAppId(realAppId);
-
-      // Reset session state
-      clearMessages();
-      setWorkspaceReady(false);
-      setAgentStatus("idle");
-      setAgentStepCount(0);
-      setFileTree([]);
-      setSelectedFile(null);
+      // ★ Order matters: write ALL template files BEFORE publishing the app
+      // as current. setCurrentAppId() makes PreviewPanel call
+      // previewManager.boot() immediately, and the sidecar rejects the boot
+      // with 400 "Project has no package.json" while the directory is still
+      // empty — leaving the preview pane stuck on that error. Files first,
+      // then publish, so the boot always sees a scaffolded directory.
 
       // Copy template files into the new app (real dir on desktop)
       // ADR-010: desktop はフルスタックテンプレート（Hono + bun:sqlite）を
@@ -108,6 +99,22 @@ export function NewAppDialog({ open, onOpenChange }: NewAppDialogProps) {
 export const APP_ID = "${realAppId}";
 `,
       );
+
+      // Set current app in engine
+      setAppId(realAppId);
+
+      // Refresh app list
+      const updatedApps = await listApps();
+      setApps(updatedApps);
+      setCurrentAppId(realAppId);
+
+      // Reset session state
+      clearMessages();
+      setWorkspaceReady(false);
+      setAgentStatus("idle");
+      setAgentStepCount(0);
+      setFileTree([]);
+      setSelectedFile(null);
 
       // ワークスペースの準備完了 — ローディングオーバーレイを即時解除
       // プレビューのビルドはバックグラウンドで非同期に実行される
