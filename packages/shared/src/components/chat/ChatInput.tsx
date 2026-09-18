@@ -47,26 +47,21 @@ export function ChatInput({ onSend, onStop, disabled }: ChatInputProps) {
 
   return (
     <div className="border-t border-border/50">
-      {/* エージェント構成（オート/最小〜最大の表示名）と判定結果の表示 */}
-      <div className="flex items-center gap-2 px-3 pt-2">
+      {/* エージェント構成（オート/最小〜最大の表示名）と停止ボタンの共有ツールバー行 */}
+      <div className="flex items-center justify-between gap-2 px-3 pt-2" data-testid="chat-input-toolbar">
         <AgentTierSelector />
+        {/* Generation stop button (thinking indicator lives in ChatPanel/ChatMessage) */}
+        {isRunning && (
+          <button
+            onClick={onStop}
+            className="shrink-0 flex items-center gap-1.5 rounded-full bg-destructive text-destructive-foreground pl-2.5 pr-3 py-1 text-xs font-medium shadow-sm shadow-destructive/20 hover:bg-destructive/90 active:scale-95 transition-all duration-150"
+            title={t('chat.stopGenerating')}
+          >
+            <Square className="h-3 w-3 fill-current" />
+            <span>{t('chat.stop')}</span>
+          </button>
+        )}
       </div>
-
-      {/* Generation stop button (thinking indicator lives in ChatPanel/ChatMessage) */}
-      {isRunning && (
-        <div className="px-3 pt-2 pb-1.5">
-          <div className="flex items-center justify-end">
-            <button
-              onClick={onStop}
-              className="shrink-0 flex items-center gap-1.5 rounded-full bg-destructive text-destructive-foreground pl-2.5 pr-3 py-1 text-xs font-medium shadow-sm shadow-destructive/20 hover:bg-destructive/90 active:scale-95 transition-all duration-150"
-              title={t('chat.stopGenerating')}
-            >
-              <Square className="h-3 w-3 fill-current" />
-              <span>{t('chat.stop')}</span>
-            </button>
-          </div>
-        </div>
-      )}
 
       <div className="flex items-end gap-2 p-3 pt-1.5">
         <div className="relative flex-1">

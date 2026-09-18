@@ -29,6 +29,7 @@ export function ChatPanel() {
   const appSwitching = useAppStore((s) => s.appSwitching);
   const fetchChatHistory = useAppStore((s) => s.fetchChatHistory);
   const initialized = useAppStore((s) => s.initialized);
+  const logPanelOpenCount = useAppStore((s) => s.logPanelOpenCount);
   const { t } = useTranslation();
 
   // Preview status (for chat indicator)
@@ -162,12 +163,16 @@ export function ChatPanel() {
   }, [checkIsAtBottom, agentStatus, liveStepLogs.length]);
 
   useEffect(() => {
+    // 実行ログパネル展開中は自動スクロールを抑制する（展開でコンテンツが
+    // 伸びてもスクロールイベントは発生しないため、isAtBottom が更新されず
+    // 読書中の位置から最下部へ飛んでしまう）。「最新へ」ボタンの表示と
+    // 手動スクロールは通常どおり機能させる。
     if (isAtBottom) {
-      scrollToBottom(false);
+      if (logPanelOpenCount === 0) scrollToBottom(false);
     } else if (displayMessages.length > 0 || liveStepLogs.length > 0) {
       setShowScrollButton(true);
     }
-  }, [messages, liveStepLogs, isAtBottom, scrollToBottom]);
+  }, [messages, liveStepLogs, isAtBottom, scrollToBottom, logPanelOpenCount]);
 
   // Cleanup SSE on unmount
   useEffect(() => {

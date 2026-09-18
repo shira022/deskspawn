@@ -13,6 +13,7 @@ vi.mock("react-i18next", () => ({
         "chat.inputPlaceholder": "Type your message...",
         "chat.inputDisabledDuringGeneration": "Disabled during generation",
         "chat.sendTitle": "Send message",
+        "chat.agentTier.groupLabel": "Agent setup",
       };
       return translations[key] ?? key;
     },
@@ -68,6 +69,26 @@ describe("ChatInput", () => {
     render(<ChatInput onSend={onSend} onStop={onStop} />);
     expect(screen.getByTitle("Stop generating")).toBeInTheDocument();
     expect(screen.getByText("Stop")).toBeInTheDocument();
+  });
+
+  it("renders the stop button inside the toolbar together with the tier selector while running", () => {
+    mockStore.agentStatus = "running";
+    render(<ChatInput onSend={onSend} onStop={onStop} />);
+    const toolbar = screen.getByTestId("chat-input-toolbar");
+    expect(toolbar).toBeInTheDocument();
+    const stopButton = screen.getByTitle("Stop generating");
+    const tierSelector = screen.getByRole("button", { name: "Agent setup" });
+    expect(toolbar).toContainElement(stopButton);
+    expect(toolbar).toContainElement(tierSelector);
+  });
+
+  it("renders the toolbar without the stop button when idle", () => {
+    mockStore.agentStatus = "idle";
+    render(<ChatInput onSend={onSend} onStop={onStop} />);
+    const toolbar = screen.getByTestId("chat-input-toolbar");
+    expect(toolbar).toBeInTheDocument();
+    expect(toolbar).toContainElement(screen.getByRole("button", { name: "Agent setup" }));
+    expect(screen.queryByTitle("Stop generating")).not.toBeInTheDocument();
   });
 
   it("disables textarea when agent is running", () => {

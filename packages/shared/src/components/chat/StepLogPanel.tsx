@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useTranslation } from "react-i18next";
 import { cn } from "../../lib/utils";
+import { useAppStore } from "../../store/useAppStore";
 import type { StepLogEntry } from "../../types";
 import {
   ChevronDown,
@@ -242,6 +243,16 @@ function StepRow({
 export function StepLogPanel({ stepLogs, isLive, searchQuery }: StepLogPanelProps) {
   const { t } = useTranslation();
   const [panelOpen, setPanelOpen] = useState(false);
+  // 展開中のパネル数をストアと同期する（ChatPanel の自動スクロール抑制用）。
+  // useEffect のクリーンアップが折りたたみ・アンマウントのどちらでも
+  // ちょうど 1 回だけ減算を実行するため、カウンタはズレない。
+  const incrementLogPanelOpen = useAppStore((s) => s.incrementLogPanelOpen);
+  const decrementLogPanelOpen = useAppStore((s) => s.decrementLogPanelOpen);
+  useEffect(() => {
+    if (!panelOpen) return;
+    incrementLogPanelOpen();
+    return () => decrementLogPanelOpen();
+  }, [panelOpen, incrementLogPanelOpen, decrementLogPanelOpen]);
   const errorCount = stepLogs.filter((s) => s.status === "error").length;
   const runningCount = stepLogs.filter((s) => s.status === "running").length;
 
