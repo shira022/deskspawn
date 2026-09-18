@@ -602,12 +602,19 @@ export function PreviewPanel() {
                   </div>
                 </div>
               )}
+              {/* sandbox の allow-same-origin は必須 — これが無いと sandbox
+                  フレームのオリジンが opaque (null) となり、Vite の ES モジュール
+                  リクエスト (/@vite/client, /src/main.tsx など) がクロスオリジン
+                  扱いされて CORS でブロックされ、プレビューが白画面のままになる
+                  （WebView2 実機確認 2026-09-19）。フレームはアプリシェルとは
+                  別オリジン（localhost:5174）で動作するため、allow-same-origin
+                  を付けてもシェル側のリソースにはアクセスできない。 */}
               <iframe
                 id="preview-iframe"
                 className="h-full w-full border-0"
                 src={previewUrl}
                 title="App Preview"
-                sandbox="allow-scripts allow-forms allow-popups"
+                sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
                 onLoad={() => {
                   setIframeLoading(false);
                   if (iframeLoadTimeoutRef.current) {
