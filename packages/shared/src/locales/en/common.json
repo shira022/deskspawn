@@ -202,6 +202,36 @@
     "generationComplete": "App generation complete{{sparkle}}{{cost}}",
     "usageTokens": "tokens",
     "totalTokensAndCost": "Total tokens and estimated cost",
+    "agentTier": {
+      "groupLabel": "Agent setup",
+      "label": {
+        "auto": "Auto",
+        "t1": "Minimal",
+        "t2": "Basic",
+        "t3": "Standard",
+        "t4": "Thorough",
+        "t5": "Maximum"
+      },
+      "hint": {
+        "auto": "Picks a composition automatically",
+        "t1": "Build in one pass",
+        "t2": "Build then review",
+        "t3": "Plan, build, then review",
+        "t4": "Check the screen and fix",
+        "t5": "Keep fixing until polished"
+      },
+      "agents": {
+        "auto": "Detects complexity and picks the composition automatically",
+        "t1": "L1: coder",
+        "t2": "L2: coder + verifier",
+        "t3": "L3: planner + coder + verifier",
+        "t4": "L4: planner + coder + verifier + visual QA (1 fix round, dummy-data regen)",
+        "t5": "L5: full pipeline (up to 2 fix rounds, dummy-data regen)"
+      },
+      "autoScale": "Auto: {{name}}",
+      "autoScaleIdle": "Auto: not yet analyzed",
+      "manualScale": "Manual: {{name}}"
+    },
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI is not configured. Please configure it from the \"{{notConfiguredLabel}}\" button in the toolbar.",
       "noAppSelected": "⚠️ No app is selected. Create an app from \"{{newAppLabel}}\" in the toolbar or select one from app history.",
@@ -217,7 +247,10 @@
       "ollamaModelRequired": "{{provider}} requires a model name (e.g. {{example}}). Please enter it in the provider settings.",
       "checkProviderSettings": "Check your {{provider}} settings in the toolbar.",
       "checkModelSettings": "Check that the model \"{{model}}\" exists and your API key is valid.",
-      "checkOllamaConnection": "Make sure Ollama is running ({{endpoint}}) and the model \"{{model}}\" is available."
+      "checkOllamaConnection": "Make sure Ollama is running ({{endpoint}}) and the model \"{{model}}\" is available.",
+      "apiKeyInvalid": "The API key is invalid or not configured.",
+      "networkError": "A network error occurred. Please check your connection.",
+      "timeout": "The request timed out. Please try again."
     }
   },
   "step": {

@@ -57,6 +57,7 @@ import {
   runWithTriage,
   runPipeline,
   runPhase,
+  PIPELINE_TIERS,
   type PipelineHooks,
 } from "./orchestrator";
 
@@ -92,20 +93,78 @@ describe("getPhaseLabel", () => {
   });
 });
 
+describe("PIPELINE_TIERS", () => {
+  it("defines a distinct composition for each of the 5 levels", () => {
+    expect(PIPELINE_TIERS[1].phases).toEqual(["coder"]);
+    expect(PIPELINE_TIERS[2].phases).toEqual(["coder", "verifier"]);
+    expect(PIPELINE_TIERS[3].phases).toEqual(["planner", "coder", "verifier"]);
+    expect(PIPELINE_TIERS[4].phases).toEqual(["planner", "coder", "verifier", "visual_qa"]);
+    expect(PIPELINE_TIERS[5].phases).toEqual(["planner", "coder", "verifier", "visual_qa"]);
+  });
+
+  it("states L4 and L5 differ by fixRounds", () => {
+    // L4 / L5 は同一フェーズだが fixRounds の差で区別する
+    expect(PIPELINE_TIERS[4].phases).toEqual(PIPELINE_TIERS[5].phases);
+    expect(PIPELINE_TIERS[4].fixRounds).toBe(1);
+    expect(PIPELINE_TIERS[5].fixRounds).toBe(2);
+  });
+
+  it("makes fixRounds level-dependent (0 for L1-L3, 1 for L4, 2 for L5)", () => {
+    // visual_qa を含まない L1〜L3 は修正ループに入らないため fixRounds=0。
+    expect(PIPELINE_TIERS[1].fixRounds).toBe(0);
+    expect(PIPELINE_TIERS[2].fixRounds).toBe(0);
+    expect(PIPELINE_TIERS[3].fixRounds).toBe(0);
+    expect(PIPELINE_TIERS[4].fixRounds).toBe(1);
+    expect(PIPELINE_TIERS[5].fixRounds).toBe(2);
+  });
+
+  it("enables dummyDataRegen only for the visual_qa tiers (L4/L5)", () => {
+    expect(PIPELINE_TIERS[1].dummyDataRegen).toBe(false);
+    expect(PIPELINE_TIERS[2].dummyDataRegen).toBe(false);
+    expect(PIPELINE_TIERS[3].dummyDataRegen).toBe(false);
+    expect(PIPELINE_TIERS[4].dummyDataRegen).toBe(true);
+    expect(PIPELINE_TIERS[5].dummyDataRegen).toBe(true);
+  });
+
+  it("produces 5 unique phase+fixRounds+dummyDataRegen compositions", () => {
+    const signatures = ([1, 2, 3, 4, 5] as const).map(
+      (level) =>
+        `${PIPELINE_TIERS[level].phases.join(">")}|${PIPELINE_TIERS[level].fixRounds}|${PIPELINE_TIERS[level].dummyDataRegen}`,
+    );
+    expect(new Set(signatures).size).toBe(5);
+  });
+});
+
 describe("runWithTriage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(generateText).mockReset();
   });
 
-  it("dispatches to coder only in single mode", async () => {
-    // Triage returns single (triage.ts の JSON 形式)
+  it("L1 dispatches to coder only", async () => {
     vi.mocked(generateText).mockResolvedValueOnce({
-      text: JSON.stringify({ level: 2, reason: "Simple CSS fix" }),
+      text: JSON.stringify({ level: 1, reason: "Typo fix" }),
     } as any);
-    // planner
     vi.mocked(generateText).mockResolvedValueOnce({
-      text: "Planned the fix",
-      usage: { inputTokens: 10, outputTokens: 5 },
+      text: "Changed button color",
+      usage: { inputTokens: 20, outputTokens: 10 },
+    } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Change button to red"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(result.phases).toEqual(["coder"]);
+    expect(result.text).toBe("Changed button color");
+    expect(generateText).toHaveBeenCalledTimes(2); // triage + coder
+  });
+
+  it("L2 dispatches to coder + verifier (no planner)", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: JSON.stringify({ level: 2, reason: "Minor tweak" }),
     } as any);
     // coder
     vi.mocked(generateText).mockResolvedValueOnce({
@@ -125,39 +184,64 @@ describe("runWithTriage", () => {
       controller.signal,
     );
 
-    expect(result.phases).toEqual(["planner", "coder", "verifier"]);
+    expect(result.phases).toEqual(["coder", "verifier"]);
     expect(result.text).toBe("Changed button color");
-    expect(generateText).toHaveBeenCalledTimes(4); // triage + 3 phases
+    expect(generateText).toHaveBeenCalledTimes(3); // triage + 2 phases
   });
 
-  it("dispatches to full pipeline in multi mode", async () => {
-    // Triage returns multi (triage.ts の JSON 形式)
+  it("L3 dispatches to planner + coder + verifier", async () => {
     vi.mocked(generateText)
-      .mockResolvedValueOnce({ text: JSON.stringify({ level: 4, reason: "Full feature needed" }) } as any)
-      // planner
-      .mockResolvedValueOnce({
-        text: "Planned the feature",
-        usage: { inputTokens: 10, outputTokens: 5 },
-      } as any)
-      // coder
-      .mockResolvedValueOnce({
-        text: "Implemented the feature",
-        usage: { inputTokens: 30, outputTokens: 15 },
-      } as any)
-      // verifier
-      .mockResolvedValueOnce({
-        text: "No errors found",
-        usage: { inputTokens: 5, outputTokens: 3 },
-      } as any)
-      // visual_qa
-      .mockResolvedValueOnce({
-        text: "✅ PASS",
-        usage: { inputTokens: 8, outputTokens: 4 },
-      } as any);
+      .mockResolvedValueOnce({ text: JSON.stringify({ level: 3, reason: "Standard feature" }) } as any)
+      .mockResolvedValueOnce({ text: "Planned", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Coded", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Verified", usage: { inputTokens: 1, outputTokens: 1 } } as any);
 
     const result = await runWithTriage(
       mockModel,
-      makeMessages("Build me a full app"),
+      makeMessages("Add a feature"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(result.phases).toEqual(["planner", "coder", "verifier"]);
+    expect(generateText).toHaveBeenCalledTimes(4); // triage + 3 phases
+  });
+
+  it("L3 never runs visual_qa and therefore never enters a fix loop", async () => {
+    // coder 出力に dummy-data パターンを含め、verifier 出力を失敗に見せかけても、
+    // L3 は visual_qa を含まないため修正ループは起動しない。
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: JSON.stringify({ level: 3, reason: "Standard feature" }) } as any)
+      .mockResolvedValueOnce({ text: "Planned", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({
+        text: "const users = [\n  { name: 'John Doe' },\n];\nTODO: implement fetch",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any)
+      .mockResolvedValueOnce({ text: "❌ FAIL: blank page", usage: { inputTokens: 1, outputTokens: 1 } } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Add a feature"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(result.phases).toEqual(["planner", "coder", "verifier"]);
+    expect(result.phases).not.toContain("visual_qa");
+    expect(generateText).toHaveBeenCalledTimes(4); // triage + 3 phases only
+  });
+
+  it("L4 dispatches to the full 4-phase pipeline", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: JSON.stringify({ level: 4, reason: "Cross-cutting change" }) } as any)
+      .mockResolvedValueOnce({ text: "Planned the feature", usage: { inputTokens: 10, outputTokens: 5 } } as any)
+      .mockResolvedValueOnce({ text: "Implemented the feature", usage: { inputTokens: 30, outputTokens: 15 } } as any)
+      .mockResolvedValueOnce({ text: "No errors found", usage: { inputTokens: 5, outputTokens: 3 } } as any)
+      .mockResolvedValueOnce({ text: "✅ PASS", usage: { inputTokens: 8, outputTokens: 4 } } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Refactor the data layer"),
       buildTools,
       controller.signal,
     );
@@ -166,11 +250,147 @@ describe("runWithTriage", () => {
     expect(generateText).toHaveBeenCalledTimes(5); // triage + 4 phases
   });
 
+  it("L4 re-runs the coder when dummy data is detected", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: JSON.stringify({ level: 4, reason: "New feature" }) } as any)
+      .mockResolvedValueOnce({ text: "Plan", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({
+        text: "const users = [\n  { name: 'John Doe' },\n];\nTODO: implement fetch",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any)
+      // dummy-data 再生成で coder がもう一度走る
+      .mockResolvedValueOnce({ text: "Real fetch implementation", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Verified", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "✅ PASS", usage: { inputTokens: 1, outputTokens: 1 } } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Build a feature"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(result.phases).toEqual(["planner", "coder", "coder", "verifier", "visual_qa"]);
+    expect(generateText).toHaveBeenCalledTimes(6); // triage + planner + coder x2 + verifier + visual_qa
+  });
+
+  it("L4 caps visual_qa fix loop at 1 round", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: JSON.stringify({ level: 4, reason: "Needs QA" }) } as any)
+      .mockResolvedValueOnce({ text: "Plan", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Code", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Verify", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "❌ FAIL: blank page", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      // fix round 1
+      .mockResolvedValueOnce({ text: "Code fixed", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Verify fixed", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "❌ FAIL: still broken", usage: { inputTokens: 1, outputTokens: 1 } } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Needs QA"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(result.phases).toEqual([
+      "planner", "coder", "verifier", "visual_qa",
+      "coder", "verifier", "visual_qa",
+    ]);
+    // 2回目の FAIL では追加ラウンドが発生しない（上限1）
+    expect(generateText).toHaveBeenCalledTimes(8);
+  });
+
+  it("L5 allows up to 2 visual_qa fix rounds", async () => {
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: JSON.stringify({ level: 5, reason: "New app" }) } as any)
+      .mockResolvedValueOnce({ text: "Plan", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Code", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Verify", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "❌ FAIL: blank page", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      // fix round 1
+      .mockResolvedValueOnce({ text: "Code fixed 1", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Verify fixed 1", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "❌ FAIL: still broken", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      // fix round 2
+      .mockResolvedValueOnce({ text: "Code fixed 2", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Verify fixed 2", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "✅ PASS", usage: { inputTokens: 1, outputTokens: 1 } } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Build a new app"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(result.phases).toEqual([
+      "planner", "coder", "verifier", "visual_qa",
+      "coder", "verifier", "visual_qa",
+      "coder", "verifier", "visual_qa",
+    ]);
+    expect(generateText).toHaveBeenCalledTimes(11);
+  });
+
+  it("manual tier skips the triage LLM call and uses the selected level", async () => {
+    // triage 用のモックは用意しない（呼ばれたら undefined になる）
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: "Planned", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Coded", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockResolvedValueOnce({ text: "Verified", usage: { inputTokens: 1, outputTokens: 1 } } as any);
+
+    const onTriageResult = vi.fn();
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Add a feature"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      { onTriageResult },
+      undefined,
+      undefined,
+      3, // manual L3
+    );
+
+    expect(result.phases).toEqual(["planner", "coder", "verifier"]);
+    expect(generateText).toHaveBeenCalledTimes(3); // 手動なので triage なし
+    expect(onTriageResult).toHaveBeenCalledWith({ level: 3, reason: "" });
+  });
+
+  it("manual L1 runs coder only without triage", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: "Coded",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Tiny tweak"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1,
+    );
+
+    expect(result.phases).toEqual(["coder"]);
+    expect(generateText).toHaveBeenCalledTimes(1);
+  });
+
   it("calls onTriageResult hook with the triage result", async () => {
     vi.mocked(generateText)
       .mockResolvedValueOnce({ text: JSON.stringify({ level: 2, reason: "Tiny tweak" }) } as any)
       .mockResolvedValueOnce({
         text: "done",
+        usage: { inputTokens: 1, outputTokens: 1 },
+      } as any)
+      .mockResolvedValueOnce({
+        text: "verified",
         usage: { inputTokens: 1, outputTokens: 1 },
       } as any);
 

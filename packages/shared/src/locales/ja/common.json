@@ -202,6 +202,36 @@
     "generationComplete": "アプリ生成が完了しました{{sparkle}}{{cost}}",
     "usageTokens": "トークン",
     "totalTokensAndCost": "合計トークン数と推定費用",
+    "agentTier": {
+      "groupLabel": "エージェント構成",
+      "label": {
+        "auto": "オート",
+        "t1": "最小",
+        "t2": "基本",
+        "t3": "標準",
+        "t4": "しっかり",
+        "t5": "最大"
+      },
+      "hint": {
+        "auto": "内容に合わせて自動で選ぶ",
+        "t1": "まず1回で作る",
+        "t2": "作って見直す",
+        "t3": "計画してから作って見直す",
+        "t4": "画面まで確認して直す",
+        "t5": "何度も直して仕上げる"
+      },
+      "agents": {
+        "auto": "複雑さを判定して構成を自動で決めます",
+        "t1": "L1: coder",
+        "t2": "L2: coder + verifier",
+        "t3": "L3: planner + coder + verifier",
+        "t4": "L4: planner + coder + verifier + visual QA（修正1回・ダミーデータ再生成）",
+        "t5": "L5: 全工程（修正2回まで・ダミーデータ再生成）"
+      },
+      "autoScale": "自動判定: {{name}}",
+      "autoScaleIdle": "自動判定: 未判定",
+      "manualScale": "手動: {{name}}"
+    },
     "error": {
       "aiNotConfiguredDetailed": "⚠️ AI設定が行われていません。ツールバーの「{{notConfiguredLabel}}」ボタンから設定してください。",
       "noAppSelected": "⚠️ アプリが選択されていません。ツールバーの「{{newAppLabel}}」からアプリを作成するか、アプリ履歴から選択してください。",
@@ -217,7 +247,10 @@
       "ollamaModelRequired": "「{{provider}}」にはモデル名の指定が必要です（例: {{example}}）。プロバイダー設定でモデル名を入力してください。",
       "checkProviderSettings": "「{{provider}}」の設定を確認してください。",
       "checkModelSettings": "モデル「{{model}}」が存在し、APIキーが有効か確認してください。",
-      "checkOllamaConnection": "Ollamaが起動しているか（{{endpoint}}）、モデル「{{model}}」が利用可能か確認してください。"
+      "checkOllamaConnection": "Ollamaが起動しているか（{{endpoint}}）、モデル「{{model}}」が利用可能か確認してください。",
+      "apiKeyInvalid": "APIキーが無効か設定されていません。",
+      "networkError": "ネットワークエラーが発生しました。接続を確認してください。",
+      "timeout": "応答がタイムアウトしました。もう一度お試しください。"
     }
   },
   "step": {

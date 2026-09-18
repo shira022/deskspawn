@@ -141,6 +141,30 @@ describe("useAppStore — initial state", () => {
   });
 });
 
+describe("useAppStore — agent tier", () => {
+  it("agentTier defaults to 'auto'", () => {
+    expect(useAppStore.getState().agentTier).toBe("auto");
+  });
+
+  it("lastTriage is null by default", () => {
+    expect(useAppStore.getState().lastTriage).toBeNull();
+  });
+
+  it("setAgentTier updates the selection", () => {
+    useAppStore.getState().setAgentTier("L4");
+    expect(useAppStore.getState().agentTier).toBe("L4");
+  });
+
+  it("setLastTriage stores the triage result", () => {
+    useAppStore.getState().setLastTriage({ level: 3, source: "auto", reason: "feature" });
+    expect(useAppStore.getState().lastTriage).toEqual({
+      level: 3,
+      source: "auto",
+      reason: "feature",
+    });
+  });
+});
+
 describe("useAppStore — aiConfig", () => {
   it("setAiConfig saves provider config and api key", async () => {
     const config = {
