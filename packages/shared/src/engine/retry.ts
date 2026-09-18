@@ -66,21 +66,28 @@ function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) {
     return Promise.reject(new DOMException('Aborted', 'AbortError'));
   }
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(resolve, ms);
+  return new Promise<void>((resolve, reject) => {
+    let settled = false;
+
+    function onAbort() {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      reject(new DOMException('Aborted', 'AbortError'));
+    }
+
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+
     if (signal) {
-      const onAbort = () => {
-        clearTimeout(timer);
-        reject(new DOMException('Aborted', 'AbortError'));
-      };
       signal.addEventListener('abort', onAbort, { once: true });
-      // タイマー完了時にイベントリスナーをクリーンアップ
-      const origResolve = resolve;
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      (resolve as any) = () => {
-        signal.removeEventListener('abort', onAbort);
-        origResolve();
-      };
+      // タイマー設定と addEventListener の間に abort されたケースを拾う
+      if (signal.aborted) onAbort();
     }
   });
 }

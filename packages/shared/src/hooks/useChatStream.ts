@@ -8,7 +8,7 @@
 
 import { useState, useCallback, useRef } from "react";
 import { useAppStore } from "../store/useAppStore";
-import type { ChatMessage, StepLogEntry, TokenUsage } from "../types";
+import type { ChatMessage, StepLogEntry, TokenUsage, PipelineTierLevel } from "../types";
 import { providerLabels } from "../lib/constants";
 import { isDesktopEnv } from "../lib/platform";
 import { newMessageId } from "../lib/ids";
@@ -340,8 +340,7 @@ export function useChatStream(): UseChatStreamReturn {
       generationActive.current = true;
 
       const state = useAppStore.getState();
-      const { aiConfig: cfg, currentAppId: pid, addMessage, updateMessage, setAgentStatus, setAgentStepCount, apps } = state;
-      const currentApp = apps.find((a) => a.id === pid);
+      const { aiConfig: cfg, currentAppId: pid, addMessage, updateMessage, setAgentStatus, setAgentStepCount } = state;
 
       // Validate config
       if (!cfg) {
@@ -553,7 +552,7 @@ export function useChatStream(): UseChatStreamReturn {
       // Mark workspace as dirty — preview will rebuild on triggerReload
       useAppStore.getState().setWorkspaceReady(false);
 
-      const { settings } = useAppStore.getState();
+      const { settings, agentTier } = useAppStore.getState();
       const stepLogs: StepLogEntry[] = [];
       const localPhaseOutputs: Record<string, { label: string; text: string }> = {};
 
@@ -671,12 +670,23 @@ export function useChatStream(): UseChatStreamReturn {
               setContinuationRound(round);
               setMaxContinuations(maxRounds);
             },
-            onTriageResult: (_result) => {},
+            onTriageResult: (result) => {
+              // 規模の可視化: オート判定 / 手動選択を区別してストアへ保存する
+              const manual = useAppStore.getState().agentTier !== "auto";
+              useAppStore.getState().setLastTriage({
+                level: result.level,
+                source: manual ? "manual" : "auto",
+                reason: result.reason,
+              });
+            },
           },
           isDesktopEnv(),
           // AiConfig.maxSteps — 動的ステップ管理のベース値（未設定ならエンジン既定値）
           cfg.maxSteps,
-          currentApp?.difficulty,
+          // 手動ティア選択（"auto" の場合は null → triage の LLM 判定を実行）
+          agentTier === "auto"
+            ? null
+            : (Number(agentTier.slice(1)) as PipelineTierLevel),
         );
 
         generationActive.current = false;

@@ -5,6 +5,27 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## Unreleased
+
+**Agent composition tiers (ADR-016):**
+
+- 🧩 Agent composition is now a true 5-level scale, centralized in the
+  `PIPELINE_TIERS` table (L1 coder / L2 coder+verifier / L3 +planner /
+  L4 +visual QA / L5 full + 2 fix rounds). Fix rounds are level-dependent
+  instead of a hardcoded `MAX_FIX_ROUNDS = 2`.
+- 🗑️ Removed the user-selected app difficulty (`simple` / `medium` /
+  `complex`). Its default `medium` overrode the triage decision, which
+  effectively disabled automatic routing.
+- 🎛️ Added a compact tier selector near the chat input (default `Auto`).
+  The UI shows only friendly display names (`Auto` / `Minimal` / `Basic` /
+  `Standard` / `Thorough` / `Maximum`); the underlying agent composition is
+  revealed in a hover/focus tooltip. Manual selection skips the triage LLM
+  call.
+- 📊 Inline status display (`Auto: <name>` / `Manual: <name>`) backed by the
+  new `lastTriage` store state.
+
+---
+
 ## v0.4.2 (Security Hardening & Desktop-First Renewal) — 2026-08-06
 
 **Highlights:**

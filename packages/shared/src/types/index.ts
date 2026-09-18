@@ -110,16 +110,27 @@ export interface FileNode {
 // App Types
 // ============================================================
 
-/** 難易度レベル — ユーザーがアプリ作成時に選択する */
-export type DifficultyLevel = "simple" | "medium" | "complex";
+/**
+ * 手動エージェントティア選択。
+ * "auto" は triage の自動判定に委ねる（既定）。"L1"〜"L5" は手動で構成を固定する。
+ */
+export type AgentTier = "auto" | "L1" | "L2" | "L3" | "L4" | "L5";
+
+/** エージェント構成の段階（1 = 最小、5 = フル） */
+export type PipelineTierLevel = 1 | 2 | 3 | 4 | 5;
+
+/** 直近の triage 判定結果 — 規模の可視化に使う */
+export interface TriageState {
+  level: number;
+  source: "auto" | "manual";
+  reason?: string;
+}
 
 export interface AppMeta {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
-  /** 難易度（未設定の場合は triage に委ねる） */
-  difficulty?: DifficultyLevel;
 }
 
 export interface CheckpointInfo {
