@@ -39,7 +39,7 @@
     "react-markdown": "^10.1.0",
     "react-resizable-panels": "^4.11.2",
     "remark-gfm": "^4.0.1",
-    "tailwind-merge": "^2.6.0",
+    "tailwind-merge": "^3.7.0",
     "zod": "^4.4.3",
     "zustand": "^5.0.14",
     "@deskspawn/ai-core": "workspace:*",
