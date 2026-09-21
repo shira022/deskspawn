@@ -568,6 +568,10 @@ export function PreviewPanel() {
           </div>
         ) : previewUrl ? (
           <div className="relative flex h-full items-start justify-center overflow-auto bg-white/50 dark:bg-black/20">
+            {/* key は `${currentAppId}:${previewUrl}` — アプリ切替時に URL が同一
+                文字列（ポート固定など）でも必ず再マウント＝再ナビゲーションさせ、
+                前アプリのドキュメントがフレームに残るのを防ぐ。ポートはサイドカー
+                のフォールバックで変わり得るため、実サーバーの URL に常に一致する。 */}
             <div
               className="relative shrink-0 transition-[width,height] duration-200"
               style={{
@@ -611,6 +615,7 @@ export function PreviewPanel() {
                   を付けてもシェル側のリソースにはアクセスできない。 */}
               <iframe
                 id="preview-iframe"
+                key={`${currentAppId}:${previewUrl}`}
                 className="h-full w-full border-0"
                 src={previewUrl}
                 title="App Preview"
@@ -629,8 +634,10 @@ export function PreviewPanel() {
           <div className="flex h-full items-center justify-center">
             <div className="flex flex-col items-center gap-2 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
+              {/* previewUrl が無い＝このアプリのサーバーが未起動。前アプリの
+                  iframe は描画せず、実ポートの確定を待つ「準備中」表示を出す。 */}
               <p className="text-xs">
-                {t("preview.loading")}
+                {t("preview.waitingForServer")}
               </p>
             </div>
           </div>

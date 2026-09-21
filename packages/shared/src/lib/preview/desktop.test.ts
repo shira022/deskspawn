@@ -1,10 +1,14 @@
 /**
- * Tests for DesktopPreviewManager boot() — bounded retry behaviour.
+ * Tests for DesktopPreviewManager boot() — bounded retry behaviour + url lifecycle.
  *
  * 新規アプリ作成直後の競合（テンプレート書き込み前にプレビュー boot が
  * サイドカーに到達し 400 "Project has no package.json" を返される）に対し、
  * その 400 のみが計3回（500ms/1s/2s）自動リトライされ、それ以外のエラーは
  * 即座に失敗することを検証する。
+ *
+ * あわせて url ライフサイクルも検証する: boot 開始時に前アプリの url が
+ * クリアされること、起動完了時にサイドカーが返す実ポート（5175〜への
+ * フォールバック含む）へ追従すること。
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
@@ -62,7 +66,9 @@ describe("DesktopPreviewManager boot() retry", () => {
       .mockResolvedValueOnce(jsonResponse(400, { error: NO_PACKAGE_JSON_ERROR }))
       .mockResolvedValueOnce(
         jsonResponse(200, { url: "http://localhost:5174/", port: 5174 }),
-      );
+      )
+      // 4回目は boot 完了後の /projects/ready 実ポート確認（防御チェック）
+      .mockResolvedValueOnce(jsonResponse(200, { ready: true, port: 5174 }));
 
     const bootPromise = manager.boot("app-1");
     // 1回目失敗(t≈0) → 500ms 後リトライ → 2回目失敗(t≈500) → 1000ms 後リトライ
@@ -72,9 +78,15 @@ describe("DesktopPreviewManager boot() retry", () => {
     await vi.advanceTimersByTimeAsync(1000);
     await bootPromise;
 
-    expect(sidecarFetch).toHaveBeenCalledTimes(3);
-    // 全リクエストが同じ appId に POST している
-    for (const call of vi.mocked(sidecarFetch).mock.calls) {
+    // boot リクエスト（POST /api/preview/start）は3回のみ。総呼び出しは
+    // 実ポート確認の GET /projects/ready を含めて4回になる。
+    const startCalls = vi
+      .mocked(sidecarFetch)
+      .mock.calls.filter(([path]) => path === "/api/preview/start");
+    expect(startCalls).toHaveLength(3);
+    expect(sidecarFetch).toHaveBeenCalledTimes(4);
+    // 全 boot リクエストが同じ appId に POST している
+    for (const call of startCalls) {
       expect(call[0]).toBe("/api/preview/start");
       expect(JSON.parse(String(call[1]?.body)).appId).toBe("app-1");
     }
@@ -172,20 +184,137 @@ describe("DesktopPreviewManager boot() retry", () => {
     expect(final.url).toBeNull();
   });
 
-  it("first-attempt success → single request, ready (no behaviour regression)", async () => {
+  it("first-attempt success → single boot request, ready (no behaviour regression)", async () => {
     const manager = new DesktopPreviewManager();
     const states = trackState(manager);
 
-    vi.mocked(sidecarFetch).mockResolvedValue(
-      jsonResponse(200, { url: "http://localhost:5175/", port: 5175 }),
-    );
+    // 1回目: POST /api/preview/start 成功 / 2回目: GET /projects/ready 実ポート確認
+    // （ポート一致 → 補正なし）。それぞれ別々の Response を返す（body 再読み不可のため）。
+    vi.mocked(sidecarFetch)
+      .mockResolvedValueOnce(
+        jsonResponse(200, { url: "http://localhost:5175/", port: 5175 }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { ready: true, port: 5175 }));
 
     await manager.boot("app-2");
 
-    expect(sidecarFetch).toHaveBeenCalledTimes(1);
+    const startCalls = vi
+      .mocked(sidecarFetch)
+      .mock.calls.filter(([path]) => path === "/api/preview/start");
+    expect(startCalls).toHaveLength(1);
+    expect(sidecarFetch).toHaveBeenCalledTimes(2);
     const final = states[states.length - 1];
     expect(final.status).toBe("ready");
     expect(final.url).toBe("http://localhost:5175/");
+    expect(final.error).toBeNull();
+  });
+});
+
+// ─── boot() の url ライフサイクル ─────────────────────────────────────────────
+// アプリ切替時に前アプリの URL/ポート（＝ドキュメント）が pane に残らないこと、
+// および起動完了時に「実際に起動したサーバー」の実ポート（5174 埋まっていれば
+// 5175〜へのフォールバックも含む）へ常に追従することを検証する。
+
+describe("DesktopPreviewManager boot() url lifecycle", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it("boot 開始時に前アプリの url がクリアされ、応答の実ポート（5175 フォールバック）に差し替わる", async () => {
+    const manager = new DesktopPreviewManager();
+
+    // まず app-1 を 5174 で ready にする（ready 確認の port も一致させる）
+    vi.mocked(sidecarFetch)
+      .mockResolvedValueOnce(
+        jsonResponse(200, { url: "http://localhost:5174/", port: 5174 }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { ready: true, port: 5174 }));
+    await manager.boot("app-1");
+    expect(manager.url).toBe("http://localhost:5174/");
+
+    // app-2 の boot 開始を観測するため、start の応答を手動で解決させる
+    const states = trackState(manager);
+    let resolveStart!: (r: Response) => void;
+    const startPromise = new Promise<Response>((resolve) => {
+      resolveStart = resolve;
+    });
+    vi.mocked(sidecarFetch)
+      .mockReturnValueOnce(startPromise)
+      // app-2 の ready 確認（start 応答と同じ実ポートを返す）
+      .mockResolvedValueOnce(jsonResponse(200, { ready: true, port: 5175 }));
+
+    const bootPromise = manager.boot("app-2");
+    await vi.advanceTimersByTimeAsync(0);
+
+    // ★ boot 開始直後: status は booting で url は null — 前アプリの 5174 が
+    //   残っていてはならない（booting 状態で url を伴う通知は一度も無い）。
+    expect(states.some((s) => s.status === "booting" && s.url !== null)).toBe(
+      false,
+    );
+    const afterStart = states[states.length - 1];
+    expect(afterStart.status).toBe("booting");
+    expect(afterStart.url).toBeNull();
+    // 「サーバーの応答待ち」のログが1行出ている
+    expect(
+      afterStart.logs.some((l) => l.includes("Waiting for the dev server")),
+    ).toBe(true);
+
+    // start 応答: 5174 が埋まって 5175 にフォールバックした実ポート
+    resolveStart(jsonResponse(200, { url: "http://localhost:5175/", port: 5175 }));
+    await vi.advanceTimersByTimeAsync(0);
+    await bootPromise;
+
+    // 完了時はレスポンスの実 url をそのまま採用（ポートのハードコード無し）
+    const final = states[states.length - 1];
+    expect(final.status).toBe("ready");
+    expect(final.url).toBe("http://localhost:5175/");
+    expect(final.error).toBeNull();
+    expect(manager.url).toBe("http://localhost:5175/");
+  });
+
+  it("start 応答のポートと /projects/ready の実測が食い違えば実測ポートへ補正される", async () => {
+    const manager = new DesktopPreviewManager();
+    const states = trackState(manager);
+
+    // start は 5174 を返すが、サイドカーの実測ポートは 5176 → 実測を優先
+    vi.mocked(sidecarFetch)
+      .mockResolvedValueOnce(
+        jsonResponse(200, { url: "http://localhost:5174/", port: 5174 }),
+      )
+      .mockResolvedValueOnce(jsonResponse(200, { ready: true, port: 5176 }));
+
+    await manager.boot("app-1");
+
+    const final = states[states.length - 1];
+    expect(final.status).toBe("ready");
+    expect(final.url).toBe("http://localhost:5176/");
+    expect(manager.url).toBe("http://localhost:5176/");
+    expect(final.logs.some((l) => l.includes("actual port 5176"))).toBe(true);
+  });
+
+  it("/projects/ready の確認に失敗しても start 応答の url をそのまま使う", async () => {
+    const manager = new DesktopPreviewManager();
+    const states = trackState(manager);
+
+    vi.mocked(sidecarFetch)
+      .mockResolvedValueOnce(
+        jsonResponse(200, { url: "http://localhost:5174/", port: 5174 }),
+      )
+      .mockRejectedValueOnce(new Error("ready check failed"));
+
+    await manager.boot("app-1");
+
+    const final = states[states.length - 1];
+    expect(final.status).toBe("ready");
+    // 確認失敗は致命的ではない — start 応答の実 url のまま
+    expect(final.url).toBe("http://localhost:5174/");
     expect(final.error).toBeNull();
   });
 });

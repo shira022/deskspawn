@@ -120,7 +120,13 @@ export class DesktopPreviewManager {
     this._appId = appId;
     this.clearLogs();
     this.addLog(`Starting local preview for app: ${appId}`);
-    this.setState({ status: "booting", error: null });
+    // ★ boot 開始時点で url をクリアする — このアプリのサーバーが応答するまで、
+    //   前アプリの URL/ポート（＝前アプリのドキュメント）を pane に残さない。
+    //   サイドカーのポートは 5174 固定ではなく 5174..5179 へフォールバックし
+    //   得るため、url は常に「レスポンスで返ってきた実 url」から設定する。
+    this._url = null;
+    this.setState({ status: "booting", url: null, error: null });
+    this.addLog("Waiting for the dev server to respond with its actual port...");
 
     // サイドカーの実際の進行（bun install → vite起動）を反映した段階的ステータス。
     // レスポンスが来たらタイマーは finally でクリアされる。
@@ -172,6 +178,39 @@ export class DesktopPreviewManager {
         this._url = data.url;
         this.setState({ url: data.url, status: "ready", error: null });
         this.addLog(`Dev server ready at ${data.url}`);
+        // ★ 防御: /api/preview/start の応答 url とサイドカー検出の実ポートを
+        //   GET /projects/ready で1回突き合わせる。食い違っていれば実測ポート
+        //   （実際に開いているポート）を優先して url を作り直す。確認失敗は
+        //   致命的ではないため、その場合は start 応答の url をそのまま使う。
+        try {
+          const readyRes = await sidecarFetch("/projects/ready");
+          if (readyRes.ok) {
+            const readyData = (await readyRes.json().catch(() => ({}))) as {
+              port?: unknown;
+            };
+            const actualPort = Number(readyData?.port);
+            if (
+              Number.isInteger(actualPort) &&
+              actualPort > 0 &&
+              this._appId === appId &&
+              this._status === "ready" &&
+              this._url
+            ) {
+              const urlPort = Number(new URL(this._url).port);
+              if (urlPort !== actualPort) {
+                const corrected = new URL(this._url);
+                corrected.port = String(actualPort);
+                this._url = corrected.toString();
+                this.setState({ url: this._url });
+                this.addLog(
+                  `Adjusted preview URL to the actual port ${actualPort}: ${this._url}`,
+                );
+              }
+            }
+          }
+        } catch {
+          // /projects/ready の確認に失敗してもプレビューは成立している
+        }
         return;
       }
     } catch (e: any) {
