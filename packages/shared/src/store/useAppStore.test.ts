@@ -165,6 +165,28 @@ describe("useAppStore — agent tier", () => {
   });
 });
 
+describe("useAppStore — log panel open count", () => {
+  it("logPanelOpenCount defaults to 0", () => {
+    expect(useAppStore.getState().logPanelOpenCount).toBe(0);
+  });
+
+  it("incrementLogPanelOpen increases the count by one", () => {
+    useAppStore.getState().incrementLogPanelOpen();
+    expect(useAppStore.getState().logPanelOpenCount).toBe(1);
+    useAppStore.getState().incrementLogPanelOpen();
+    expect(useAppStore.getState().logPanelOpenCount).toBe(2);
+  });
+
+  it("decrementLogPanelOpen decreases the count by one", () => {
+    useAppStore.getState().incrementLogPanelOpen();
+    useAppStore.getState().incrementLogPanelOpen();
+    useAppStore.getState().decrementLogPanelOpen();
+    expect(useAppStore.getState().logPanelOpenCount).toBe(1);
+    useAppStore.getState().decrementLogPanelOpen();
+    expect(useAppStore.getState().logPanelOpenCount).toBe(0);
+  });
+});
+
 describe("useAppStore — aiConfig", () => {
   it("setAiConfig saves provider config and api key", async () => {
     const config = {

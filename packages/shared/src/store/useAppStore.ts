@@ -126,6 +126,12 @@ interface Store {
   lastTriage: TriageState | null;
   setLastTriage: (triage: TriageState | null) => void;
 
+  // Execution log panel open count
+  /** 展開中の実行ログパネル（StepLogPanel）の数。ChatPanel の自動スクロール抑制用 */
+  logPanelOpenCount: number;
+  incrementLogPanelOpen: () => void;
+  decrementLogPanelOpen: () => void;
+
   // File Tree
   fileTree: FileNode[];
   setFileTree: (tree: FileNode[]) => void;
@@ -425,6 +431,17 @@ export const useAppStore = create<Store>((set, get) => ({
   setAgentTier: (agentTier) => set({ agentTier }),
   lastTriage: null,
   setLastTriage: (lastTriage) => set({ lastTriage }),
+
+  // ── Execution log panel open count ─────────────────────────────────
+  // StepLogPanel が展開されている数を共有する。ChatPanel はこの値が 0 より
+  // 大きい間、自動スクロールを抑制する（パネル展開でコンテンツが伸びて
+  // も読書位置を維持するため）。StepLogPanel 側は useEffect のクリーンアップ
+  // で増減を同期するため、アンマウント時も exactly-once が保証される。
+  logPanelOpenCount: 0,
+  incrementLogPanelOpen: () =>
+    set((state) => ({ logPanelOpenCount: state.logPanelOpenCount + 1 })),
+  decrementLogPanelOpen: () =>
+    set((state) => ({ logPanelOpenCount: state.logPanelOpenCount - 1 })),
 
   // ── File Tree ──────────────────────────────────────────────────────
   fileTree: [],
