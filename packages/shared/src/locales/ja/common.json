@@ -397,6 +397,7 @@
     "loading": "プレビュー準備中...",
     "rendering": "プレビュー描画中...",
     "loadingApp": "アプリを読み込み中...",
+    "waitingForServer": "アプリの開発サーバーの起動を待っています...",
     "statusBooting": "コンテナを起動中...",
     "statusInstalling": "依存関係をインストール中...",
     "statusStartingDev": "開発サーバーを起動中...",

@@ -397,6 +397,7 @@
     "loading": "Preparing preview...",
     "rendering": "Rendering preview...",
     "loadingApp": "Loading app...",
+    "waitingForServer": "Waiting for the app's dev server to start...",
     "statusBooting": "Starting container...",
     "statusInstalling": "Installing dependencies...",
     "statusStartingDev": "Starting dev server...",

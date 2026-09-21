@@ -568,6 +568,10 @@ export function PreviewPanel() {
           </div>
         ) : previewUrl ? (
           <div className="relative flex h-full items-start justify-center overflow-auto bg-white/50 dark:bg-black/20">
+            {/* key は `${currentAppId}:${previewUrl}` — アプリ切替時に URL が同一
+                文字列（ポート固定など）でも必ず再マウント＝再ナビゲーションさせ、
+                前アプリのドキュメントがフレームに残るのを防ぐ。ポートはサイドカー
+                のフォールバックで変わり得るため、実サーバーの URL に常に一致する。 */}
             <div
               className="relative shrink-0 transition-[width,height] duration-200"
               style={{
@@ -602,12 +606,20 @@ export function PreviewPanel() {
                   </div>
                 </div>
               )}
+              {/* sandbox の allow-same-origin は必須 — これが無いと sandbox
+                  フレームのオリジンが opaque (null) となり、Vite の ES モジュール
+                  リクエスト (/@vite/client, /src/main.tsx など) がクロスオリジン
+                  扱いされて CORS でブロックされ、プレビューが白画面のままになる
+                  （WebView2 実機確認 2026-09-19）。フレームはアプリシェルとは
+                  別オリジン（localhost:5174）で動作するため、allow-same-origin
+                  を付けてもシェル側のリソースにはアクセスできない。 */}
               <iframe
                 id="preview-iframe"
+                key={`${currentAppId}:${previewUrl}`}
                 className="h-full w-full border-0"
                 src={previewUrl}
                 title="App Preview"
-                sandbox="allow-scripts allow-forms allow-popups"
+                sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
                 onLoad={() => {
                   setIframeLoading(false);
                   if (iframeLoadTimeoutRef.current) {
@@ -622,8 +634,10 @@ export function PreviewPanel() {
           <div className="flex h-full items-center justify-center">
             <div className="flex flex-col items-center gap-2 text-muted-foreground">
               <Loader2 className="h-5 w-5 animate-spin" />
+              {/* previewUrl が無い＝このアプリのサーバーが未起動。前アプリの
+                  iframe は描画せず、実ポートの確定を待つ「準備中」表示を出す。 */}
               <p className="text-xs">
-                {t("preview.loading")}
+                {t("preview.waitingForServer")}
               </p>
             </div>
           </div>
