@@ -28,6 +28,7 @@ import {
   getAppId,
   readFile,
   listFiles,
+  applyArtifact,
   createCheckpoint,
   listCheckpoints,
   deleteCheckpointsAfter,
@@ -354,6 +355,62 @@ describe("loadChatHistory", () => {
     const result = await loadChatHistory("app-empty");
 
     expect(result).toEqual([]);
+  });
+});
+
+// ── Security guard hints ─────────────────────────────────────────────────────
+
+describe("applyArtifact security guard messages", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    setAppId("test-app");
+  });
+
+  function apply(filePath: string, content: string) {
+    return applyArtifact({
+      actions: [{ type: "file", mode: "file", filePath, content }],
+    } as any);
+  }
+
+  it("includes an actionable hint for .innerHTML", async () => {
+    const result = await apply("src/App.tsx", 'const html = "<b>x</b>".innerHTML;');
+
+    expect(result.success).toBe(false);
+    const errors = (result.errors || []).join(" ");
+    expect(errors).toContain("Security check failed for src/App.tsx");
+    expect(errors).toContain(".innerHTML");
+    expect(errors.toLowerCase()).toContain("textcontent");
+  });
+
+  it("includes an actionable hint for eval(", async () => {
+    const result = await apply("src/eval.ts", "const run = () => eval('1+1');");
+
+    expect(result.success).toBe(false);
+    const errors = (result.errors || []).join(" ");
+    expect(errors).toContain("Security check failed for src/eval.ts");
+    expect(errors).toContain("eval(");
+    expect(errors.toLowerCase()).toContain("dynamic evaluation");
+  });
+
+  it("includes an actionable hint for process spawning patterns", async () => {
+    const result = await apply(
+      "src/spawn.ts",
+      'import { spawn } from "child_process";\nspawn("ls");',
+    );
+
+    expect(result.success).toBe(false);
+    const errors = (result.errors || []).join(" ");
+    expect(errors).toContain("child_process");
+    expect(errors).toContain("spawn(");
+    expect(errors.toLowerCase()).toContain("cannot spawn processes");
+  });
+
+  it("does not flag safe code", async () => {
+    vi.mocked(readAppFile).mockResolvedValue(null);
+    const result = await apply("src/App.tsx", "export const App = () => <div>hello</div>;");
+
+    expect(result.success).toBe(true);
+    expect(result.errors).toEqual([]);
   });
 });
 

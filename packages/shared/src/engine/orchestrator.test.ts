@@ -382,6 +382,76 @@ describe("runWithTriage", () => {
     expect(generateText).toHaveBeenCalledTimes(1);
   });
 
+  it("collects the errored phase into failedPhases (structural failure signal)", async () => {
+    // テキストにエラー語が現れない経路（例外）でも失敗を判別できること。
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("API failure"));
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Tiny tweak"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1, // manual L1 → coder only
+    );
+
+    expect(result.phases).toEqual(["coder"]);
+    expect(result.failedPhases).toEqual(["coder"]);
+  });
+
+  it("returns an empty failedPhases when no phase errored", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: "Coded",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Tiny tweak"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1,
+    );
+
+    expect(result.failedPhases).toEqual([]);
+  });
+
+  it("stops at a phase that ended with stoppedReason 'error' (no later phases run)", async () => {
+    // manual L3: planner → coder → verifier。2番目の coder が例外で停止したら、
+    // 3番目の verifier を実行せずパイプラインを中断すること。
+    // （catch の errorText は ⚠️ で始まるため、テキストの ⚠️ では判定できない）
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: "Planned", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockRejectedValueOnce(new Error("API failure"));
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Add a feature"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      3, // manual L3
+    );
+
+    expect(result.phases).toEqual(["planner", "coder"]);
+    expect(result.phases).not.toContain("verifier");
+    expect(result.failedPhases).toEqual(["coder"]);
+    expect(generateText).toHaveBeenCalledTimes(2); // planner + coder(next throws)
+  });
+
   it("calls onTriageResult hook with the triage result", async () => {
     vi.mocked(generateText)
       .mockResolvedValueOnce({ text: JSON.stringify({ level: 2, reason: "Tiny tweak" }) } as any)
@@ -566,7 +636,10 @@ describe("runPhase", () => {
     );
 
     expect(result.stoppedReason).toBe("error");
-    expect(result.text).toContain("phaseFailedDetail");
+    // 翻訳済みメッセージが入ること（生の i18n キーが露出しない）。
+    expect(result.text).not.toContain("phaseFailedDetail");
+    expect(result.text).toContain("coder");
+    expect(result.text).toContain("API failure");
     expect(result.hitLimit).toBe(false);
     expect(result.stepCount).toBe(0);
     expect(result.continuationCount).toBe(0);

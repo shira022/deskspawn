@@ -85,11 +85,14 @@ function getErrorHint(provider: string | undefined, cfg: { model?: string; custo
 
   // Rate limit (429)
   if (errMsg.includes('429') || errMsg.includes('rate limit') || errMsg.includes('rate_limit')) {
-    return i18n.t('chat.error.rateLimit', {
-      waitMs: String((error as any)?.retryAfter || ''),
-      retryCount: String((error as any)?.retryCount || ''),
-      maxRetries: String((error as any)?.maxRetries || ''),
-    });
+    const waitMs = String((error as any)?.retryAfter || '');
+    const retryCount = String((error as any)?.retryCount || '');
+    const maxRetries = String((error as any)?.maxRetries || '');
+    // 3値が揃っている経路だけ詳細文面を使う。欠けた値で埋めると
+    // 「（/ 回目、待機 ms）」のように破綻するため、汎用文面へフォールバックする。
+    return waitMs && retryCount && maxRetries
+      ? i18n.t('chat.error.rateLimitDetailed', { waitMs, retryCount, maxRetries })
+      : i18n.t('chat.error.rateLimit');
   }
 
   // Auth / invalid API key (401, 403)
@@ -109,9 +112,12 @@ function getErrorHint(provider: string | undefined, cfg: { model?: string; custo
     errMsg.includes('model') &&
     (errMsg.includes('not found') || errMsg.includes('does not exist') || errMsg.includes('not support'))
   ) {
-    return i18n.t('chat.error.modelNotFound', {
-      model: cfg?.model || '',
-    });
+    const model = cfg?.model || '';
+    // モデル名が取れない場合は空の {{model}} で「モデル「」」と破綻しないよう
+    // プレースホルダを持たない汎用文面を使う。
+    return model
+      ? i18n.t('chat.error.modelNotFoundDetailed', { model })
+      : i18n.t('chat.error.modelNotFound');
   }
 
   // Timeout / abort
@@ -151,14 +157,120 @@ function getErrorHint(provider: string | undefined, cfg: { model?: string; custo
 // ── Pipeline Summary Agent ────────────────────────────────────────────────────
 
 /**
+ * エラーを示す語（error / failed / エラー 等）を検出するためのパターン。
+ * 英単語には語境界 `\b` を付ける。`_` は単語構成文字なので verifier の成功定型文
+ * "get_errors() returns empty" には一致しない（成功報告を偽陽性にしないため）。
+ * 日本語は語境界の概念がないため部分一致のまま。
+ */
+const ERROR_SIGNAL_RE = /\berrors?\b|\bfailed\b|\bfailure\b|\bexception\b|エラー|失敗|例外/gi;
+
+/** 両フェーズに適用する明確な失敗マーカー。 */
+const FAIL_MARKER_RE = /❌|\bFAIL\b/i;
+
+/**
+ * visual_qa にのみ適用する重大マーカー。verifier は "No critical issues" のような
+ * 合格表現を出しうるため critical を verifier 判定には使わない（元実装では
+ * critical は visual_qa のみで判定していた）。
+ */
+const CRITICAL_RE = /\bcritical\b/gi;
+
+/**
+ * エラー語の直前 ≤16 文字に現れる否定・不在。
+ * 英語は前置（"no errors"）、日本語の一部（"未検出のエラー"）を想定。
+ */
+const NEGATION_BEFORE_RE = /(?:\b(?:no|not|without|zero|none|never)\b|n['’]t|\b0\b|未検出)/i;
+
+/**
+ * エラー語の直後 ≤16 文字に現れる否定・不在。
+ * 英語の後置（"Errors: 0" / "errors: none"）と日本語の後置
+ * （「エラーなし」「エラーはありません」「エラー 0件」）の両方を判定する。
+ */
+const NEGATION_AFTER_RE = /(?:なし|無し|ない|ありません|問題なし|未検出|ゼロ|\bnone\b|\bzero\b|\b0\b)/i;
+
+/** エラー語の直後 ≤16 文字に現れる解消表現。 */
+const RESOLUTION_AFTER_RE = /(?:resolved|fixed|解消|修正済|対応済|済み)/i;
+
+/** エラー語の直前・直後の判定窓（文字数）。 */
+const NEGATION_BEFORE_WINDOW = 16;
+const NEGATION_AFTER_WINDOW = 16;
+
+/** 否定判定のときに越えて遡らない節区切り（句読点・改行・閉じ括弧）。 */
+const CLAUSE_BOUNDARY_RE = /[.。!?！？\n）)]/;
+
+/**
+ * エラー語の直前 ≤16 文字を、最後の節区切り以降に切り詰めて返す。
+ * "No files changed. 3 errors found" のような、節をまたいだ否定語で
+ * 本物のエラーを抑制しないため。
+ */
+function getBeforeClause(text: string, index: number): string {
+  const segment = text.slice(Math.max(0, index - NEGATION_BEFORE_WINDOW), index);
+  let cut = -1;
+  for (let i = 0; i < segment.length; i++) {
+    if (CLAUSE_BOUNDARY_RE.test(segment[i])) cut = i;
+  }
+  return cut >= 0 ? segment.slice(cut + 1) : segment;
+}
+
+/**
+ * テキスト中に「否定・解消されていない」pattern の出現が含まれるかを判定する。
+ * 直前は節区切りを越えずに否定語を探し、直後は否定語（0 / none / なし 等）と
+ * 解消表現（resolved / 修正済 等）を抑制に使う。
+ *
+ * 肯定語（passed / success / clean / 正常 / 成功）は抑制に使わない。
+ * 「Verification passed, but 1 failure remains」のような本物のエラーを
+ * 見逃さないため、抑制は近接した否定・解消表現に限定する。
+ */
+function hasUnnegatedMatch(text: string, pattern: RegExp): boolean {
+  if (!text) return false;
+  pattern.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.exec(text)) !== null) {
+    if (match[0].length === 0) {
+      pattern.lastIndex++;
+      continue;
+    }
+    const before = getBeforeClause(text, match.index);
+    const afterStart = match.index + match[0].length;
+    const after = text.slice(afterStart, afterStart + NEGATION_AFTER_WINDOW);
+    if (NEGATION_BEFORE_RE.test(before)) continue;
+    if (NEGATION_AFTER_RE.test(after)) continue;
+    if (RESOLUTION_AFTER_RE.test(after)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** テキスト中に否定されていないエラー語が含まれるか。 */
+function hasUnnegatedError(text: string): boolean {
+  return hasUnnegatedMatch(text, ERROR_SIGNAL_RE);
+}
+
+/** テキスト中に否定されていない critical 表現が含まれるか（visual_qa 専用）。 */
+function hasUnnegatedCritical(text: string): boolean {
+  return hasUnnegatedMatch(text, CRITICAL_RE);
+}
+
+/** ❌ / FAIL の明確な失敗マーカー（verifier / visual_qa 共通）。 */
+function hasFailMarker(text: string): boolean {
+  return !!text && FAIL_MARKER_RE.test(text);
+}
+
+/**
  * Summarize all phase outputs into a single clean response.
  * In simpleMode: user-friendly summary (what was built, key features, errors).
  * In !simpleMode: includes technical details (files, tests, build status).
+ *
+ * @param stepErrorCount stepLogs に記録された error 件数（試行錯誤を
+ *   検証フェーズの失敗と区別して情報表示するために使う）。
+ * @param phaseFailed 例外などで停止したフェーズが存在するか（failedPhases）。
+ *   テキストにエラー語が現れない失敗でも警告を出すための構造的シグナル。
  */
-function summarizePipelineResult(
+export function summarizePipelineResult(
   phaseOutputs: Record<string, { label: string; text: string }>,
   simpleMode?: boolean,
   language?: string,
+  stepErrorCount = 0,
+  phaseFailed = false,
 ): string {
   const phases = ["planner", "coder", "verifier", "visual_qa"];
   const availablePhases = phases.filter((p) => phaseOutputs[p]?.text?.trim());
@@ -171,10 +283,24 @@ function summarizePipelineResult(
 
   // Extract key information from phase outputs
   const fileChanges = coderText.match(/(?:created?|updated?|modified?|written?|written to|changes? (?:made|in)|files? (?:created?|modified?))[\s:]+([^\n]+)/gi) || [];
-  const hasErrors = /❌|error|failed|exception/i.test(verifierText) || /❌|error|failed|exception/i.test(visualQaText);
-  const hasWarnings = /⚠️|warning/i.test(verifierText) || /⚠️|warning/i.test(visualQaText);
+  // verifier / visual_qa それぞれの「否定されていないエラー語」。critical は
+  // visual_qa のみに適用する（verifier は "No critical issues" のような
+  // 合格表現を出しうるため）。
+  const verifierHasError = hasFailMarker(verifierText) || hasUnnegatedError(verifierText);
+  const visualQaHasError =
+    hasFailMarker(visualQaText) ||
+    hasUnnegatedError(visualQaText) ||
+    hasUnnegatedCritical(visualQaText);
+  // hasErrors: いずれかのフェーズに未否定のエラー語 / 失敗マーカーがあるか。
+  const hasErrors = verifierHasError || visualQaHasError;
+  // simple mode は、テキストに出ない構造的失敗（phaseFailed）も検証失敗として警告する。
+  const verificationFailed = phaseFailed || hasErrors;
+  const hasWarnings = /⚠️|warning|警告/i.test(verifierText) || /⚠️|warning|警告/i.test(visualQaText);
   const passStatus = /✅|PASS|passed|success/i.test(visualQaText);
-  const failStatus = /❌|FAIL|failed|critical/i.test(visualQaText);
+  // technical mode: ❌ は visual_qa の明確な失敗のみ。verifier のみのエラー語は
+  // hasErrors として「⚠️ 警告付きパス」に残す（旧来の分岐を到達可能に戻す）。
+  const failStatus = hasFailMarker(visualQaText) || hasUnnegatedCritical(visualQaText);
+  const hasStepErrors = stepErrorCount > 0;
 
   // Extract file list from coder output
   const fileListMatch = coderText.match(/```[\s\S]*?(?:created?|files?)[\s\S]*?```/gi) || [];
@@ -197,13 +323,15 @@ function summarizePipelineResult(
         parts.push(`**ファイル数**: ${fileCount} ファイルを作成・更新しました\n`);
       }
 
-      if (failStatus) {
+      if (verificationFailed) {
         parts.push("⚠️ **ステータス**: 一部の問題が検出されました。詳細は下の「フェーズ詳細」で確認できます。\n");
-      } else if (passStatus || !hasErrors) {
+      } else if (hasStepErrors) {
+        parts.push(`ℹ️ **ステータス**: 生成中に ${stepErrorCount} 件のツールエラーがありましたが、生成は完了しました。\n`);
+      } else {
         parts.push("✅ **ステータス**: 正常に生成されました\n");
       }
 
-      if (hasErrors) {
+      if (verificationFailed) {
         parts.push("⚠️ **注意**: エラーが検出されました。修正が必要な場合があります。\n");
       } else if (hasWarnings) {
         parts.push("💡 **ヒント**: 一部の警告がありますが、アプリは動作します。\n");
@@ -221,13 +349,15 @@ function summarizePipelineResult(
         parts.push(`**Files**: ${fileCount} file(s) created/updated\n`);
       }
 
-      if (failStatus) {
+      if (verificationFailed) {
         parts.push("⚠️ **Status**: Some issues were detected. Check 'Phase Details' below for more info.\n");
-      } else if (passStatus || !hasErrors) {
+      } else if (hasStepErrors) {
+        parts.push(`ℹ️ **Status**: ${stepErrorCount} tool error(s) occurred during generation, but the generation completed.\n`);
+      } else {
         parts.push("✅ **Status**: Generated successfully\n");
       }
 
-      if (hasErrors) {
+      if (verificationFailed) {
         parts.push("⚠️ **Note**: Errors were detected. You may need to make corrections.\n");
       } else if (hasWarnings) {
         parts.push("💡 **Tip**: Some warnings were found, but the app should work.\n");
@@ -261,10 +391,10 @@ function summarizePipelineResult(
     parts.push("### バリデーター\n");
     if (failStatus) {
       parts.push("❌ **失敗**: 問題が検出されました\n");
-    } else if (passStatus) {
-      parts.push("✅ **パス**: 問題なし\n");
     } else if (hasErrors) {
       parts.push("⚠️ **警告付きパス**: エラーあり\n");
+    } else if (passStatus) {
+      parts.push("✅ **パス**: 問題なし\n");
     }
     if (verifierText) {
       parts.push(verifierText.substring(0, 500) + (verifierText.length > 500 ? "..." : "") + "\n");
@@ -293,10 +423,10 @@ function summarizePipelineResult(
     parts.push("### Verifier\n");
     if (failStatus) {
       parts.push("❌ **Failed**: Issues detected\n");
-    } else if (passStatus) {
-      parts.push("✅ **Passed**: No issues\n");
     } else if (hasErrors) {
       parts.push("⚠️ **Passed with warnings**: Errors found\n");
+    } else if (passStatus) {
+      parts.push("✅ **Passed**: No issues\n");
     }
     if (verifierText) {
       parts.push(verifierText.substring(0, 500) + (verifierText.length > 500 ? "..." : "") + "\n");
@@ -725,6 +855,8 @@ export function useChatStream(): UseChatStreamReturn {
             localPhaseOutputs,
             settings.simpleMode,
             settings.language,
+            stepLogs.filter((l) => l.status === "error").length,
+            pipelineResult.failedPhases.length > 0,
           );
           updateMessage(botMsgId, {
             content: summaryText || pipelineResult.text,
