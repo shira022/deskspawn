@@ -203,6 +203,9 @@ export interface TokenUsage {
   provider?: string;
   /** Which AI model was used (e.g. "gpt-4o", "claude-sonnet-4") */
   model?: string;
-  /** Estimated cost in USD (calculated client-side from models.dev pricing) */
+  /**
+   * Estimated cost in USD (calculated client-side from models.dev pricing).
+   * `undefined` = pricing unknown, `0` = known to be zero.
+   */
   estimatedCost?: number;
 }

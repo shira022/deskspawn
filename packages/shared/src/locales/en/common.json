@@ -202,6 +202,7 @@
     "generationComplete": "App generation complete{{sparkle}}{{cost}}",
     "usageTokens": "tokens",
     "totalTokensAndCost": "Total tokens and estimated cost",
+    "costUnknown": "Cost unknown (model pricing unavailable)",
     "agentTier": {
       "groupLabel": "Agent setup",
       "label": {

@@ -456,12 +456,18 @@ export function ChatMessage({
             )}
             {/* Cost */}
             <span className="opacity-20">|</span>
-            <span className="tabular-nums">
-              ${(message.usage.estimatedCost ?? 0).toLocaleString(undefined, {
-                minimumFractionDigits: 4,
-                maximumFractionDigits: 6,
-              })}
-            </span>
+            {typeof message.usage.estimatedCost !== "number" ? (
+              <span className="tabular-nums" title={t('chat.costUnknown')}>
+                -
+              </span>
+            ) : (
+              <span className="tabular-nums">
+                ${message.usage.estimatedCost.toLocaleString(undefined, {
+                  minimumFractionDigits: 4,
+                  maximumFractionDigits: 6,
+                })}
+              </span>
+            )}
           </div>
         )}
       </div>
