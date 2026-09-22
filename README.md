@@ -91,16 +91,54 @@ without installing anything, then install the desktop app for real work.
 
 ## 🚀 Quick Start
 
-### Desktop App (recommended)
+There are three ways to get DeskSpawn. Pick the one that matches your situation.
 
-1. Download the installer from **[GitHub Releases](https://github.com/shira022/deskspawn/releases)**.
+### 1. Installer (recommended for users)
+
+1. Download the installer from **[GitHub Releases](https://github.com/shira022/deskspawn/releases)**
+   (`.msi` or the NSIS `-setup.exe` on Windows, `.deb` / `.AppImage` on Linux).
 2. Run the installer (Windows 10/11, WebView2 preinstalled).
 3. On first launch, select your language and enter an AI provider API key
    (stored in the OS keychain — never sent to any server beyond your provider).
 4. Click **+ New App**, describe what you want to build, and watch it appear
    in the local preview.
 
-### Web Demo (evaluation)
+> ⚠️ Installers are currently **unsigned**. Windows SmartScreen may warn you on
+> first run; macOS builds are not published because distribution there requires a
+> paid code-signing certificate (use the bootstrap script below instead).
+
+### 2. Bootstrap script (build from source, one command)
+
+If you prefer to build from source — or you are on macOS, where we do not publish
+installers — use the bootstrap script. It detects the required toolchain, tells you
+what it will install, clones or updates the repository, and builds the app.
+
+**Windows (PowerShell):**
+
+```powershell
+git clone https://github.com/shira022/deskspawn.git
+cd deskspawn
+powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1
+```
+
+**Linux / macOS:**
+
+```bash
+git clone https://github.com/shira022/deskspawn.git
+cd deskspawn
+scripts/bootstrap.sh
+```
+
+Both scripts are idempotent — re-running them only does the missing work. Useful
+flags: `--ref <branch|tag>` (default `main`), `--dir <path>` (clone target when run
+outside a checkout), `--no-bundle` (skip installers for a faster build), `--dev`
+(prepare everything and print the `tauri dev` command), `--skip-deps` (do not
+install or check prerequisites). Run with `--help` for the full list.
+
+They never touch your app data (`~/deskspawn/` on Linux/macOS,
+`%USERPROFILE%\deskspawn` on Windows) — only the source checkout.
+
+### 3. Web Demo (evaluation)
 
 Visit **[deskspawn.pages.dev](https://deskspawn.pages.dev)**, configure a
 provider, and try generating an app in your browser.
@@ -113,7 +151,12 @@ provider, and try generating an app in your browser.
 
 - [Node.js](https://nodejs.org/) 20+
 - [pnpm](https://pnpm.io/) (`corepack enable` or `npm install -g pnpm`)
-- For the desktop app: [Rust](https://rustup.rs/) (MSVC toolchain) + VS Build Tools on Windows
+- [Bun](https://bun.sh) — builds the sidecar binary and runs the preview dev server
+- [Rust](https://rustup.rs/) (MSVC toolchain on Windows) + VS Build Tools — desktop app only
+
+> 💡 Shortcut: `scripts/bootstrap.ps1` (Windows) / `scripts/bootstrap.sh`
+> (Linux/macOS) detect and install everything above for you. See
+> [Quick Start](#2-bootstrap-script-build-from-source-one-command).
 
 ### Setup
 
@@ -121,6 +164,9 @@ provider, and try generating an app in your browser.
 git clone https://github.com/shira022/deskspawn.git
 cd deskspawn
 pnpm install
+
+# The desktop app needs the sidecar binary (externalBin) before it will build:
+cd apps/desktop && bun scripts/build-sidecar.mjs && cd ../..
 ```
 
 ### Commands
@@ -221,25 +267,3 @@ This project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
 ## 📄 License
 
 [MIT](LICENSE) © DeskSpawn
-
----
-
-## 🇯🇵 日本語
-
-**DeskSpawn** は AI によるアプリ開発プラットフォームです。チャットで作りたいアプリを
-伝えると、AI がコードを生成し、実ファイルとして `~/deskspawn/apps/` に保存して、
-ローカルプレビューで即確認できます。**デスクトップアプリが本編**で、Web版は体験用
-デモです。APIキーは OS キーチェーンに保存され、データはあなたの PC から出ません。
-
-- 📥 ダウンロード: [GitHub Releases](https://github.com/shira022/deskspawn/releases)
-- 🌐 ブラウザで試す: [deskspawn.pages.dev](https://deskspawn.pages.dev)
-- 📖 ドキュメント: [Getting Started](docs/getting-started.md) / [Installation](docs/installation.md) / [Spec](docs/spec.md)
-
-**開発者向けメモ（コード構成）:** UI・チャット・AIプロバイダー解決の実体は
-`packages/shared/src/` にあり、**Web 版もデスクトップアプリも同じコードを
-`@deskspawn/shared` alias 経由で import しています**。共有UIやAIロジックを
-直したい場合は `apps/web/src` や `apps/desktop/src` ではなく
-`packages/shared/src` を編集してください。`apps/web/src` は Web 専用の
-エントリ（main.tsx・App.tsx・routes）だけ、`apps/desktop/src` はデスクトップの
-エントリとWindows固有のサービス登録（6ファイル）だけです。詳細は README の
-**Project Structure** を参照。

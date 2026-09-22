@@ -20,7 +20,7 @@ natural language conversations with an AI model.
 ## Configuring AI Providers
 
 DeskSpawn supports multiple AI providers. You can configure them from the
-**model button in the toolbar** → **APIキー設定** (API key settings) dialog.
+**model button in the toolbar** → **API key settings** dialog.
 
 ### Cloud Providers
 
@@ -37,10 +37,15 @@ DeskSpawn supports multiple AI providers. You can configure them from the
 
 To add a cloud provider:
 1. Click the **model button** in the toolbar (next to the app selector).
-2. Click **APIキー設定** (or "設定する" when unconfigured) to open the full dialog.
+2. Click **API key settings** (the dialog opens from the popover; the exact button
+   label depends on whether a provider is already configured).
 3. Select the provider from the dropdown.
 4. Paste your API key (desktop: saved to the OS keychain).
-5. Click **保存** (**Save**).
+5. Click **Save**.
+
+> ℹ️ The UI is available in English and Japanese. Button labels follow your
+> selected language — the screenshots and step names in this document use the
+> English labels.
 
 > Your API key is stored in the **OS keychain** (desktop) or in browser
 > storage — IndexedDB — (web demo, evaluation only), and is never sent
@@ -56,11 +61,11 @@ DeskSpawn can run entirely offline using [Ollama](https://ollama.ai).
    ```bash
    ollama pull codellama
    ```
-3. In DeskSpawn, click the **model button** in the toolbar → **APIキー設定**.
+3. In DeskSpawn, click the **model button** in the toolbar → **API key settings**.
 4. Select **Ollama** as the provider.
 5. Set the endpoint to `http://localhost:11434` (the default).
 6. Select (or enter) the model you pulled.
-7. Click **保存** (**Save**).
+7. Click **Save**.
 
 > Using a local model means no data leaves your machine. Ideal for sensitive
 > work or when you don't have an internet connection.

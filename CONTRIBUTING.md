@@ -8,7 +8,11 @@ Thank you for your interest in contributing to DeskSpawn!
 
 - **Node.js** 20+
 - **pnpm** (`corepack enable` or `npm install -g pnpm`)
+- **Bun** — builds the sidecar binary (`externalBin`) and runs the preview dev server
 - **Rust** (MSVC toolchain) + **VS Build Tools** — only needed for the desktop app (Tauri)
+
+> 💡 Or skip all of this: `scripts/bootstrap.ps1` (Windows) /
+> `scripts/bootstrap.sh` (Linux/macOS) detect and install the toolchain for you.
 
 ### Setup
 
@@ -19,6 +23,9 @@ cd deskspawn
 
 # Install dependencies
 pnpm install
+
+# Desktop app only: build the sidecar binary (externalBin) before the Rust build
+cd apps/desktop && bun scripts/build-sidecar.mjs && cd ../..
 ```
 
 ### Development Workflow
@@ -54,6 +61,27 @@ pnpm --filter web build
 # End-to-end tests
 pnpm test:e2e
 ```
+
+#### Building the desktop app
+
+Building Tauri requires the **sidecar binary** and the **frontend dist** to exist
+first — the Rust build script fails without them:
+
+1. `pnpm --filter desktop build` — emits `apps/desktop/dist` (required by `frontendDist`)
+2. `cd apps/desktop && bun scripts/build-sidecar.mjs` — emits
+   `src-tauri/binaries/deskspawn-sidecar-<target-triple>` (required by `externalBin`)
+3. `pnpm --filter desktop tauri build` — Rust build + installers
+   (add `--no-bundle` for a faster build that only produces the executable)
+
+> ⚠️ The Tauri config's `build.beforeBuildCommand` runs
+> `pnpm --filter desktop build`, so the machine performing the build needs
+> Node + pnpm. On a host without pnpm (e.g. a minimal Windows dev machine with only
+> the Rust toolchain), build the frontend separately and pass a config override that
+> blanks the command: `cargo tauri build --no-bundle --config <file containing
+> {"build":{"beforeBuildCommand":""}}>` from `apps/desktop/src-tauri`.
+
+> 💡 `scripts/bootstrap.ps1` / `scripts/bootstrap.sh` automate all of the above,
+> including choosing between the pnpm and the cargo-override path.
 
 #### E2E modes (e2e/desktop.spec.ts)
 
@@ -228,16 +256,3 @@ Please review [SECURITY.md](SECURITY.md) for our security policy and vulnerabili
 ## License
 
 By contributing, you agree that your contributions will be licensed under the MIT License (see [LICENSE](LICENSE)).
-
----
-
-## 🇯🇵 日本語
-
-コントリビューションの要点（詳細は英語本編を参照）:
-
-- **ブランチ戦略（3ブランチ GitFlow）**: `main`（保護・人間の承認のみ）← `develop`（自動マージ）← `<type>/*`（実装ブランチ）。PR は必ず `develop` をターゲットに。コミットは `<type>: <説明>`（type ∈ {feat, fix, docs, refactor, test, chore}）。
-- **検証コマンド**: 型チェックは `pnpm --filter web exec tsc -b --noEmit` / `pnpm --filter desktop exec tsc -b --noEmit`、ユニットテストは `pnpm --filter web test`、E2E は `pnpm test:e2e`。
-- **⚠️ E2E は実データを消します**: `pnpm test:e2e` は Rust コマンド `reset_app_data` を `beforeAll`/`afterAll` で実行し、アプリレジストリ（`apps/apps.json`）・生成アプリ一式（`apps/app-*`・チャットDB/チェックポイント含む）・UI設定（言語/テーマ等）を削除する。APIキー（OSキーチェーン）とAI設定は保持。開発環境専用で、環境変数 `DESKSPAWN_TEST_RESET=1` が無いと refuse する。実データのあるマシンでは絶対に実行しないこと。
-- **キーチェーン分離**: E2E 実行時は `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` で起動し、テスト用ダミーキーが本番キーチェーン（`com.deskspawn`）に書き込まれるのを防ぐ。
-- **実API E2E は開発者自己責任**: `DESKSPAWN_E2E_REAL=1` + 実キーで実行すると実コストが発生し、キーは OS キーチェーン（本番と同じ場所）に保存される。低クォータのキーを使い、**キーの削除まで自分で行う**。CI では実APIを実行しない（ダミーモードのみ）。
-- **共有コードは `packages/shared/src`**: 両アプリ共通の UI・チャット・AI・i18n は `@deskspawn/shared` alias 経由で import する（ADR-014）。`apps/web/src`（Webエントリのみ）や `apps/desktop/src`（薄いラッパー）を編集して共有ロジックを直さないこと。

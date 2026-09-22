@@ -133,27 +133,3 @@ For answers to common questions about this code of conduct, see the FAQ at
 [Mozilla CoC]: https://github.com/mozilla/diversity
 [FAQ]: https://www.contributor-covenant.org/faq
 [translations]: https://www.contributor-covenant.org/translations
-
----
-
-## 🇯🇵 日本語
-
-### 私たちの誓約
-
-私たちは、メンバー、コントリビューター、リーダーとして、年齢、体格、障害の有無、民族性、性別の特徴や表現、経験の程度、教育、社会経済的地位、国籍、容姿、人種、宗教、性的指向などに関わらず、誰もがハラスメントのない環境でコミュニティに参加できることを誓います。
-
-### 適用範囲
-
-本規範は、すべてのコミュニティスペースに適用されます。また、個人が公の場でコミュニティを公式に代表する場合にも適用されます。
-
-### 報告方法
-
-不快な行為、ハラスメント、その他受け入れがたい行為の報告は、
-[https://github.com/shira022/deskspawn/issues](https://github.com/shira022/deskspawn/issues)
-のイシュートラッカーからメンテナー宛に行ってください(機微な内容の場合は、リポジトリコラボレーター向けの非公開イシューを推奨します)。すべての報告は迅速かつ公平に調査されます。
-
-### 帰属
-
-本規範は [Contributor Covenant][homepage] バージョン2.1を基にしています。
-
-[homepage]: https://www.contributor-covenant.org

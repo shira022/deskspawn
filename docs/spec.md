@@ -124,11 +124,11 @@ agent composition:
 
 | Level | Display name | Phases | Fix rounds | Dummy-data regen | Intent |
 |---|---|---|---|---|---|
-| L1 | 最小 / Minimal | coder | 0 | no | single-shot completion |
-| L2 | 基本 / Basic | coder, verifier | 0 | no | verification only (no planner) |
-| L3 | 標準 / Standard | planner, coder, verifier | 0 | no | plan + implement + verify |
-| L4 | しっかり / Thorough | planner, coder, verifier, visual_qa | 1 | yes | adds visual QA |
-| L5 | 最大 / Maximum | planner, coder, verifier, visual_qa | 2 | yes | full + max 2 fix loops |
+| L1 | Minimal | coder | 0 | no | single-shot completion |
+| L2 | Basic | coder, verifier | 0 | no | verification only (no planner) |
+| L3 | Standard | planner, coder, verifier | 0 | no | plan + implement + verify |
+| L4 | Thorough | planner, coder, verifier, visual_qa | 1 | yes | adds visual QA |
+| L5 | Maximum | planner, coder, verifier, visual_qa | 2 | yes | full + max 2 fix loops |
 
 - **Multi-provider**: OpenAI, Anthropic, Gemini, Bedrock, Azure, Vertex,
   Ollama, any OpenAI-compatible endpoint
@@ -164,13 +164,3 @@ agent composition:
 `scripts/check-versions.mjs` verifies consistency; `scripts/set-version.py`
 bumps every location. 4-part versions are not allowed (Tauri updater
 compatibility).
-
----
-
-## 🇯🇵 日本語
-
-DeskSpawn は**デスクトップアプリをメイン**とした AI アプリ開発プラットフォーム。
-チャットでアプリを記述すると、マルチエージェントパイプラインが設計・実装・検証し、
-ローカルプレビューで即確認できる。生成物は `~/deskspawn/apps/` の**実ファイル**
-として保存され、APIキーは OS キーチェーンに保管される。Web版は体験用デモ
-（IndexedDB 保存・評価目的のみ）。詳細な決定履歴は [docs/adr/](./adr/) を参照。
