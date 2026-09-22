@@ -14,7 +14,7 @@
  * shown in the UI's model selector.  No hardcoded pricing.
  */
 
-import type { ModelInfo, ModelCost } from "../types";
+import type { ModelInfo, ModelCost, TokenUsage } from "../types";
 import { lookupModelCostById } from "./models-fetcher";
 
 // ─── Singleton cache ──────────────────────────────────────────────────────────
@@ -48,6 +48,22 @@ export function clearModelCostCache(): void {
   modelCostCache.clear();
 }
 
+// ─── Pricing resolution ───────────────────────────────────────────────────────
+
+/**
+ * Resolve pricing for a model from the in-memory cache, falling back to the
+ * models.dev catalog (same source as the UI model selector).  Shared by
+ * `calculateCost` and `normalizeStoredCost` so both use identical logic.
+ */
+function resolveModelCost(model: string): ModelCost | undefined {
+  let cost = modelCostCache.get(model);
+  if (!cost) {
+    cost = lookupModelCostById(model) ?? lookupModelCostById(model.toLowerCase());
+    if (cost) modelCostCache.set(model, cost); // warm the fast cache
+  }
+  return cost;
+}
+
 // ─── Calculation ──────────────────────────────────────────────────────────────
 
 export interface CostCalcInput {
@@ -75,7 +91,7 @@ export interface CostCalcInput {
   /**
    * The model ID (e.g. "gpt-4o", "claude-sonnet-4-20250514").
    * Used to look up pricing from the cache.  If omitted or not found
-   * in cache the cost is $0.
+   * in cache the cost is unknown (`undefined`).
    */
   model?: string;
 }
@@ -87,18 +103,18 @@ export interface CostCalcInput {
  * (cacheRead, reasoning, …) it is used; otherwise the standard
  * input/output rate applies.
  *
- * Returns $0 for models without known pricing (ollama, custom, or
- * very new models not yet in models.dev).
+ * Returns `undefined` when the model's pricing is unknown (ollama,
+ * custom, or very new models not yet in models.dev); `0` only when
+ * pricing is known and the total is zero.
  */
-export function calculateCost(usage: CostCalcInput): number {
-  let cost = usage.model ? modelCostCache.get(usage.model) : undefined;
-  // Fall back to the models.dev catalog (same source as the UI model selector)
-  if (!cost && usage.model) {
-    cost = lookupModelCostById(usage.model) ?? lookupModelCostById(usage.model.toLowerCase());
-    if (cost) modelCostCache.set(usage.model, cost); // warm the fast cache
-  }
-  if (!cost) return 0;
+export function calculateCost(usage: CostCalcInput): number | undefined {
+  const cost = usage.model ? resolveModelCost(usage.model) : undefined;
+  if (!cost) return undefined;
+  return computeCost(usage, cost);
+}
 
+/** Apply model pricing to token counts (rates are $ per 1M tokens). */
+function computeCost(usage: CostCalcInput, cost: ModelCost): number {
   // Standard tokens
   let total =
     (usage.inputTokens / 1_000_000) * cost.input +
@@ -123,4 +139,33 @@ export function calculateCost(usage: CostCalcInput): number {
   }
 
   return total;
+}
+
+/**
+ * Re-interpret a persisted `estimatedCost` under the current contract.
+ *
+ * Older versions stored `0` whenever pricing was unavailable, which makes
+ * unknown costs indistinguishable from a real `$0`.  This recalculates a
+ * stored `0` from the token counts when the model's pricing is now known:
+ *
+ * - `estimatedCost` is a non-zero number: returned unchanged.
+ * - `estimatedCost` is `0` or not a number (`undefined`/`null`) with
+ *   resolvable pricing: recalculated value (a genuine known-zero stays `0`).
+ * - `estimatedCost` is `0` or not a number with no model / unknown pricing:
+ *   `undefined` (i.e. "unknown") — never coerced to a number.
+ *
+ * Values are corrected on read; subsequent saves persist the corrected value.
+ */
+export function normalizeStoredCost(
+  usage: TokenUsage | undefined,
+  resolve: (model: string) => ModelCost | undefined = resolveModelCost,
+): number | undefined {
+  if (!usage) return undefined;
+  if (typeof usage.estimatedCost === "number" && usage.estimatedCost !== 0) {
+    return usage.estimatedCost;
+  }
+  if (!usage.model) return undefined;
+  const cost = resolve(usage.model);
+  if (!cost) return undefined;
+  return computeCost(usage, cost);
 }

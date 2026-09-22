@@ -9,6 +9,8 @@ vi.mock("react-i18next", () => ({
       const translations: Record<string, string> = {
         "statusBar.sidecarConnected": "Sidecar ✓",
         "statusBar.sidecarOffline": "Sidecar offline",
+        "chat.usageTokens": "tokens",
+        "chat.totalTokensAndCost": "Total tokens and estimated cost",
       };
       return translations[key] ?? key;
     },
@@ -17,7 +19,17 @@ vi.mock("react-i18next", () => ({
 }));
 
 // Mock Zustand store
-const mockStore = {
+interface MockUsage {
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost?: number | null;
+}
+const mockStore: {
+  agentStatus: string;
+  agentStepCount: number;
+  agentMaxSteps: number;
+  messages: Array<{ usage?: MockUsage }>;
+} = {
   agentStatus: "idle",
   agentStepCount: 0,
   agentMaxSteps: 8,
@@ -57,6 +69,7 @@ describe("StatusBar", () => {
     delete (window as unknown as { __DESKSPAWN_SIDECAR_PORT__?: number })
       .__DESKSPAWN_SIDECAR_PORT__;
     invokeMock.mockReset();
+    mockStore.messages = [];
   });
 
   it("shows Browser indicator in web environment", () => {
@@ -92,5 +105,50 @@ describe("StatusBar", () => {
   it("does not query sidecar status in web environment", () => {
     render(<StatusBar />);
     expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("sums only known costs and prefixes ≥ when some costs are unknown", () => {
+    mockStore.messages = [
+      { usage: { inputTokens: 1000, outputTokens: 0, estimatedCost: 0.0057 } },
+      { usage: { inputTokens: 10, outputTokens: 0 } },
+    ];
+    render(<StatusBar />);
+    expect(screen.getByText("≥ $0.0057")).toBeInTheDocument();
+  });
+
+  it("does not prefix ≥ when every recorded usage has a known cost", () => {
+    mockStore.messages = [
+      { usage: { inputTokens: 1000, outputTokens: 0, estimatedCost: 0.0057 } },
+      { usage: { inputTokens: 10, outputTokens: 0, estimatedCost: 0.0057 } },
+    ];
+    render(<StatusBar />);
+    expect(screen.getByText("$0.0114")).toBeInTheDocument();
+    expect(screen.queryByText("≥ $0.0114")).not.toBeInTheDocument();
+  });
+
+  it("shows '-' when every recorded usage has an unknown cost", () => {
+    mockStore.messages = [
+      { usage: { inputTokens: 1000, outputTokens: 0 } },
+      { usage: { inputTokens: 20, outputTokens: 0 } },
+    ];
+    render(<StatusBar />);
+    expect(screen.getByText("-")).toBeInTheDocument();
+  });
+
+  it("treats a legacy null estimatedCost as unknown, not as a known $0", () => {
+    mockStore.messages = [
+      { usage: { inputTokens: 1000, outputTokens: 0, estimatedCost: null } },
+    ];
+    render(<StatusBar />);
+    expect(screen.getByText("-")).toBeInTheDocument();
+    expect(screen.queryByText("$0.0000")).not.toBeInTheDocument();
+  });
+
+  it("hides the cost display when there are no tokens", () => {
+    mockStore.messages = [
+      { usage: { inputTokens: 0, outputTokens: 0, estimatedCost: 1 } },
+    ];
+    render(<StatusBar />);
+    expect(screen.queryByText("$1.0000")).not.toBeInTheDocument();
   });
 });

@@ -133,9 +133,15 @@ function CostDisplay() {
     (sum, m) => sum + (m.usage?.inputTokens ?? 0) + (m.usage?.outputTokens ?? 0) + (m.usage?.reasoningTokens ?? 0) + (m.usage?.cachedInputTokens ?? 0),
     0,
   );
-  const totalCost = messages.reduce(
-    (sum, m) => sum + (m.usage?.estimatedCost ?? 0),
-    0,
+  const totalCost = messages
+    .map((m) => m.usage?.estimatedCost)
+    .filter((c): c is number => typeof c === "number")
+    .reduce((sum, c) => sum + c, 0);
+  const hasUnknownCost = messages.some(
+    (m) => m.usage != null && typeof m.usage.estimatedCost !== "number",
+  );
+  const hasKnownCost = messages.some(
+    (m) => typeof m.usage?.estimatedCost === "number",
   );
 
   if (totalTokens <= 0) return null;
@@ -146,8 +152,11 @@ function CostDisplay() {
         {totalTokens.toLocaleString()}
       </span>
       <span className="text-[10px] text-muted-foreground/30">{t('chat.usageTokens')}</span>
-      <span className="text-[10px] font-medium tabular-nums">
-        ${totalCost.toFixed(4)}
+      <span
+        className="text-[10px] font-medium tabular-nums"
+        title={hasKnownCost ? undefined : t('chat.costUnknown')}
+      >
+        {hasKnownCost ? `${hasUnknownCost ? "≥ " : ""}$${totalCost.toFixed(4)}` : "-"}
       </span>
     </div>
   );

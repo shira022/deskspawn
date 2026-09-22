@@ -202,6 +202,7 @@
     "generationComplete": "アプリ生成が完了しました{{sparkle}}{{cost}}",
     "usageTokens": "トークン",
     "totalTokensAndCost": "合計トークン数と推定費用",
+    "costUnknown": "コスト不明（モデル単価が未取得）",
     "agentTier": {
       "groupLabel": "エージェント構成",
       "label": {

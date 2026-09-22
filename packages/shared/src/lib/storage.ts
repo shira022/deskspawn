@@ -14,9 +14,10 @@
  * Only outbound communication is to AI provider APIs and CDNs.
  */
 
-import type { AppSettings } from "../types";
+import type { AppSettings, TokenUsage } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
 import { SETTINGS_KEY } from "./constants";
+import { normalizeStoredCost } from "./cost";
 import { isDesktopEnv } from "./platform";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -443,11 +444,29 @@ export async function deleteAppDatabase(appId: string): Promise<void> {
 
 // ── Chat History Operations ───────────────────────────────────────────────────
 
+/**
+ * Old versions persisted `estimatedCost: 0` when pricing was unavailable.
+ * Correct those on read (the correction is applied at read time; subsequent
+ * saves persist the corrected value): a `0` (or non-number) whose model pricing
+ * is now known is recalculated, otherwise it is reinterpreted as unknown
+ * (`undefined`).  A non-zero number is untouched.
+ */
+function normalizeMessageCost(message: any): any {
+  const usage = message?.usage as TokenUsage | undefined;
+  if (!usage) return message;
+  const estimatedCost = normalizeStoredCost(usage);
+  if (estimatedCost === usage.estimatedCost) return message;
+  return { ...message, usage: { ...usage, estimatedCost } };
+}
+
 export async function getChatHistory(appId: string): Promise<any[]> {
-  if (isDesktopEnv()) {
-    const { getChatHistoryDesktop } = await import("./storage-desktop");
-    return getChatHistoryDesktop(appId);
-  }
+  const messages = isDesktopEnv()
+    ? await (await import("./storage-desktop")).getChatHistoryDesktop(appId)
+    : await getChatHistoryWeb(appId);
+  return messages.map(normalizeMessageCost);
+}
+
+async function getChatHistoryWeb(appId: string): Promise<any[]> {
   const db = await openDB();
   const tx = db.transaction("chat_history", "readonly");
   const store = tx.objectStore("chat_history");

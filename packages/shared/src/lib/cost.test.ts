@@ -1,11 +1,12 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import {
   calculateCost,
+  normalizeStoredCost,
   setModelCostCache,
   setModelCost,
   clearModelCostCache,
 } from "./cost";
-import type { ModelInfo, ModelCost } from "../types";
+import type { ModelInfo, ModelCost, TokenUsage } from "../types";
 
 // Mock models-fetcher so we control lookupModelCostById
 vi.mock("./models-fetcher", () => ({
@@ -30,15 +31,15 @@ const sampleCost: ModelCost = {
 };
 
 describe("calculateCost", () => {
-  it("returns 0 when no model is provided", () => {
+  it("returns undefined when no model is provided", () => {
     const result = calculateCost({
       inputTokens: 1000,
       outputTokens: 500,
     });
-    expect(result).toBe(0);
+    expect(result).toBeUndefined();
   });
 
-  it("returns 0 when model is not in cache and lookupModelCostById returns undefined", () => {
+  it("returns undefined when model is not in cache and lookupModelCostById returns undefined", () => {
     mockLookupModelCostById.mockReturnValue(undefined);
 
     const result = calculateCost({
@@ -46,7 +47,7 @@ describe("calculateCost", () => {
       inputTokens: 1000,
       outputTokens: 500,
     });
-    expect(result).toBe(0);
+    expect(result).toBeUndefined();
   });
 
   it("falls back to lookupModelCostById when model not in cache", () => {
@@ -184,7 +185,7 @@ describe("calculateCost", () => {
     expect(result).toBeCloseTo(12.0, 5);
   });
 
-  it("returns 0 when all tokens are 0", () => {
+  it("returns 0 with zero tokens when pricing is known (distinct from unknown)", () => {
     setModelCost("gpt-4o", sampleCost);
 
     const result = calculateCost({
@@ -193,16 +194,17 @@ describe("calculateCost", () => {
       outputTokens: 0,
     });
 
+    // Known pricing + zero tokens is a real $0, never `undefined`.
     expect(result).toBe(0);
   });
 
-  it("returns 0 with zero tokens and no model", () => {
+  it("returns undefined with zero tokens and no model", () => {
     const result = calculateCost({
       inputTokens: 0,
       outputTokens: 0,
     });
 
-    expect(result).toBe(0);
+    expect(result).toBeUndefined();
   });
 
   it("ignores reasoningTokens when undefined or 0", () => {
@@ -385,7 +387,7 @@ describe("setModelCostCache", () => {
       inputTokens: 500_000,
       outputTokens: 0,
     });
-    expect(resultC).toBe(0);
+    expect(resultC).toBeUndefined();
   });
 
   it("overwrites existing cache entries", () => {
@@ -417,7 +419,7 @@ describe("clearModelCostCache", () => {
       outputTokens: 500_000,
     });
 
-    expect(result).toBe(0);
+    expect(result).toBeUndefined();
   });
 
   it("allows re-populating after clear", () => {
@@ -432,5 +434,107 @@ describe("clearModelCostCache", () => {
     });
 
     expect(result).toBeCloseTo(10.5, 5);
+  });
+});
+
+describe("normalizeStoredCost", () => {
+  const usage = (overrides: Partial<TokenUsage>): TokenUsage => ({
+    inputTokens: 1_000_000,
+    outputTokens: 0,
+    timestamp: "2026-01-01T00:00:00.000Z",
+    ...overrides,
+  });
+
+  it("recalculates a stored 0 when the model pricing is known", () => {
+    setModelCost("gpt-4o", sampleCost);
+
+    const result = normalizeStoredCost(
+      usage({ model: "gpt-4o", estimatedCost: 0 }),
+    );
+
+    // 1M input @ $3/1M
+    expect(result).toBeCloseTo(3.0, 5);
+  });
+
+  it("uses the provided resolver for recalculation", () => {
+    const resolve = vi.fn().mockReturnValue(sampleCost);
+
+    const result = normalizeStoredCost(
+      usage({ model: "not-in-cache", inputTokens: 2_000_000, estimatedCost: 0 }),
+      resolve,
+    );
+
+    expect(resolve).toHaveBeenCalledWith("not-in-cache");
+    expect(result).toBeCloseTo(6.0, 5);
+  });
+
+  it("returns undefined for a stored 0 with an unknown model", () => {
+    const resolve = vi.fn().mockReturnValue(undefined);
+
+    const result = normalizeStoredCost(
+      usage({ model: "unknown-model", estimatedCost: 0 }),
+      resolve,
+    );
+
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined for a stored 0 without a model", () => {
+    const result = normalizeStoredCost(usage({ estimatedCost: 0 }));
+    expect(result).toBeUndefined();
+  });
+
+  it("keeps a known zero (pricing resolved, zero tokens)", () => {
+    setModelCost("gpt-4o", sampleCost);
+
+    const result = normalizeStoredCost(
+      usage({ model: "gpt-4o", inputTokens: 0, outputTokens: 0, estimatedCost: 0 }),
+    );
+
+    expect(result).toBe(0);
+  });
+
+  it("leaves a non-zero stored cost unchanged", () => {
+    const result = normalizeStoredCost(
+      usage({ model: "gpt-4o", estimatedCost: 1.23 }),
+    );
+    expect(result).toBe(1.23);
+  });
+
+  it("recalculates a stored null when the model pricing is known", () => {
+    setModelCost("gpt-4o", sampleCost);
+
+    const result = normalizeStoredCost(
+      usage({
+        model: "gpt-4o",
+        estimatedCost: null as unknown as number,
+      }),
+    );
+
+    // 1M input @ $3/1M
+    expect(result).toBeCloseTo(3.0, 5);
+  });
+
+  it("returns undefined for a stored null with an unknown model (never coerced)", () => {
+    const resolve = vi.fn().mockReturnValue(undefined);
+
+    const result = normalizeStoredCost(
+      usage({
+        model: "unknown-model",
+        estimatedCost: null as unknown as number,
+      }),
+      resolve,
+    );
+
+    expect(result).toBeUndefined();
+  });
+
+  it("leaves an undefined stored cost unchanged", () => {
+    const result = normalizeStoredCost(usage({ model: "gpt-4o" }));
+    expect(result).toBeUndefined();
+  });
+
+  it("returns undefined for undefined usage", () => {
+    expect(normalizeStoredCost(undefined)).toBeUndefined();
   });
 });
