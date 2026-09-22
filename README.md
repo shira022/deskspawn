@@ -129,11 +129,19 @@ cd deskspawn
 scripts/bootstrap.sh
 ```
 
-Both scripts are idempotent — re-running them only does the missing work. Useful
-flags: `--ref <branch|tag>` (default `main`), `--dir <path>` (clone target when run
-outside a checkout), `--no-bundle` (skip installers for a faster build), `--dev`
-(prepare everything and print the `tauri dev` command), `--skip-deps` (do not
-install or check prerequisites). Run with `--help` for the full list.
+Both scripts are idempotent — re-running them only does the missing work. The
+flag spelling differs by shell: `bootstrap.sh` uses POSIX `--ref`/`--dir`/…,
+while `bootstrap.ps1` uses PowerShell's single-dash `-Ref`/`-Dir`/… (PowerShell
+does **not** understand `--ref`). Run with `--help` (POSIX) or `-Help`
+(PowerShell) for the full list.
+
+| POSIX (`bootstrap.sh`) | PowerShell (`bootstrap.ps1`) | Meaning |
+|---|---|---|
+| `--ref <branch\|tag>` | `-Ref <branch\|tag>` | Git ref to check out (default `main`) |
+| `--dir <path>` | `-Dir <path>` | Clone target when run outside a checkout |
+| `--no-bundle` | `-NoBundle` | Skip installers for a faster build |
+| `--dev` | `-Dev` | Prepare everything and print the `tauri dev` command |
+| `--skip-deps` | `-SkipDeps` | Do not install or check prerequisites |
 
 They never touch your app data (`~/deskspawn/` on Linux/macOS,
 `%USERPROFILE%\deskspawn` on Windows) — only the source checkout.

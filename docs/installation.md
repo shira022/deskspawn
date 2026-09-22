@@ -45,9 +45,11 @@ for evaluation. For real work, install or build the desktop app.
 
 ### Updates
 
-The app checks for a newer release on the configured update endpoint when it
-starts and logs the result. If no update endpoint is published yet, the check is
-skipped silently and you can always download the newest installer manually from
+At startup the app checks the configured update endpoint
+(`https://shira022.github.io/deskspawn/updates.json`) in the background and logs
+the result — it does not show a dialog. If the endpoint is not published yet (or
+is unreachable), the check fails and the app only logs a warning; it never blocks
+startup. You can always download the newest installer manually from
 [GitHub Releases](https://github.com/shira022/deskspawn/releases).
 
 > 📝 **Microsoft Store**: a Store listing is planned. Once published, you will also
@@ -80,15 +82,19 @@ scripts/bootstrap.sh
 
 ### Options
 
-| Flag | Default | Meaning |
-|------|---------|---------|
-| `--ref <branch\|tag>` | `main` | Git ref to check out |
-| `--dir <path>` | `~/deskspawn-src` | Where to clone when run **outside** a checkout |
-| `--no-bundle` | off | Faster build without installers (binary only) |
-| `--dev` | off | Prepare everything, then print the `tauri dev` command |
-| `--skip-deps` | off | Do not detect or install prerequisites (CI / advanced) |
+The flag spelling differs by shell: on Linux/macOS use the POSIX `--flag` form,
+on Windows use PowerShell's single-dash `-Flag` form (PowerShell does **not**
+understand `--ref` and would bind it positionally).
 
-Run with `--help` for the full list.
+| POSIX (`bootstrap.sh`) | PowerShell (`bootstrap.ps1`) | Default | Meaning |
+|------|------|---------|---------|
+| `--ref <branch\|tag>` | `-Ref <branch\|tag>` | `main` | Git ref to check out |
+| `--dir <path>` | `-Dir <path>` | `~/deskspawn-src` | Where to clone when run **outside** a checkout |
+| `--no-bundle` | `-NoBundle` | off | Faster build without installers (binary only) |
+| `--dev` | `-Dev` | off | Prepare everything, then print the `tauri dev` command |
+| `--skip-deps` | `-SkipDeps` | off | Do not detect or install prerequisites (CI / advanced) |
+
+Run with `--help` (POSIX) or `-Help` (PowerShell) for the full list.
 
 ### What it installs (and how much disk it needs)
 
@@ -99,13 +105,14 @@ Run with `--help` for the full list.
 | pnpm | via `corepack enable` | — |
 | Bun 1.3.14 | if missing | ~90 MB |
 | Rust (rustup, minimal profile) | if missing | ~300 MB |
+| Tauri CLI (`cargo install tauri-cli --locked`) | cargo-override path only, if `cargo tauri` is missing | a few hundred MB (compiles from source) |
 | Linux native deps (`libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `libsoup-3.0-dev`, `libjavascriptcoregtk-4.1-dev`, `libappindicator3-dev`, `librsvg2-dev`, `patchelf`, …) | Debian/Ubuntu only, if missing | ~250 MB |
 | VS Build Tools (C++ workload) | **never installed automatically** | ~2–6 GB if you install it |
 
 > ⚠️ **VS Build Tools are never installed for you.** They require elevation and a
 > large download, so the script only *detects* them and prints the link:
-> <https://aka.ms/vs/17/release/vs_BuildTools.exe> — select the **Desktop
-> development with C++** workload.
+> <https://visualstudio.microsoft.com/visual-cpp-build-tools/> — select the
+> **Desktop development with C++** workload.
 
 > ⚠️ On Debian/Ubuntu the script uses `sudo` **only** if you already have
 > passwordless sudo (`sudo -n true`). Otherwise it prints the exact `apt-get`

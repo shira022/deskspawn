@@ -43,7 +43,10 @@ permissions:
   contents: write
 
 jobs:
-  # Verifies the tag exists and is contained in origin/main. Fails fast otherwise.
+  # Resolves and verifies the tag, checks it matches the app version, and
+  # creates the GitHub Release once. Fails fast otherwise. Doing all of this in
+  # a single pre-matrix job avoids the parallel build jobs racing to create the
+  # release (see the "Ensure the release exists" step).
   guard:
     name: Verify tag is on main
     runs-on: ubuntu-latest
@@ -59,10 +62,13 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass the input through the environment instead of interpolating it
+          # directly into the shell, to avoid injection via the tag string.
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${{ inputs.tag }}" ]; then
-            TAG="${{ inputs.tag }}"
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${INPUT_TAG}" ]; then
+            TAG="${INPUT_TAG}"
           elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
             # Manual run without a tag input: fall back to the latest release.
             TAG="$(gh release view --json tagName -q .tagName 2>/dev/null || true)"
@@ -85,6 +91,45 @@ jobs:
           fi
           echo "Tag ${TAG} is contained in origin/main."
           echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+      - name: Verify tag matches the app version
+        shell: bash
+        env:
+          TAG: ${{ steps.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Manually created tags can point at an unrelated version, so make
+          # sure the tag (without the leading "v") is exactly the version
+          # recorded in apps/desktop/src-tauri/tauri.conf.json. Otherwise we
+          # would publish artifacts whose manifests say a different version.
+          # `version-consistency` in ci.yml only runs on PRs/pushes, never on a
+          # tag-triggered release, so this must be checked here.
+          conf_version="$(git show "${TAG}:apps/desktop/src-tauri/tauri.conf.json" \
+            | node -e 'let s=""; process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => console.log(JSON.parse(s).version));')"
+          if [ "${TAG#v}" != "${conf_version}" ]; then
+            echo "::error::Tag '${TAG}' does not match the app version '${conf_version}' in tauri.conf.json. Refusing to release."
+            exit 1
+          fi
+          echo "Tag ${TAG} matches app version ${conf_version}."
+      - name: Ensure the release exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Create the release exactly once, in the single `guard` job. The
+          # matrix build jobs run in parallel and previously created it
+          # themselves; on a tag with no release yet both jobs raced on
+          # `gh release create`, the loser got HTTP 422 already_exists and,
+          # under `set -euo pipefail`, aborted before uploading its assets —
+          # the exact "missing assets" failure this workflow exists to fix.
+          # Build jobs now only run `gh release upload --clobber`.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it as-is."
+          else
+            echo "Release $TAG not found; creating it with generated notes."
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
 
   build:
     name: Build ${{ matrix.target }}
@@ -173,10 +218,9 @@ jobs:
           TAG="${{ needs.guard.outputs.tag }}"
           BUNDLE="apps/desktop/src-tauri/target/release/bundle"
 
-          if ! gh release view "$TAG" >/dev/null 2>&1; then
-            echo "Release $TAG not found; creating it with generated notes."
-            gh release create "$TAG" --title "$TAG" --generate-notes
-          fi
+          # The release itself is created by the `guard` job before any matrix
+          # job starts (see the comment there), so the parallel build jobs only
+          # ever upload. `--clobber` makes re-runs idempotent.
 
           # Installers (Windows MSI + NSIS setup, Linux deb/rpm/AppImage) plus
           # updater archives and their signatures when present.

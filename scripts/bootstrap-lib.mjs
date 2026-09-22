@@ -8,6 +8,21 @@
  *
  * Everything in this file is pure and offline: no filesystem, network, or
  * process access. This makes it safe to unit test on any host.
+ *
+ * MIRROR MAP (JS export -> shell counterpart). Keep both sides in sync:
+ *   normalizeRef        -> bootstrap.sh validate_ref(); bootstrap.ps1 relies only on
+ *                          PowerShell parameter binding (no separate ref validator)
+ *   parseBootstrapArgs  -> bootstrap.sh argument loop / bootstrap.ps1 param() block
+ *   parseSemver, compareSemver, meetsMinVersion -> bootstrap.sh version_ge() / bootstrap.ps1 Get-Semver()
+ *   evaluateTools       -> bootstrap.sh ensure_* functions / bootstrap.ps1 Ensure-* functions
+ *   missingPackages     -> bootstrap.sh ensure_linux_deps()
+ *   resolveRepoDir      -> bootstrap.sh resolve_repo() / bootstrap.ps1 Test-IsCheckout + Main
+ *   decideBuildPath     -> bootstrap.sh detect_build_path() / bootstrap.ps1 Resolve-BuildPath
+ *
+ * `bundleArtifactDirs` is NOT mirrored by a named shell function: the shell
+ * scripts and release.yml discover artifacts with `find`/`Get-ChildItem`
+ * globs instead. It is documented here as a reference only, and the tests mark
+ * it as such.
  */
 
 /** Default branch/tag to check out. */
@@ -44,6 +59,14 @@ export const BUILD_OVERRIDE_FILE_NAME = '.bootstrap-build-override.json';
  * to pnpm) so a host with cargo but no pnpm can build an already-built frontend.
  */
 export const BUILD_OVERRIDE_JSON = '{"build":{"beforeBuildCommand":""}}';
+
+/**
+ * Command used to install the Tauri CLI. `cargo tauri` is a cargo subcommand
+ * shipped by the `tauri-cli` crate; it does NOT come with rustup, so a host
+ * that only has cargo cannot build until this is installed (it compiles from
+ * source: several minutes and a few hundred MB of disk).
+ */
+export const TAURI_CLI_INSTALL_COMMAND = 'cargo install tauri-cli --locked';
 
 /** Native packages the Linux Tauri build needs (apt names). */
 export const LINUX_APT_PACKAGES = [
@@ -245,6 +268,11 @@ export function resolveRepoDir({ cwd, isCheckout, requestedDir = null, home }) {
 /**
  * Bundle output directories relative to the repo root, per platform.
  *
+ * REFERENCE ONLY — not mirrored by a named shell function. bootstrap.sh /
+ * bootstrap.ps1 (print_summary / Show-Summary) and release.yml locate
+ * artifacts with `find`/`Get-ChildItem` globs instead. The test marks this as
+ * unmirrored so the file is not misleading about what is covered.
+ *
  * @param {'win32'|'linux'|'darwin'|string} platform value of `process.platform`
  * @returns {string[]}
  */
@@ -267,28 +295,40 @@ export function bundleArtifactDirs(platform) {
  * The Tauri config's `beforeBuildCommand` shells out to `pnpm`, so a machine
  * with cargo but no pnpm can only build when the frontend dist already exists;
  * in that case the scripts run `cargo tauri build` with a config override that
- * blanks `beforeBuildCommand`.
+ * blanks `beforeBuildCommand`. That override still needs the Tauri CLI
+ * (`cargo tauri`), which is a separate cargo subcommand and is NOT installed
+ * by rustup, so it is tracked as its own signal and its own outcome.
  *
  * Both scripts mirror this rule because they must run before Node.js exists.
  * Keep them in sync with this function (see scripts/bootstrap.test.mjs).
  *
- * @param {{pnpm?: boolean, cargo?: boolean, frontendDist?: boolean}} input
- *   `pnpm`/`cargo`: whether each tool is available on PATH.
+ * @param {{pnpm?: boolean, cargo?: boolean, frontendDist?: boolean, tauriCli?: boolean}} input
+ *   `pnpm`/`cargo`/`tauriCli`: whether each tool is available on PATH.
  *   `frontendDist`: whether the pre-built frontend dist already exists.
- * @returns {{path: 'pnpm'|'cargo-override'|'impossible', reason: string}}
+ * @returns {{path: 'pnpm'|'cargo-override'|'install-tauri-cli'|'impossible', reason: string}}
  */
-export function decideBuildPath({ pnpm = false, cargo = false, frontendDist = false } = {}) {
+export function decideBuildPath({ pnpm = false, cargo = false, frontendDist = false, tauriCli = false } = {}) {
   if (pnpm) {
     return {
       path: 'pnpm',
       reason: 'pnpm is available: it installs deps, builds the frontend dist, and drives the Tauri CLI.',
     };
   }
-  if (cargo && frontendDist) {
+  if (cargo && frontendDist && tauriCli) {
     return {
       path: 'cargo-override',
       reason:
-        'pnpm is unavailable but cargo and a pre-built frontend dist are present: using `cargo tauri build` with the beforeBuildCommand override.',
+        'pnpm is unavailable but cargo, the Tauri CLI, and a pre-built frontend dist are present: ' +
+        'using `cargo tauri build` with the beforeBuildCommand override.',
+    };
+  }
+  if (cargo && frontendDist) {
+    return {
+      path: 'install-tauri-cli',
+      reason:
+        'pnpm is unavailable but cargo and a pre-built frontend dist are present. The Tauri CLI is missing ' +
+        "(`cargo tauri` is not installed by rustup); install it with " +
+        `\`${TAURI_CLI_INSTALL_COMMAND}\` (compiles from source: several minutes, a few hundred MB), then re-run.`,
     };
   }
   if (cargo) {

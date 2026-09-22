@@ -21,9 +21,12 @@
       frontend dist is already built. The Tauri config's beforeBuildCommand
       shells out to pnpm, so we pass a --config override that blanks it and run
       `cargo tauri build` directly from apps\desktop\src-tauri.
-      NOTE (--skip-frontend): in this path the frontend dist
-      (apps\desktop\dist) MUST be pre-built; the script fails with an
-      actionable message instead of pretending to build it.
+      This path also needs the Tauri CLI (`cargo tauri`), which rustup does NOT
+      install; if it is missing the script installs it with
+      `cargo install tauri-cli --locked` (compiles from source: several minutes
+      and a few hundred MB of disk) before building.
+      The frontend dist (apps\desktop\dist) MUST be pre-built; the script fails
+      with an actionable message instead of pretending to build it.
     - "impossible": neither route is viable; the script exits with instructions.
 
   The app data root (%USERPROFILE%\deskspawn) is never touched. Only the source
@@ -49,7 +52,13 @@
   Show this help.
 
 .EXAMPLE
-  powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1 --Ref main
+  powershell -ExecutionPolicy Bypass -File scripts\bootstrap.ps1 -Ref main
+
+.NOTES
+  PowerShell binds parameters as -Ref / -Dir / -NoBundle / -Dev / -SkipDeps.
+  The POSIX-style --ref / --dir spellings used by bootstrap.sh are NOT
+  recognised here: `--ref develop` would bind positionally (Ref='--ref',
+  Dir='develop') and fail. Use the single-dash parameter names.
 #>
 [CmdletBinding()]
 param(
@@ -79,6 +88,8 @@ $VsBuildToolsUrl = 'https://visualstudio.microsoft.com/visual-cpp-build-tools/'
 $DesktopDistRelativePath = 'apps\desktop\dist'
 $BuildOverrideFileName = '.bootstrap-build-override.json'
 $BuildOverrideJson = '{"build":{"beforeBuildCommand":""}}'
+# `cargo tauri` is the `tauri-cli` cargo subcommand; rustup does not install it.
+$TauriCliInstallCommand = 'cargo install tauri-cli --locked'
 $script:BuildPath = ''
 
 function Write-Log { param([string]$Message) Write-Host "[bootstrap] $Message" }
@@ -88,6 +99,19 @@ function Die { param([string]$Message) Write-Error "[bootstrap] $Message"; exit 
 function Test-Command {
   param([string]$Name)
   return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
+}
+
+# Is the `tauri-cli` cargo subcommand installed? `cargo tauri` is a subcommand
+# crate, not part of rustup, so it must be checked separately from cargo.
+function Test-TauriCli {
+  if (Test-Command 'cargo-tauri') { return $true }
+  if (-not (Test-Command 'cargo')) { return $false }
+  try {
+    cargo tauri --version *> $null
+    return ($LASTEXITCODE -eq 0)
+  } catch {
+    return $false
+  }
 }
 
 function Get-Semver {
@@ -225,7 +249,13 @@ function Sync-Repo {
     Write-Log "Updating existing clone at $RepoDir (ref: $Ref)."
     git -C $RepoDir fetch --depth 1 origin $Ref
     git -C $RepoDir checkout $Ref
+    # Do NOT swallow this failure: a non-fast-forward or conflicting pull would
+    # otherwise leave a stale/divergent tree that gets built silently.
     git -C $RepoDir pull --ff-only origin $Ref 2>$null
+    if ($LASTEXITCODE -ne 0) {
+      $currentHead = (git -C $RepoDir rev-parse --short HEAD) 2>$null
+      Die "git pull --ff-only failed for ref '$Ref' at commit $currentHead. The local checkout has diverged from origin/$Ref; resolve it manually (e.g. reset or merge) and re-run."
+    }
   } else {
     if ((Test-Path $RepoDir) -and (Get-ChildItem -Force $RepoDir | Select-Object -First 1)) {
       Die "Directory $RepoDir exists and is not a DeskSpawn checkout. Choose another -Dir."
@@ -244,7 +274,9 @@ function Test-FrontendDist {
 }
 
 # Decide (and log) which build route to use. Mirrors decideBuildPath() in
-# scripts/bootstrap-lib.mjs; keep the two in sync. Sets $script:BuildPath.
+# scripts/bootstrap-lib.mjs; keep the two in sync. Sets $script:BuildPath to
+# 'pnpm', 'cargo-override' or 'install-tauri-cli', or dies when the route is
+# 'impossible'.
 function Resolve-BuildPath {
   param([string]$RepoDir)
   if (Test-Command 'pnpm') {
@@ -253,8 +285,15 @@ function Resolve-BuildPath {
     return
   }
   if ((Test-Command 'cargo') -and (Test-FrontendDist -RepoDir $RepoDir)) {
-    $script:BuildPath = 'cargo-override'
-    Write-Log 'Build path: using cargo-tauri override (pnpm not found; reusing the pre-built frontend dist).'
+    if (Test-TauriCli) {
+      $script:BuildPath = 'cargo-override'
+      Write-Log 'Build path: using cargo-tauri override (pnpm not found; reusing the pre-built frontend dist).'
+      return
+    }
+    # cargo + pre-built dist are present, but `cargo tauri` is not: rustup does
+    # not install the Tauri CLI. Main installs it, then uses cargo-override.
+    $script:BuildPath = 'install-tauri-cli'
+    Write-Log 'Build path: cargo-tauri override needs the Tauri CLI, which is not installed (rustup does not provide it).'
     return
   }
   if (Test-Command 'cargo') {
@@ -287,7 +326,7 @@ function Build-Project {
       Write-Log 'Building desktop frontend dist (tsc -b && vite build).'
       pnpm --filter desktop build
     } else {
-      # --skip-frontend: the frontend dist must already exist (checked in
+      # cargo-override path: the frontend dist must already exist (checked in
       # Resolve-BuildPath); there is no Node/pnpm here to build it.
       Write-Log "Skipping pnpm install + frontend build; reusing pre-built dist at $DesktopDistRelativePath."
     }
@@ -352,7 +391,13 @@ function Show-Summary {
   if (Test-Path $bundle) {
     Write-Host '  Installers :'
     Get-ChildItem -Path $bundle -Recurse -File -ErrorAction SilentlyContinue |
-      Where-Object { $_.Name -match '\.(msi|deb|rpm|AppImage)$' -or $_.Name -like '*-setup.exe' } |
+      Where-Object {
+        $_.Name -match '\.(msi|deb|rpm|AppImage|sig)$' -or
+        $_.Name -like '*-setup.exe' -or
+        $_.Name -like '*.AppImage.tar.gz' -or
+        $_.Name -like '*.app.tar.gz' -or
+        $_.Name -like '*.nsis.zip'
+      } |
       ForEach-Object { Write-Host "    $($_.FullName)" }
   }
   if (Test-Path $appBin) { Write-Host "  App binary : $appBin" }
@@ -386,6 +431,16 @@ function Main {
 
   Sync-Repo -RepoDir $repoDir -Ref $Ref
   Resolve-BuildPath -RepoDir $repoDir
+  if ($script:BuildPath -eq 'install-tauri-cli') {
+    Write-Log "Installing the Tauri CLI: $TauriCliInstallCommand"
+    Write-Log 'This compiles from source and can take several minutes and a few hundred MB of disk.'
+    cargo install tauri-cli --locked
+    if (($LASTEXITCODE -ne 0) -or (-not (Test-TauriCli))) {
+      Die "Tauri CLI installation failed. Install it manually with: $TauriCliInstallCommand"
+    }
+    $script:BuildPath = 'cargo-override'
+    Write-Log 'Tauri CLI installed; using the cargo-tauri override path.'
+  }
   Build-Project -RepoDir $repoDir -DevMode:$Dev
 
   if ($Dev) {

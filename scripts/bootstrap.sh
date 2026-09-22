@@ -26,9 +26,12 @@
 #     frontend dist is already built. The Tauri config's beforeBuildCommand
 #     shells out to pnpm, so we pass a --config override that blanks it and run
 #     `cargo tauri build` directly from apps/desktop/src-tauri.
-#     NOTE (--skip-frontend): in this path the frontend dist
-#     (apps/desktop/dist) MUST be pre-built; the script fails with an actionable
-#     message instead of pretending to build it.
+#     This path also needs the Tauri CLI (`cargo tauri`), which rustup does NOT
+#     install; if it is missing the script installs it with
+#     `cargo install tauri-cli --locked` (compiles from source: several minutes
+#     and a few hundred MB of disk) before building.
+#     The frontend dist (apps/desktop/dist) MUST be pre-built; the script fails
+#     with an actionable message instead of pretending to build it.
 #   - "impossible": neither route is viable; the script exits with instructions.
 #
 # Never touches the app data root (~/deskspawn/); it only works inside the
@@ -66,6 +69,8 @@ PINNED_BUN="1.3.14"
 DESKTOP_DIST_RELATIVE_PATH="apps/desktop/dist"
 BUILD_OVERRIDE_FILE_NAME=".bootstrap-build-override.json"
 BUILD_OVERRIDE_JSON='{"build":{"beforeBuildCommand":""}}'
+# `cargo tauri` is the `tauri-cli` cargo subcommand; rustup does not install it.
+TAURI_CLI_INSTALL_COMMAND="cargo install tauri-cli --locked"
 
 LINUX_APT_PACKAGES=(
   build-essential
@@ -102,6 +107,31 @@ EOF
 
 have() { command -v "$1" >/dev/null 2>&1; }
 
+# tauri_cli_available — is the `tauri-cli` cargo subcommand installed?
+# `cargo tauri` is a subcommand crate, not part of rustup, so it must be
+# checked separately from cargo.
+tauri_cli_available() {
+  command -v cargo-tauri >/dev/null 2>&1 && return 0
+  cargo tauri --version >/dev/null 2>&1
+}
+
+# Mirror of scripts/bootstrap-lib.mjs normalizeRef(). Keep the reject/accept
+# sets identical; the tests execute this function and compare it with the lib.
+# Rejects: empty, leading '-', whitespace/control characters, '..', backslash.
+validate_ref() {
+  local ref="$1"
+  case "$ref" in
+    '') die "--ref must not be empty" ;;
+    -*) die "--ref must not start with '-': $ref" ;;
+  esac
+  case "$ref" in
+    *[[:space:]]*|*[[:cntrl:]]*) die "--ref contains whitespace or control characters: $ref" ;;
+  esac
+  case "$ref" in
+    *..*|*\\*) die "--ref contains an unsupported sequence: $ref" ;;
+  esac
+}
+
 # version_ge <actual> <minimum> — numeric dotted comparison, portable to BSD sort.
 version_ge() {
   local actual minimum
@@ -128,10 +158,7 @@ while [ "$#" -gt 0 ]; do
   esac
 done
 
-case "$REF" in
-  ''|*[[:space:]]*|-*) die "Invalid --ref: '$REF'" ;;
-  *..*) die "Invalid --ref: '$REF'" ;;
-esac
+validate_ref "$REF"
 
 # ── OS / privilege detection ────────────────────────────────────────
 
@@ -204,8 +231,21 @@ ensure_node() {
         warn "Cannot install Node.js automatically (need apt-get + curl + passwordless sudo)."
       fi ;;
     Darwin)
-      if have brew; then log "Installing node@22 via Homebrew."; brew install node@22 || warn "brew install node@22 failed.";
-      else warn "Homebrew is unavailable; cannot install Node.js automatically."; fi ;;
+      if have brew; then
+        log "Installing node@22 via Homebrew."
+        brew install node@22 || warn "brew install node@22 failed."
+        # node@22 is keg-only: Homebrew does NOT link it into /opt/homebrew/bin,
+        # so `node` stays unavailable unless we add its bin dir to PATH.
+        local brew_node_prefix
+        brew_node_prefix="$(brew --prefix node@22 2>/dev/null || true)"
+        if [ -n "$brew_node_prefix" ] && [ -d "$brew_node_prefix/bin" ]; then
+          export PATH="$brew_node_prefix/bin:$PATH"
+        else
+          warn "Could not resolve the node@22 Homebrew prefix; add it to PATH manually."
+        fi
+      else
+        warn "Homebrew is unavailable; cannot install Node.js automatically."
+      fi ;;
   esac
   if have node && version_ge "$(node --version)" "$MIN_NODE"; then
     log "node ready: $(node --version)"; return 0
@@ -303,7 +343,13 @@ sync_repo() {
     log "Updating existing clone at $REPO_DIR (ref: $REF)."
     git -C "$REPO_DIR" fetch --depth 1 origin "$REF"
     git -C "$REPO_DIR" checkout "$REF"
-    git -C "$REPO_DIR" pull --ff-only origin "$REF" 2>/dev/null || true
+    # Do NOT swallow this failure: a non-fast-forward or conflicting pull would
+    # otherwise leave a stale/divergent tree that gets built silently.
+    if ! git -C "$REPO_DIR" pull --ff-only origin "$REF"; then
+      local current_head
+      current_head="$(git -C "$REPO_DIR" rev-parse --short HEAD 2>/dev/null || printf 'unknown')"
+      die "git pull --ff-only failed for ref '$REF' at commit $current_head. The local checkout has diverged from origin/$REF; resolve it manually (e.g. reset or merge) and re-run."
+    fi
   else
     if [ -e "$REPO_DIR" ] && [ -n "$(ls -A "$REPO_DIR" 2>/dev/null || true)" ]; then
       die "Directory $REPO_DIR exists and is not a DeskSpawn checkout. Choose another --dir."
@@ -321,7 +367,9 @@ frontend_dist_exists() {
 }
 
 # Decide (and log) which build route to use. Mirrors decideBuildPath() in
-# scripts/bootstrap-lib.mjs; keep the two in sync. Sets BUILD_PATH.
+# scripts/bootstrap-lib.mjs; keep the two in sync. Sets BUILD_PATH to 'pnpm',
+# 'cargo-override' or 'install-tauri-cli', or dies when the route is
+# 'impossible'.
 detect_build_path() {
   if have pnpm; then
     BUILD_PATH="pnpm"
@@ -329,8 +377,15 @@ detect_build_path() {
     return 0
   fi
   if have cargo && frontend_dist_exists; then
-    BUILD_PATH="cargo-override"
-    log "Build path: using cargo-tauri override (pnpm not found; reusing the pre-built frontend dist)."
+    if tauri_cli_available; then
+      BUILD_PATH="cargo-override"
+      log "Build path: using cargo-tauri override (pnpm not found; reusing the pre-built frontend dist)."
+      return 0
+    fi
+    # cargo + pre-built dist are present, but `cargo tauri` is not: rustup does
+    # not install the Tauri CLI. main() installs it, then uses cargo-override.
+    BUILD_PATH="install-tauri-cli"
+    log "Build path: cargo-tauri override needs the Tauri CLI, which is not installed (rustup does not provide it)."
     return 0
   fi
   if have cargo; then
@@ -357,7 +412,7 @@ build_project() {
     log "Building desktop frontend dist (tsc -b && vite build)."
     pnpm --filter desktop build
   else
-    # --skip-frontend: the frontend dist must already exist (checked in
+    # cargo-override path: the frontend dist must already exist (checked in
     # detect_build_path); there is no Node/pnpm here to build it.
     log "Skipping pnpm install + frontend build; reusing pre-built dist at $DESKTOP_DIST_RELATIVE_PATH."
   fi
@@ -406,7 +461,8 @@ print_summary() {
   if [ -d "$bundle" ]; then
     echo "  Installers :"
     find "$bundle" -maxdepth 2 -type f \
-      \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \) \
+      \( -name '*.msi' -o -name '*-setup.exe' -o -name '*.deb' -o -name '*.rpm' -o -name '*.AppImage' \
+      -o -name '*.AppImage.tar.gz' -o -name '*.app.tar.gz' -o -name '*.nsis.zip' -o -name '*.sig' \) \
       -print 2>/dev/null | sed 's/^/    /'
   fi
   if [ -x "$app_bin" ]; then echo "  App binary : $app_bin"; fi
@@ -432,6 +488,14 @@ main() {
   resolve_repo
   sync_repo
   detect_build_path
+  if [ "$BUILD_PATH" = "install-tauri-cli" ]; then
+    log "Installing the Tauri CLI: $TAURI_CLI_INSTALL_COMMAND"
+    log "This compiles from source and can take several minutes and a few hundred MB of disk."
+    cargo install tauri-cli --locked || die "Tauri CLI installation failed. Install it manually with: $TAURI_CLI_INSTALL_COMMAND"
+    tauri_cli_available || die "Tauri CLI still unavailable after install. Install it manually with: $TAURI_CLI_INSTALL_COMMAND"
+    BUILD_PATH="cargo-override"
+    log "Tauri CLI installed; using the cargo-tauri override path."
+  fi
   build_project
 
   if [ "$DEV_MODE" -eq 1 ]; then
@@ -449,4 +513,9 @@ main() {
   print_summary
 }
 
-main "$@"
+# Only run main() when this file is executed, not when it is sourced. The tests
+# (scripts/bootstrap.test.mjs) source it to execute validate_ref / version_ge /
+# detect_build_path directly against the shipped shell logic.
+if [ "${BASH_SOURCE[0]}" = "${0}" ]; then
+  main "$@"
+fi
