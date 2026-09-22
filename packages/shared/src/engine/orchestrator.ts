@@ -114,8 +114,8 @@ export interface PhaseContext {
  */
 export type PhaseErrorKind = 'timeout' | 'aborted' | 'network' | 'auth' | 'ratelimit' | 'model' | 'unknown';
 
-/** visual_qa 判定の鮮度。 */
-export type QaVerdict = 'current' | 'stale' | 'absent';
+/** visual_qa 判定の状態。 */
+export type QaVerdict = 'current' | 'stale' | 'not-run' | 'failed';
 
 export interface PipelineResult {
   text: string;
@@ -127,7 +127,8 @@ export interface PipelineResult {
    * 直近の visual_qa 判定の状態。
    * current = 最後のファイル変更より後に visual_qa が判定を返した。
    * stale   = 判定はあるが、その後にファイル変更が入った。
-   * absent  = 有効な判定が無い（visual_qa 未実行、または実行されたが失敗）。
+   * not-run = visual_qa が一度も実行されていない（そのティアに含まれない）。
+   * failed  = visual_qa は実行されたが判定を返さなかった（例外 / タイムアウト / 空応答）。
    */
   qaVerdict: QaVerdict;
   /** ループを中断した理由。'aborted' はユーザーの停止操作。 */
@@ -806,11 +807,14 @@ export async function runPipelineForLevel(
     }
   }
 
-  // 有効な visual_qa 判定が無ければ absent。あれば、最後の成功変更より後かで
-  // current / stale を分ける。
+  // visual_qa がそのティアに含まれない場合は not-run（未実行）。含まれるのに
+  // 有効な判定が無ければ failed（実行されたが判定を返さなかった）。あれば、
+  // 最後の成功変更より後かで current / stale を分ける。
   let qaVerdict: QaVerdict;
-  if (lastVisualQaIndex === -1) {
-    qaVerdict = "absent";
+  if (!phases.includes("visual_qa")) {
+    qaVerdict = "not-run";
+  } else if (lastVisualQaIndex === -1) {
+    qaVerdict = "failed";
   } else {
     qaVerdict = lastVisualQaIndex > lastFileChangeIndex ? "current" : "stale";
   }
