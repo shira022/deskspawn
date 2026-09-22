@@ -287,10 +287,11 @@ export interface SummarizeOptions {
    */
   phaseFailed?: boolean;
   /**
-   * 直近の visual_qa 判定の鮮度。
+   * 直近の visual_qa 判定の状態。
    * current = 判定は最終コードを指す（断定してよい）。
    * stale   = 判定はあるが、その後に修正が入った（断定しない）。
-   * absent  = 有効な判定が無い（未実行または失敗。断定しない）。
+   * not-run = visual_qa 未実行（そのティアに含まれない。表示確認の行は出さない）。
+   * failed  = visual_qa は実行されたが判定を返さなかった（最終状態は未確認）。
    */
   qaVerdict?: QaVerdict;
   /** ループを中断した理由。'aborted' はユーザーの停止操作。 */
@@ -356,15 +357,17 @@ export function summarizePipelineResult(
   const fileListMatch = coderText.match(/```[\s\S]*?(?:created?|files?)[\s\S]*?```/gi) || [];
   const fileCount = fileListMatch.length || (fileChanges.length > 0 ? fileChanges.length : null);
 
+  // 検証の後に修正が入った場合（stale）、目の前の判定は最終コードではなく
+  // 古い状態を指す。visual_qa は実行されたが判定を返さなかった場合（failed）も
+  // 最終状態は未確認。どちらも「問題が検出された／修正が必要」と断定しない。
+  // not-run は visual_qa がそのティアに無いだけで、表示確認に関する行は出さない。
+  const staleVerdict = qaVerdict === "stale";
+  const failedVerdict = qaVerdict === "failed";
+
   // Simple mode: user-friendly summary
   if (simpleMode) {
     const parts: string[] = [];
     const isJa = language === "ja";
-    // 検証の後に修正が入った場合（stale）、目の前の判定は最終コードではなく
-    // 古い状態を指す。検証自体が失敗した場合（absent）は判定が存在しない。
-    // どちらも「問題が検出された／修正が必要」と断定しない。
-    const staleVerdict = qaVerdict === "stale";
-    const absentVerdict = qaVerdict === "absent";
 
     if (isJa) {
       parts.push("## 生成完了\n");
@@ -378,8 +381,8 @@ export function summarizePipelineResult(
         parts.push(`**ファイル数**: ${fileCount} ファイルを作成・更新しました\n`);
       }
 
-      if (absentVerdict) {
-        parts.push("⚠️ **ステータス**: 検証が完了しませんでした（時間切れまたはエラー）。最終状態は確認できていません。\n");
+      if (failedVerdict) {
+        parts.push("⚠️ **ステータス**: 表示確認（visual_qa）が完了しませんでした。最終状態は未確認です。\n");
       } else if (staleVerdict) {
         parts.push("⚠️ **ステータス**: 検証で問題が指摘され、修正を適用しました。最終状態はまだ確認されていません。\n");
       } else if (verificationFailed) {
@@ -390,7 +393,7 @@ export function summarizePipelineResult(
         parts.push("✅ **ステータス**: 正常に生成されました\n");
       }
 
-      if (absentVerdict || staleVerdict) {
+      if (failedVerdict || staleVerdict) {
         parts.push("ℹ️ **確認**: プレビューで最終状態をご確認ください。\n");
       } else if (verificationFailed) {
         parts.push("⚠️ **注意**: エラーが検出されました。修正が必要な場合があります。\n");
@@ -418,8 +421,8 @@ export function summarizePipelineResult(
         parts.push(`**Files**: ${fileCount} file(s) created/updated\n`);
       }
 
-      if (absentVerdict) {
-        parts.push("⚠️ **Status**: Verification did not complete (timeout or error). The final state has not been confirmed.\n");
+      if (failedVerdict) {
+        parts.push("⚠️ **Status**: Visual QA did not complete. The final state has not been confirmed.\n");
       } else if (staleVerdict) {
         parts.push("⚠️ **Status**: Issues were reported during verification and fixes were applied. The final state has not been verified yet.\n");
       } else if (verificationFailed) {
@@ -430,7 +433,7 @@ export function summarizePipelineResult(
         parts.push("✅ **Status**: Generated successfully\n");
       }
 
-      if (absentVerdict || staleVerdict) {
+      if (failedVerdict || staleVerdict) {
         parts.push("ℹ️ **Check**: Please review the final state in the preview.\n");
       } else if (verificationFailed) {
         parts.push("⚠️ **Note**: Errors were detected. You may need to make corrections.\n");
@@ -472,9 +475,7 @@ export function summarizePipelineResult(
     parts.push(coderText.substring(0, 300) + (coderText.length > 300 ? "..." : "") + "\n");
 
     parts.push("### バリデーター\n");
-    if (qaVerdict === "absent") {
-      parts.push("⚠️ **判定なし**: 検証が完了しませんでした\n");
-    } else if (qaVerdict === "stale") {
+    if (staleVerdict) {
       parts.push("❌ **判定は修正前のもの**: 修正を適用済み／最終確認は未実施\n");
     } else if (failStatus) {
       parts.push("❌ **失敗**: 問題が検出されました\n");
@@ -487,9 +488,14 @@ export function summarizePipelineResult(
       parts.push(verifierText.substring(0, 500) + (verifierText.length > 500 ? "..." : "") + "\n");
     }
 
-    parts.push("### ビジュアルQA\n");
-    if (visualQaText) {
-      parts.push(visualQaText.substring(0, 500) + (visualQaText.length > 500 ? "..." : "") + "\n");
+    if (failedVerdict || visualQaText) {
+      parts.push("### ビジュアルQA\n");
+      if (failedVerdict) {
+        parts.push("⚠️ **表示確認（visual_qa）が完了しませんでした**: 最終状態は未確認です\n");
+      }
+      if (visualQaText) {
+        parts.push(visualQaText.substring(0, 500) + (visualQaText.length > 500 ? "..." : "") + "\n");
+      }
     }
 
     if (interruptedBy === "timeout") {
@@ -516,9 +522,7 @@ export function summarizePipelineResult(
     parts.push(coderText.substring(0, 300) + (coderText.length > 300 ? "..." : "") + "\n");
 
     parts.push("### Verifier\n");
-    if (qaVerdict === "absent") {
-      parts.push("⚠️ **No verdict**: Verification did not complete\n");
-    } else if (qaVerdict === "stale") {
+    if (staleVerdict) {
       parts.push("❌ **Verdict is from before fixes**: Fixes were applied / final check not performed\n");
     } else if (failStatus) {
       parts.push("❌ **Failed**: Issues detected\n");
@@ -531,9 +535,14 @@ export function summarizePipelineResult(
       parts.push(verifierText.substring(0, 500) + (verifierText.length > 500 ? "..." : "") + "\n");
     }
 
-    parts.push("### Visual QA\n");
-    if (visualQaText) {
-      parts.push(visualQaText.substring(0, 500) + (visualQaText.length > 500 ? "..." : "") + "\n");
+    if (failedVerdict || visualQaText) {
+      parts.push("### Visual QA\n");
+      if (failedVerdict) {
+        parts.push("⚠️ **Visual QA did not complete**: The final state has not been confirmed\n");
+      }
+      if (visualQaText) {
+        parts.push(visualQaText.substring(0, 500) + (visualQaText.length > 500 ? "..." : "") + "\n");
+      }
     }
 
     if (interruptedBy === "timeout") {

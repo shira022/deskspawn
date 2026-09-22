@@ -374,8 +374,8 @@ describe("R10: タイムアウト中断の明示", () => {
   });
 });
 
-describe("R11: 検証が完了しなかった場合（qaVerdict='absent'）", () => {
-  it("日本語: 断定せず、検証未完了とプレビュー確認を促す", () => {
+describe("R11: 表示確認(visual_qa)が完了しなかった場合（qaVerdict='failed'）", () => {
+  it("日本語: 表示確認が未完了で最終状態が未確認だと伝える", () => {
     const out = summarizePipelineResult(
       makeOutputs({ verifier: "⚠️ verifier フェーズで問題が発生しました: 応答がタイムアウトしました" }),
       {
@@ -383,14 +383,15 @@ describe("R11: 検証が完了しなかった場合（qaVerdict='absent'）", ()
         language: "ja",
         stepErrorCount: 0,
         phaseFailed: true,
-        qaVerdict: "absent",
+        qaVerdict: "failed",
         interruptedBy: "timeout",
         failedPhases: ["visual_qa"],
         fileChangesApplied: true,
       },
     );
-    expect(out).toContain("検証が完了しませんでした（時間切れまたはエラー）。最終状態は確認できていません。");
+    expect(out).toContain("表示確認（visual_qa）が完了しませんでした。最終状態は未確認です。");
     expect(out).toContain("プレビューで最終状態をご確認ください。");
+    expect(out).not.toContain("検証が完了しませんでした");
     expect(out).not.toContain("修正が必要な場合があります");
     expect(out).not.toContain("一部の問題が検出されました");
   });
@@ -403,15 +404,63 @@ describe("R11: 検証が完了しなかった場合（qaVerdict='absent'）", ()
         language: "en",
         stepErrorCount: 0,
         phaseFailed: true,
-        qaVerdict: "absent",
+        qaVerdict: "failed",
         interruptedBy: "timeout",
         failedPhases: ["visual_qa"],
       },
     );
-    expect(out).toContain("Verification did not complete (timeout or error). The final state has not been confirmed.");
+    expect(out).toContain("Visual QA did not complete. The final state has not been confirmed.");
     expect(out).toContain("Please review the final state in the preview.");
+    expect(out).not.toContain("Verification did not complete");
     expect(out).not.toContain("You may need to make corrections");
     expect(out).not.toContain("Some issues were detected");
+  });
+});
+
+describe("R11b: visual_qa を実行しないティア（qaVerdict='not-run'）", () => {
+  it("日本語: 嘘の検証未完了警告を出さず、ツールエラー件数を情報表示する（実機 L2 のケース）", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({
+        coder: "Created src/App.tsx",
+        verifier: "ビルドチェックも完了しており、エラーはありません",
+      }),
+      { simpleMode: true, language: "ja", stepErrorCount: 2, qaVerdict: "not-run" },
+    );
+    expect(out).not.toContain("検証が完了しませんでした");
+    expect(out).not.toContain("表示確認");
+    expect(out).not.toContain("プレビューで最終状態をご確認ください");
+    expect(out).toContain("生成中に 2 件のツールエラーがありましたが、生成は完了しました。");
+  });
+
+  it("日本語: エラーが無ければ正常完了を出す", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ coder: "Created src/App.tsx", verifier: "エラーはありません" }),
+      { simpleMode: true, language: "ja", stepErrorCount: 0, qaVerdict: "not-run" },
+    );
+    expect(out).toContain("正常に生成されました");
+    expect(out).not.toContain("検証が完了しませんでした");
+    expect(out).not.toContain("表示確認");
+  });
+
+  it("英語: no false verification warning for a not-run tier", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ coder: "Created src/App.tsx", verifier: "No errors found" }),
+      { simpleMode: true, language: "en", stepErrorCount: 2, qaVerdict: "not-run" },
+    );
+    expect(out).not.toContain("Verification did not complete");
+    expect(out).not.toContain("Visual QA");
+    expect(out).not.toContain("review the final state in the preview");
+    expect(out).toContain("2 tool error(s) occurred during generation");
+  });
+
+  it("日本語 technical: 表示確認の行を出さない", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "No issues" }),
+      { simpleMode: false, language: "ja", stepErrorCount: 0, qaVerdict: "not-run" },
+    );
+    expect(out).not.toContain("判定なし");
+    expect(out).not.toContain("表示確認");
+    expect(out).not.toContain("ビジュアルQA");
   });
 });
 
@@ -480,13 +529,24 @@ describe("R14: technical mode も qaVerdict / 中断を反映する", () => {
     expect(out).not.toContain("❌ **失敗**");
   });
 
-  it("日本語: absent は判定なしを示す", () => {
+  it("日本語: failed は表示確認が完了しなかったことを示す", () => {
     const out = summarizePipelineResult(
       makeOutputs({ verifier: "Verify" }),
-      { simpleMode: false, language: "ja", stepErrorCount: 0, qaVerdict: "absent" },
+      { simpleMode: false, language: "ja", stepErrorCount: 0, qaVerdict: "failed" },
     );
-    expect(out).toContain("⚠️ **判定なし**");
+    expect(out).toContain("⚠️ **表示確認（visual_qa）が完了しませんでした**");
     expect(out).not.toContain("❌ **失敗**");
+    expect(out).not.toContain("検証が完了しませんでした");
+  });
+
+  it("日本語: not-run は表示確認の行を出さない", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "Verify" }),
+      { simpleMode: false, language: "ja", stepErrorCount: 0, qaVerdict: "not-run" },
+    );
+    expect(out).not.toContain("ビジュアルQA");
+    expect(out).not.toContain("判定なし");
+    expect(out).not.toContain("検証が完了しませんでした");
   });
 
   it("日本語: technical 側にも時間切れ行を出す", () => {
@@ -501,7 +561,7 @@ describe("R14: technical mode も qaVerdict / 中断を反映する", () => {
     expect(out).toContain("検証 フェーズがタイムアウトしたため終了しました。");
   });
 
-  it("英語: reflects stale / absent", () => {
+  it("英語: reflects stale / failed", () => {
     const stale = summarizePipelineResult(
       makeOutputs({ verifier: "All good", visual_qa: "❌ FAIL" }),
       { simpleMode: false, language: "en", stepErrorCount: 0, qaVerdict: "stale" },
@@ -509,11 +569,12 @@ describe("R14: technical mode も qaVerdict / 中断を反映する", () => {
     expect(stale).toContain("❌ **Verdict is from before fixes**");
     expect(stale).not.toContain("❌ **Failed**");
 
-    const absent = summarizePipelineResult(
+    const failed = summarizePipelineResult(
       makeOutputs({ verifier: "Verify" }),
-      { simpleMode: false, language: "en", stepErrorCount: 0, qaVerdict: "absent" },
+      { simpleMode: false, language: "en", stepErrorCount: 0, qaVerdict: "failed" },
     );
-    expect(absent).toContain("⚠️ **No verdict**");
-    expect(absent).not.toContain("❌ **Failed**");
+    expect(failed).toContain("⚠️ **Visual QA did not complete**");
+    expect(failed).not.toContain("❌ **Failed**");
+    expect(failed).not.toContain("No verdict");
   });
 });
