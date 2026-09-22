@@ -215,6 +215,50 @@ describe("R4: 後置否定と否定窓の精度", () => {
   });
 });
 
+describe("R6: 直後アンカーの日本語否定（〜もなく / 〜なく）", () => {
+  const suppressed = [
+    "ビルドエラーもなく、正常に動作しています。",
+    "エラーなく動作しています。",
+    "エラーが無く、正常です。",
+    "エラーはありません。",
+  ];
+  for (const text of suppressed) {
+    it(`抑制する（偽陽性の再発防止）: ${text}`, () => {
+      const out = summarizePipelineResult(makeOutputs({ verifier: text }), {
+        simpleMode: true, language: "ja", stepErrorCount: 0,
+      });
+      expect(out).toContain("正常に生成されました");
+      expect(out).not.toContain("一部の問題が検出されました");
+    });
+  }
+
+  const warned = [
+    "エラーが3件見つかりました。",
+    "エラーが少なくとも3件あります。",
+  ];
+  for (const text of warned) {
+    it(`抑制しない（過剰抑制の防止）: ${text}`, () => {
+      const out = summarizePipelineResult(makeOutputs({ verifier: text }), {
+        simpleMode: true, language: "ja", stepErrorCount: 0,
+      });
+      expect(out).toContain("一部の問題が検出されました");
+    });
+  }
+
+  it("成功文＋step エラー2件は ⚠️ 警告ではなく ℹ️ の情報行になる", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({
+        verifier: "ToDoアプリを作成・確認しました。ビルドエラーもなく、正常に動作しています。",
+        visual_qa: "✅ PASS",
+      }),
+      { simpleMode: true, language: "ja", stepErrorCount: 2 },
+    );
+    expect(out).toContain("2 件のツールエラー");
+    expect(out).not.toContain("一部の問題が検出されました");
+    expect(out).not.toContain("エラーが検出されました");
+  });
+});
+
 describe("R5: technical mode (simpleMode=false)", () => {
   it("verifier にエラー語・visual_qa は PASS → ⚠️ 警告付きパス", () => {
     const out = summarizePipelineResult(
