@@ -187,6 +187,17 @@ const NEGATION_BEFORE_RE = /(?:\b(?:no|not|without|zero|none|never)\b|n['’]t|\
  */
 const NEGATION_AFTER_RE = /(?:なし|無し|ない|ありません|問題なし|未検出|ゼロ|\bnone\b|\bzero\b|\b0\b)/i;
 
+/**
+ * エラー語の直後に**アンカー**して現れる日本語の否定形。
+ * 「エラーもなく」「エラーなく」「エラーが無く」のように、否定語が
+ * エラー語の直後（助詞を挟んで）に来る形を捉える。
+ *
+ * NEGATION_AFTER_RE と違い窓内を広く検索しない。窓検索にすると
+ * 「エラーが少なくとも3件」の「少なく」に誤って一致し、本物のエラーを
+ * 抑制してしまうため、必ずエラー語の直後から照合する。
+ */
+const NEGATION_AFTER_ANCHORED_RE = /^\s*(?:も|は|が|、|,)?\s*(?:なく|無く|ありません|ございません)/;
+
 /** エラー語の直後 ≤16 文字に現れる解消表現。 */
 const RESOLUTION_AFTER_RE = /(?:resolved|fixed|解消|修正済|対応済|済み)/i;
 
@@ -234,6 +245,7 @@ function hasUnnegatedMatch(text: string, pattern: RegExp): boolean {
     const after = text.slice(afterStart, afterStart + NEGATION_AFTER_WINDOW);
     if (NEGATION_BEFORE_RE.test(before)) continue;
     if (NEGATION_AFTER_RE.test(after)) continue;
+    if (NEGATION_AFTER_ANCHORED_RE.test(after)) continue;
     if (RESOLUTION_AFTER_RE.test(after)) continue;
     return true;
   }
