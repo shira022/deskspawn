@@ -105,12 +105,35 @@ export interface PhaseContext {
   planContext?: string;
 }
 
+/**
+ * runPhase がエラーで停止したときの構造的な失敗種別。
+ *
+ * 現在 UI（summarizePipelineResult）が消費するのは 'timeout' / 'aborted' のみ。
+ * 'network' / 'auth' / 'ratelimit' / 'model' は将来の表示用にデータとして
+ * 保持しているが、まだ消費されていないデッドサーフェスである。
+ */
+export type PhaseErrorKind = 'timeout' | 'aborted' | 'network' | 'auth' | 'ratelimit' | 'model' | 'unknown';
+
+/** visual_qa 判定の鮮度。 */
+export type QaVerdict = 'current' | 'stale' | 'absent';
+
 export interface PipelineResult {
   text: string;
   usage: Usage;
   phases: Phase[];
   /** 例外などで停止した（stoppedReason === "error"）フェーズ。失敗の構造的シグナル。 */
   failedPhases: Phase[];
+  /**
+   * 直近の visual_qa 判定の状態。
+   * current = 最後のファイル変更より後に visual_qa が判定を返した。
+   * stale   = 判定はあるが、その後にファイル変更が入った。
+   * absent  = 有効な判定が無い（visual_qa 未実行、または実行されたが失敗）。
+   */
+  qaVerdict: QaVerdict;
+  /** ループを中断した理由。'aborted' はユーザーの停止操作。 */
+  interruptedBy?: 'timeout' | 'aborted' | 'error';
+  /** パイプライン中に成功したファイル変更が1つでもあったか。 */
+  fileChangesApplied: boolean;
 }
 
 export type ToolBuilderFn = (toolNames: string[]) => ToolSet;
@@ -136,6 +159,13 @@ export interface PhaseRunResult {
   stoppedReason: string;
   continuationCount: number;
   plan?: string;
+  /** エラーで停止した場合の失敗種別（成功時は undefined）。 */
+  errorKind?: PhaseErrorKind;
+  /**
+   * apply_artifact が実際にファイルを変更できた実行が1つ以上あったか。
+   * ツール呼び出しの有無ではなく、成功した結果（success/filesChanged）で判定する。
+   */
+  appliedChanges: boolean;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -215,19 +245,46 @@ function formatPlanContext(plan: Record<string, unknown>): string {
 
 // ── Phase Runner ──────────────────────────────────────────────────────────────
 
+/**
+ * apply_artifact のツール結果がファイル変更に成功したかを判定する。
+ * ツール呼び出しは失敗しても { success: false } を返すため、呼び出しの
+ * 有無ではなく結果で判定する（成功時は filesChanged が非空）。
+ */
+function didApplyArtifactSucceed(output: unknown): boolean {
+  if (!output || typeof output !== "object") return false;
+  const result = output as { success?: unknown; filesChanged?: unknown };
+  if (result.success === true) return true;
+  return Array.isArray(result.filesChanged) && result.filesChanged.length > 0;
+}
+
 function makeStepCallback(
   phase: Phase,
   stepManager: StepManager,
-  hooks?: PipelineHooks,
+  hooks: PipelineHooks | undefined,
+  collected: {
+    toolCalls: Array<{ toolName: string; args: Record<string, unknown> }>;
+    appliedChanges: boolean;
+  },
 ) {
   return (event: any) => {
     const toolCalls = event.toolCalls || [];
-    stepManager.recordStep(
-      toolCalls.map((tc: any) => ({
-        toolName: tc.toolName,
-        args: (tc.args ?? tc.input ?? {}) as Record<string, unknown>,
-      })),
-    );
+    const mapped = toolCalls.map((tc: any) => ({
+      toolName: tc.toolName,
+      args: (tc.args ?? tc.input ?? {}) as Record<string, unknown>,
+    }));
+    stepManager.recordStep(mapped);
+    // フェーズ単位の実行結果（toolCalls）に残す。ファイル変更の有無を
+    // 呼び出し側が構造的に判定できるようにするため。
+    collected.toolCalls.push(...mapped);
+
+    // apply_artifact（唯一のファイル書き込みツール）が成功した場合のみ
+    // ファイル変更として数える。失敗した呼び出しは変更として数えない。
+    const toolResults = event.toolResults || [];
+    for (const tr of toolResults) {
+      if (tr?.toolName === "apply_artifact" && didApplyArtifactSucceed(tr.output)) {
+        collected.appliedChanges = true;
+      }
+    }
 
     const { step, maxSteps } = stepManager.getProgress();
     hooks?.onStepProgress?.(phase, { step, maxSteps });
@@ -260,7 +317,11 @@ export async function runPhase(
 
   // AiConfig.maxSteps が設定されていれば動的ステップ管理のベース値として優先する
   const stepManager = new StepManager(maxSteps ?? config.stepLimit, 120, config.maxContinuations);
-  const onStepFinish = makeStepCallback(phase, stepManager, hooks);
+  const collected = {
+    toolCalls: [] as Array<{ toolName: string; args: Record<string, unknown> }>,
+    appliedChanges: false,
+  };
+  const onStepFinish = makeStepCallback(phase, stepManager, hooks, collected);
 
   let allResultText = "";
   let totalInputTokens = 0;
@@ -341,45 +402,65 @@ export async function runPhase(
 
     return {
       text: allResultText,
-      toolCalls: [],
+      toolCalls: collected.toolCalls,
       usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
       stepCount: finalState.step,
       hitLimit,
       stoppedReason,
       continuationCount: stepManager.continuationCount,
       plan,
+      appliedChanges: collected.appliedChanges,
     };
   } catch (error: any) {
-    const errMsg = String(error?.message || error || '').toLowerCase();
-    // Determine i18n key based on error type
+    const errMsg = String(error?.message || error || "").toLowerCase();
+    // Determine i18n key and structural error kind based on error type.
+    // 判定は例外の message と name（TimeoutError / AbortError）で行う。
     let errorText: string;
-    if (errMsg.includes('failed to fetch') || errMsg.includes('networkerror') || errMsg.includes('econnrefused') || errMsg.includes('network')) {
-      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.networkError') });
-    } else if (errMsg.includes('429') || errMsg.includes('rate limit')) {
+    let errorKind: PhaseErrorKind;
+    if (errMsg.includes("failed to fetch") || errMsg.includes("fetch failed") || errMsg.includes("networkerror") || errMsg.includes("econnrefused") || errMsg.includes("econnreset") || errMsg.includes("enotfound") || errMsg.includes("network")) {
+      // "connection timed out" は接続タイムアウトだが、network ではなく
+      // timeout として扱いたいため、ここには含めない（下の timeout 分岐に落ちる）。
+      errorKind = "network";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.networkError") });
+    } else if (errMsg.includes("429") || errMsg.includes("rate limit")) {
       // この経路では retryCount / maxRetries / waitMs の実値が無い。空値で
       // プレースホルダを埋めると「（/ 回目、待機 ms）」と破綻するため、
       // プレースホルダを持たない汎用文言を使う。
-      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.rateLimit') });
-    } else if (errMsg.includes('401') || errMsg.includes('403') || errMsg.includes('api key') || errMsg.includes('unauthorized')) {
-      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.apiKeyInvalid') });
-    } else if (errMsg.includes('404') || errMsg.includes('model') && (errMsg.includes('not found') || errMsg.includes('does not exist'))) {
+      errorKind = "ratelimit";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.rateLimit") });
+    } else if (errMsg.includes("401") || errMsg.includes("403") || errMsg.includes("api key") || errMsg.includes("unauthorized")) {
+      errorKind = "auth";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.apiKeyInvalid") });
+    } else if (errMsg.includes("404") || (errMsg.includes("model") && (errMsg.includes("not found") || errMsg.includes("does not exist")))) {
       // この経路ではモデル名が取得できない。空の {{model}} で「モデル「」」と
       // 破綻しないよう、プレースホルダを持たない汎用文言を使う。
-      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.modelNotFound') });
-    } else if (errMsg.includes('timeout') || errMsg.includes('aborted')) {
-      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.timeout') });
+      // （404 は無条件、model は not found 系と同時に現れた場合のみ）
+      errorKind = "model";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.modelNotFound") });
+    } else if (error?.name === "TimeoutError" || errMsg.includes("timeout") || errMsg.includes("timed out")) {
+      // AI SDK の per-call タイムアウトは "signal timed out" という
+      // メッセージで来るため 'timed out' も timeout として扱う。
+      errorKind = "timeout";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.timeout") });
+    } else if (error?.name === "AbortError" || signal.aborted) {
+      // 停止ボタンによる中断。タイムアウトと区別して 'aborted' にする。
+      errorKind = "aborted";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.aborted") });
     } else {
-      errorText = allResultText || i18n.t('chat.error.phaseFailedDetail', { phase, message: error?.message || String(error) });
+      errorKind = "unknown";
+      errorText = allResultText || i18n.t("chat.error.phaseFailedDetail", { phase, message: error?.message || String(error) });
     }
 
     return {
       text: errorText,
-      toolCalls: [],
+      toolCalls: collected.toolCalls,
       usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
       stepCount: 0,
       hitLimit: false,
       stoppedReason: "error",
       continuationCount: 0,
+      errorKind,
+      appliedChanges: collected.appliedChanges,
     };
   }
 }
@@ -595,10 +676,17 @@ export async function runPipelineForLevel(
   const dummyDataDetectionEnabled = dummyDataRegen;
   const executedPhases: Phase[] = [];
   const failedPhases: Phase[] = [];
+  // 各フェーズ実行を 0 始まりで数え、成功したファイル変更と visual_qa の
+  // 「判定を返した」実行の最後の位置を記録する。両者の位置関係で qaVerdict を決める。
+  let executionIndex = 0;
+  let lastFileChangeIndex = -1;
+  let lastVisualQaIndex = -1;
+  let interruptedBy: 'timeout' | 'aborted' | 'error' | undefined;
 
   while (phaseQueue.length > 0) {
     const phase = phaseQueue.shift()!;
     executedPhases.push(phase);
+    const currentIndex = executionIndex++;
     hooks?.onPhaseStart?.(phase);
 
     // 各フェーズのメッセージ構築
@@ -638,6 +726,18 @@ export async function runPipelineForLevel(
     );
 
     hooks?.onPhaseEnd?.(phase, result);
+
+    // 実行位置の記録: apply_artifact（唯一のファイル書き込みツール）が
+    // 成功した実行と、visual_qa が「判定を返した」実行の最後の位置を残す。
+    // visual_qa 判定が最終コードを指しているかを後段で構造的に判定するため。
+    if (result.appliedChanges) {
+      lastFileChangeIndex = currentIndex;
+    }
+    // タイムアウト等で stoppedReason === "error" になった visual_qa は
+    // 判定を返していないため記録しない（空テキストも判定とみなさない）。
+    if (phase === "visual_qa" && result.stoppedReason !== "error" && result.text.trim().length > 0) {
+      lastVisualQaIndex = currentIndex;
+    }
 
     // 例外などで停止したフェーズ（stoppedReason === "error"）を構造的シグナルとして
     // 記録する。これは検証フェーズに限らず全フェーズが対象。テキストにエラー語が
@@ -700,8 +800,19 @@ export async function runPipelineForLevel(
     // 始まるようになりヒューリスティックが常に false になっていたため、
     // 構造的シグナルである stoppedReason だけで判定する。
     if (result.stoppedReason === "error") {
+      interruptedBy =
+        result.errorKind === "timeout" ? "timeout" : result.errorKind === "aborted" ? "aborted" : "error";
       break;
     }
+  }
+
+  // 有効な visual_qa 判定が無ければ absent。あれば、最後の成功変更より後かで
+  // current / stale を分ける。
+  let qaVerdict: QaVerdict;
+  if (lastVisualQaIndex === -1) {
+    qaVerdict = "absent";
+  } else {
+    qaVerdict = lastVisualQaIndex > lastFileChangeIndex ? "current" : "stale";
   }
 
   return {
@@ -709,6 +820,9 @@ export async function runPipelineForLevel(
     usage: totalUsage,
     phases: executedPhases,
     failedPhases,
+    qaVerdict,
+    interruptedBy,
+    fileChangesApplied: lastFileChangeIndex !== -1,
   };
 }
 
