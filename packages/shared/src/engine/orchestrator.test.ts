@@ -875,7 +875,7 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
     expect(result.fileChangesApplied).toBe(true);
   });
 
-  it("qaVerdict is 'absent' when visual_qa never ran (no verdict to assert)", async () => {
+  it("qaVerdict is 'not-run' when the tier never includes visual_qa (L1)", async () => {
     mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
 
     const result = await runWithTriage(
@@ -892,10 +892,33 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
     );
 
     expect(result.phases).toEqual(["coder"]);
-    expect(result.qaVerdict).toBe("absent");
+    expect(result.qaVerdict).toBe("not-run");
   });
 
-  it("qaVerdict is 'absent' when visual_qa itself fails (timeout) — the M1 bug", async () => {
+  it("qaVerdict is 'not-run' for L2 (coder + verifier, no visual_qa)", async () => {
+    mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
+    mockTextWithTools("No errors found");
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Small feature"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      2,
+    );
+
+    expect(result.phases).toEqual(["coder", "verifier"]);
+    expect(result.phases).not.toContain("visual_qa");
+    expect(result.qaVerdict).toBe("not-run");
+    expect(result.failedPhases).toEqual([]);
+  });
+
+  it("qaVerdict is 'failed' when visual_qa itself fails (timeout) — the M1 bug", async () => {
     mockTextWithTools("Plan");
     mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
     mockTextWithTools("No errors found");
@@ -917,7 +940,7 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
 
     expect(result.phases).toEqual(["planner", "coder", "verifier", "visual_qa"]);
     expect(result.failedPhases).toEqual(["visual_qa"]);
-    expect(result.qaVerdict).toBe("absent");
+    expect(result.qaVerdict).toBe("failed");
     expect(result.interruptedBy).toBe("timeout");
   });
 
@@ -1032,7 +1055,7 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
 
     expect(result.interruptedBy).toBe("error");
     expect(result.failedPhases).toEqual(["coder"]);
-    expect(result.qaVerdict).toBe("absent");
+    expect(result.qaVerdict).toBe("not-run");
   });
 
   it("interruptedBy is 'aborted' for a user stop (AbortError)", async () => {
