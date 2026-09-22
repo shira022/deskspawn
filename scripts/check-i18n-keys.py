@@ -28,8 +28,10 @@ for lang in ("ja", "en"):
         locales[lang] = set(flatten(json.load(f)))
 
 # --- 2. Enumerate t("...") literal keys from source ---
+# 第2引数（プレースホルダ）付きの t('key', { ... }) も拾うため、
+# 文字列リテラルの直後は閉じ括弧 ')' だけでなくカンマ ',' も許可する。
 t_re = re.compile(
-    r"\bt\s*\(\s*(['\"])([^'\"]+?)\1\s*\)"
+    r"\bt\s*\(\s*(['\"])([^'\"]+?)\1\s*[,)]"
 )
 t_import_re = re.compile(r"\bt\s*\(")  # any t( call for counting
 

@@ -109,6 +109,8 @@ export interface PipelineResult {
   text: string;
   usage: Usage;
   phases: Phase[];
+  /** 例外などで停止した（stoppedReason === "error"）フェーズ。失敗の構造的シグナル。 */
+  failedPhases: Phase[];
 }
 
 export type ToolBuilderFn = (toolNames: string[]) => ToolSet;
@@ -587,6 +589,7 @@ export async function runPipelineForLevel(
   // dummy-data 再生成はティア表のフラグで制御する（L4/L5 で有効）
   const dummyDataDetectionEnabled = dummyDataRegen;
   const executedPhases: Phase[] = [];
+  const failedPhases: Phase[] = [];
 
   while (phaseQueue.length > 0) {
     const phase = phaseQueue.shift()!;
@@ -630,6 +633,13 @@ export async function runPipelineForLevel(
     );
 
     hooks?.onPhaseEnd?.(phase, result);
+
+    // 例外などで停止したフェーズを構造的シグナルとして記録する。
+    // テキストにエラー語が含まれない経路（rateLimit / timeout 等）でも
+    // 検証失敗をUIへ伝えられるようにするため。
+    if (result.stoppedReason === "error") {
+      failedPhases.push(phase);
+    }
 
     if (result.text) {
       hooks?.onPhaseDetail?.(phase, result.text);
@@ -688,6 +698,7 @@ export async function runPipelineForLevel(
     text: accumulatedText,
     usage: totalUsage,
     phases: executedPhases,
+    failedPhases,
   };
 }
 

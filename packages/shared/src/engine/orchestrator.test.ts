@@ -382,6 +382,49 @@ describe("runWithTriage", () => {
     expect(generateText).toHaveBeenCalledTimes(1);
   });
 
+  it("collects the errored phase into failedPhases (structural failure signal)", async () => {
+    // テキストにエラー語が現れない経路（例外）でも失敗を判別できること。
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("API failure"));
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Tiny tweak"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1, // manual L1 → coder only
+    );
+
+    expect(result.phases).toEqual(["coder"]);
+    expect(result.failedPhases).toEqual(["coder"]);
+  });
+
+  it("returns an empty failedPhases when no phase errored", async () => {
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: "Coded",
+      usage: { inputTokens: 1, outputTokens: 1 },
+    } as any);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Tiny tweak"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      1,
+    );
+
+    expect(result.failedPhases).toEqual([]);
+  });
+
   it("calls onTriageResult hook with the triage result", async () => {
     vi.mocked(generateText)
       .mockResolvedValueOnce({ text: JSON.stringify({ level: 2, reason: "Tiny tweak" }) } as any)
@@ -566,7 +609,10 @@ describe("runPhase", () => {
     );
 
     expect(result.stoppedReason).toBe("error");
-    expect(result.text).toContain("phaseFailedDetail");
+    // 翻訳済みメッセージが入ること（生の i18n キーが露出しない）。
+    expect(result.text).not.toContain("phaseFailedDetail");
+    expect(result.text).toContain("coder");
+    expect(result.text).toContain("API failure");
     expect(result.hitLimit).toBe(false);
     expect(result.stepCount).toBe(0);
     expect(result.continuationCount).toBe(0);

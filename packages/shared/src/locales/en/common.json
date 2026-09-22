@@ -250,7 +250,10 @@
       "checkOllamaConnection": "Make sure Ollama is running ({{endpoint}}) and the model \"{{model}}\" is available.",
       "apiKeyInvalid": "The API key is invalid or not configured.",
       "networkError": "A network error occurred. Please check your connection.",
-      "timeout": "The request timed out. Please try again."
+      "timeout": "The request timed out. Please try again.",
+      "modelNotFound": "Model \"{{model}}\" was not found. Click the model name in the toolbar to check your settings.",
+      "phaseFailedDetail": "⚠️ An issue occurred in the {{phase}} phase: {{message}}",
+      "rateLimit": "Rate limit reached. Please wait a moment and try again (attempt {{retryCount}}/{{maxRetries}}, waited {{waitMs}}ms)."
     }
   },
   "step": {

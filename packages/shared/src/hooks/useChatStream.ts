@@ -151,14 +151,78 @@ function getErrorHint(provider: string | undefined, cfg: { model?: string; custo
 // ── Pipeline Summary Agent ────────────────────────────────────────────────────
 
 /**
+ * エラーを示す語（error / failed / エラー 等）を検出するためのパターン。
+ * 否定文（"no errors found" / 「エラーはありません」）を誤検出しないよう、
+ * hasUnnegatedError ではエラー語の近傍に否定・解消表現がある出現を無視する。
+ */
+const ERROR_SIGNAL_RE = /error|errors|failed|failure|exception|エラー|失敗|例外/gi;
+
+/**
+ * エラー語の直前 ≤24 文字に現れる否定・不在。
+ * 英語は前置（"no errors"）、日本語の一部（"未検出のエラー"）を想定。
+ */
+const NEGATION_BEFORE_RE = /(?:\b(?:no|not|without|zero|none|never)\b|n['’]t|\b0\b|未検出)/i;
+
+/**
+ * エラー語の直後 ≤16 文字に現れる否定・不在。
+ * 日本語は後置（「エラーなし」「エラーはありません」）になるため after 側で判定する。
+ */
+const NEGATION_AFTER_RE = /(?:なし|無し|ない|ありません|問題なし|エラーなし|未検出)/;
+
+/** エラー語の直後 ≤16 文字に現れる解消表現。 */
+const RESOLUTION_AFTER_RE = /(?:resolved|fixed|解消|修正済|対応済|済み)/i;
+
+/** エラー語の直前・直後の判定窓（文字数）。 */
+const NEGATION_BEFORE_WINDOW = 24;
+const NEGATION_AFTER_WINDOW = 16;
+
+/**
+ * テキスト中に「否定されていない」エラー語が含まれるかを判定する。
+ * 例: "no errors found" / "errors were resolved" / 「エラーはありません」は false。
+ *
+ * 肯定語（passed / success / clean / 正常 / 成功）は抑制に使わない。
+ * 「Verification passed, but 1 failure remains」のような本物のエラーを
+ * 見逃さないため、抑制は近接した否定・解消表現に限定する。
+ */
+function hasUnnegatedError(text: string): boolean {
+  if (!text) return false;
+  ERROR_SIGNAL_RE.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = ERROR_SIGNAL_RE.exec(text)) !== null) {
+    const before = text.slice(Math.max(0, match.index - NEGATION_BEFORE_WINDOW), match.index);
+    const afterStart = match.index + match[0].length;
+    const after = text.slice(afterStart, afterStart + NEGATION_AFTER_WINDOW);
+    if (NEGATION_BEFORE_RE.test(before)) continue;
+    if (NEGATION_AFTER_RE.test(after)) continue;
+    if (RESOLUTION_AFTER_RE.test(after)) continue;
+    return true;
+  }
+  return false;
+}
+
+/** 検証フェーズの明確な失敗マーカー（❌ / FAIL / critical）。 */
+const CRITICAL_FAILURE_RE = /❌|\bFAIL\b|\bcritical\b/i;
+
+function hasCriticalFailure(text: string): boolean {
+  return !!text && CRITICAL_FAILURE_RE.test(text);
+}
+
+/**
  * Summarize all phase outputs into a single clean response.
  * In simpleMode: user-friendly summary (what was built, key features, errors).
  * In !simpleMode: includes technical details (files, tests, build status).
+ *
+ * @param stepErrorCount stepLogs に記録された error 件数（自動修正済みの試行錯誤を
+ *   検証フェーズの失敗と区別して情報表示するために使う）。
+ * @param phaseFailed 例外などで停止したフェーズが存在するか（failedPhases）。
+ *   テキストにエラー語が現れない失敗でも警告を出すための構造的シグナル。
  */
-function summarizePipelineResult(
+export function summarizePipelineResult(
   phaseOutputs: Record<string, { label: string; text: string }>,
   simpleMode?: boolean,
   language?: string,
+  stepErrorCount = 0,
+  phaseFailed = false,
 ): string {
   const phases = ["planner", "coder", "verifier", "visual_qa"];
   const availablePhases = phases.filter((p) => phaseOutputs[p]?.text?.trim());
@@ -171,10 +235,20 @@ function summarizePipelineResult(
 
   // Extract key information from phase outputs
   const fileChanges = coderText.match(/(?:created?|updated?|modified?|written?|written to|changes? (?:made|in)|files? (?:created?|modified?))[\s:]+([^\n]+)/gi) || [];
-  const hasErrors = /❌|error|failed|exception/i.test(verifierText) || /❌|error|failed|exception/i.test(visualQaText);
-  const hasWarnings = /⚠️|warning/i.test(verifierText) || /⚠️|warning/i.test(visualQaText);
+  // 否定文（"no errors found" / 「エラーはありません」）をエラー扱いしない。
+  // フェーズが例外で停止した場合（phaseFailed）は、テキストにエラー語が無くても
+  // 検証が走っていないため警告する。
+  const verificationFailed =
+    phaseFailed ||
+    hasCriticalFailure(verifierText) ||
+    hasCriticalFailure(visualQaText) ||
+    hasUnnegatedError(verifierText) ||
+    hasUnnegatedError(visualQaText);
+  const hasErrors = verificationFailed; // 技術モード表示用（後方互換）
+  const hasWarnings = /⚠️|warning|警告/i.test(verifierText) || /⚠️|warning|警告/i.test(visualQaText);
   const passStatus = /✅|PASS|passed|success/i.test(visualQaText);
-  const failStatus = /❌|FAIL|failed|critical/i.test(visualQaText);
+  const failStatus = verificationFailed;
+  const hasStepErrors = stepErrorCount > 0;
 
   // Extract file list from coder output
   const fileListMatch = coderText.match(/```[\s\S]*?(?:created?|files?)[\s\S]*?```/gi) || [];
@@ -197,13 +271,15 @@ function summarizePipelineResult(
         parts.push(`**ファイル数**: ${fileCount} ファイルを作成・更新しました\n`);
       }
 
-      if (failStatus) {
+      if (verificationFailed) {
         parts.push("⚠️ **ステータス**: 一部の問題が検出されました。詳細は下の「フェーズ詳細」で確認できます。\n");
-      } else if (passStatus || !hasErrors) {
+      } else if (hasStepErrors) {
+        parts.push(`ℹ️ **ステータス**: 生成中に ${stepErrorCount} 件のツールエラーがありましたが、自動修正して完了しました。\n`);
+      } else {
         parts.push("✅ **ステータス**: 正常に生成されました\n");
       }
 
-      if (hasErrors) {
+      if (verificationFailed) {
         parts.push("⚠️ **注意**: エラーが検出されました。修正が必要な場合があります。\n");
       } else if (hasWarnings) {
         parts.push("💡 **ヒント**: 一部の警告がありますが、アプリは動作します。\n");
@@ -221,13 +297,15 @@ function summarizePipelineResult(
         parts.push(`**Files**: ${fileCount} file(s) created/updated\n`);
       }
 
-      if (failStatus) {
+      if (verificationFailed) {
         parts.push("⚠️ **Status**: Some issues were detected. Check 'Phase Details' below for more info.\n");
-      } else if (passStatus || !hasErrors) {
+      } else if (hasStepErrors) {
+        parts.push(`ℹ️ **Status**: ${stepErrorCount} tool error(s) occurred during generation but were auto-corrected before completion.\n`);
+      } else {
         parts.push("✅ **Status**: Generated successfully\n");
       }
 
-      if (hasErrors) {
+      if (verificationFailed) {
         parts.push("⚠️ **Note**: Errors were detected. You may need to make corrections.\n");
       } else if (hasWarnings) {
         parts.push("💡 **Tip**: Some warnings were found, but the app should work.\n");
@@ -725,6 +803,8 @@ export function useChatStream(): UseChatStreamReturn {
             localPhaseOutputs,
             settings.simpleMode,
             settings.language,
+            stepLogs.filter((l) => l.status === "error").length,
+            (pipelineResult.failedPhases?.length ?? 0) > 0,
           );
           updateMessage(botMsgId, {
             content: summaryText || pipelineResult.text,

@@ -68,16 +68,16 @@ export interface ApplyResult {
 // ── M4: AI生成コードの危険パターン検証 ─────────────────────────────────────────
 // Rust 側（engine/security.rs の FORBIDDEN_TS_PATTERNS）と同期させること。
 // fetch / require / process.env 等の正当な API 呼び出しは許可（生成アプリで一般的）。
-const FORBIDDEN_TS_PATTERNS = [
-  "eval(",
-  "new Function(",
-  "document.write(",
-  ".innerHTML",
-  "child_process",
-  "exec(",
-  "execSync(",
-  "spawn(",
-  "spawnSync(",
+const FORBIDDEN_TS_PATTERNS: Array<{ pattern: string; hint: string }> = [
+  { pattern: "eval(", hint: "avoid dynamic evaluation; call the target function directly instead" },
+  { pattern: "new Function(", hint: "avoid dynamic evaluation; define a normal function instead" },
+  { pattern: "document.write(", hint: "render content via React instead of document.write()" },
+  { pattern: ".innerHTML", hint: "use textContent or JSX children instead of .innerHTML" },
+  { pattern: "child_process", hint: "generated apps cannot spawn processes; use browser APIs instead" },
+  { pattern: "exec(", hint: "generated apps cannot spawn processes; use browser APIs instead" },
+  { pattern: "execSync(", hint: "generated apps cannot spawn processes; use browser APIs instead" },
+  { pattern: "spawn(", hint: "generated apps cannot spawn processes; use browser APIs instead" },
+  { pattern: "spawnSync(", hint: "generated apps cannot spawn processes; use browser APIs instead" },
 ];
 
 function isTsSourceFile(path: string): boolean {
@@ -87,9 +87,10 @@ function isTsSourceFile(path: string): boolean {
 /** 危険パターンを含む TS/JS コードを拒否する（違反時は throw）。 */
 function checkTsSecurity(path: string, content: string): void {
   if (!isTsSourceFile(path)) return;
-  const violations = FORBIDDEN_TS_PATTERNS.filter((p) => content.includes(p));
+  const violations = FORBIDDEN_TS_PATTERNS.filter(({ pattern }) => content.includes(pattern));
   if (violations.length > 0) {
-    throw new Error(`Security check failed for ${path}: ${violations.join(", ")}`);
+    const details = violations.map(({ pattern, hint }) => `${pattern} (${hint})`).join("; ");
+    throw new Error(`Security check failed for ${path}: ${details}`);
   }
 }
 
