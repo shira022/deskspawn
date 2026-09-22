@@ -550,7 +550,32 @@ interface ScreenshotOptions {
    * デフォルト: 2000ms
    */
   waitAfterLoad?: number;
+  /**
+   * 撮影前に #root が描画されるのを待つポーリングの上限（ミリ秒）。
+   * デフォルト: 15000ms（テストで短縮するために指定可能）
+   */
+  renderTimeoutMs?: number;
+  /** #root 描画待ちのポーリング間隔（ミリ秒）。デフォルト: 500ms */
+  renderPollIntervalMs?: number;
+  /**
+   * クロスオリジンで `contentDocument` に触れられない場合に追加で待つ固定時間
+   * （ミリ秒）。デフォルト: 5000ms（テストで短縮するために指定可能）
+   */
+  renderFallbackWaitMs?: number;
 }
+
+/** 撮影前の描画待ち: #root に子要素が現れるまでポーリングする上限（ミリ秒） */
+const RENDER_POLL_TIMEOUT_MS = 15_000;
+/** 描画待ちポーリングの間隔（ミリ秒） */
+const RENDER_POLL_INTERVAL_MS = 500;
+/**
+ * クロスオリジンで #root を直接確認できない場合に追加で待つ固定時間（ミリ秒）。
+ * 実機（Tauri シェル → localhost プレビュー）では contentDocument が取れないため、
+ * 「即 return して待たない」のではなく、この時間だけ段階的に待ってから撮影する。
+ */
+const RENDER_CROSS_ORIGIN_FALLBACK_MS = 5_000;
+/** iframe 強制リロード後の load イベント待ちの安全タイムアウト（ミリ秒） */
+const RELOAD_LOAD_TIMEOUT_MS = 10_000;
 
 let _previousScreenshot: ImageData | null = null;
 
@@ -848,6 +873,127 @@ async function detectIframeErrors(iframe: HTMLIFrameElement): Promise<DetectedIs
   return issues;
 }
 
+/** setTimeout ベースのスリープ（テストで fake timers 化できるよう分離） */
+const delay = (ms: number): Promise<void> =>
+  new Promise((resolve) => setTimeout(resolve, ms));
+
+/**
+ * iframe のドキュメントが実際に描画されたかを判定する。
+ *
+ * - `#root` があれば子要素の有無で判断する（React の描画完了）。
+ * - `#root` が無いテンプレートでは body の描画要素（script/style/link/template
+ *   以外）の有無で判断する。判定できない場合は「まだ描画されていない」とみなす。
+ *
+ * ⚠️ 本当に真っ白なアプリを PASS させるためのものではない。描画待ちに使うだけ。
+ */
+function isPreviewRendered(doc: Document): boolean {
+  const root = doc.getElementById("root");
+  if (root) return root.children.length > 0;
+
+  const body = doc.body;
+  if (!body) return false;
+  return Array.from(body.children).some((el) => {
+    const tag = el.tagName.toLowerCase();
+    return tag !== "script" && tag !== "style" && tag !== "link" && tag !== "template";
+  });
+}
+
+/**
+ * 撮影前にプレビュー iframe を強制リロードし、新しい load イベントを待つ。
+ *
+ * 直前の coder の apply_artifact によるファイル変更は、Vite の HMR / モジュール
+ * キャッシュのため iframe を再読込しないと反映されないことがある。フロントの
+ * 再同期経路（triggerReload → iframe.src 再設定）と同じく src を再代入して
+ * キャッシュを捨て、最新ファイルを取得させる。
+ *
+ * 戻り値で reload の成否を返す。呼び出し側は「load を受信済み（reloaded）」なら
+ * `waitForIframeReady` の load 待ちをスキップできる。受信済みの load をもう一度
+ * `waitForIframeReady` で待つと、クロスオリジンでは readyState を確認できず
+ * 30 秒の安全タイムアウトまで無駄に待ってしまうため。
+ *
+ * - "reloaded": src を再代入し、新しい load イベントを受信した
+ * - "no-src": src が無い / 再代入に失敗した（リロード未実施）
+ * - "timeout": load が安全タイムアウト内に来なかった
+ */
+type PreviewReloadResult = "reloaded" | "no-src" | "timeout";
+
+async function reloadPreviewIframe(iframe: HTMLIFrameElement): Promise<PreviewReloadResult> {
+  let src: string | null = null;
+  try {
+    src = iframe.getAttribute("src");
+    if (!src && iframe.src && iframe.src !== "about:blank") {
+      src = iframe.src;
+    }
+  } catch {
+    src = null;
+  }
+  if (!src) return "no-src";
+
+  return new Promise<PreviewReloadResult>((resolve) => {
+    let settled = false;
+    const finish = (outcome: PreviewReloadResult) => {
+      if (settled) return;
+      settled = true;
+      iframe.removeEventListener("load", onLoad);
+      resolve(outcome);
+    };
+    const onLoad = () => finish("reloaded");
+
+    iframe.addEventListener("load", onLoad, { once: true });
+    try {
+      // 同一 URL を再代入してモジュールキャッシュを捨てる
+      iframe.src = src as string;
+    } catch {
+      finish("no-src");
+      return;
+    }
+    setTimeout(() => finish("timeout"), RELOAD_LOAD_TIMEOUT_MS);
+  });
+}
+
+/**
+ * `#root` に子要素が現れるまで（＝アプリが描画されるまで）上限付きでポーリングする。
+ *
+ * waitAfterLoad の固定待ちだけに頼らず、描画が確認できるまで追加で待つ。
+ * 上限に達したら打ち切る（＝本当に真っ白なアプリはそのまま撮影され、既存の
+ * missing-ui 検出で FAIL する。判定を甘くしない）。
+ *
+ * クロスオリジンのプレビュー（実機の Tauri シェル → `http://localhost:<port>`）では
+ * `contentDocument` が null・`contentWindow.document` が SecurityError となり
+ * DOM を直接確認できない。その場合でも「即 return して一切待たない」のではなく、
+ * `crossOriginFallbackMs` だけ段階的に固定待機してから撮影する。オリジン非依存で
+ * 効くリロード完了待ち（reloadPreviewIframe）と組み合わせて、実機でも
+ * 最新ファイルが描画される猶予を与える。
+ */
+async function waitForRenderedRoot(
+  iframe: HTMLIFrameElement,
+  timeoutMs: number,
+  intervalMs: number,
+  crossOriginFallbackMs: number,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let doc: Document | null;
+    try {
+      doc = iframe.contentDocument || iframe.contentWindow?.document || null;
+    } catch {
+      doc = null; // クロスオリジン: contentWindow.document が SecurityError
+    }
+    if (!doc) {
+      // クロスオリジンで DOM を覗けない: #root の描画は確認できないが、
+      // 固定時間だけ段階的に待つ（判定は甘くしない。白いアプリは白いまま撮影）。
+      const fallbackDeadline = Date.now() + Math.max(0, crossOriginFallbackMs);
+      while (Date.now() < fallbackDeadline) {
+        await delay(Math.min(intervalMs, fallbackDeadline - Date.now()));
+      }
+      return;
+    }
+    if (isPreviewRendered(doc)) return;
+    if (Date.now() >= deadline) return; // 上限で打ち切り（描画されないまま撮影）
+    await delay(intervalMs);
+  }
+}
+
 /**
  * iframe 内のコンテンツ読み込み完了とレンダリング完了を待つ。
  *
@@ -898,10 +1044,13 @@ async function waitForIframeReady(iframe: HTMLIFrameElement, waitAfterLoad: numb
  * iframe内のCSSをスキャンして oklch → rgba の上書きルールを注入する。
  *
  * 撮影前には下記の順で準備を行う:
- * 1. iframe の load イベント完了を待つ
- * 2. waitAfterLoad ms 待ってアプリのレンダリング完了を待つ
- * 3. oklch フォールバックCSSを注入
- * 4. html2canvas で撮影
+ * 1. iframe を強制リロードし、直前のファイル変更を反映させる
+ * 2. iframe の load イベント完了を待つ
+ * 3. waitAfterLoad ms 待ってアプリのレンダリング完了を待つ
+ * 4. #root に子要素が現れるまで上限付きで追加ポーリングする
+ *    （クロスオリジンでは #root を確認できないため固定時間だけ段階的に待つ）
+ * 5. oklch フォールバックCSSを注入
+ * 6. html2canvas で撮影
  */
 export async function takeScreenshot(options?: ScreenshotOptions): Promise<ScreenshotResult> {
   try {
@@ -910,10 +1059,38 @@ export async function takeScreenshot(options?: ScreenshotOptions): Promise<Scree
       return { success: false, error: "Preview iframe not found." };
     }
 
+    // --- 撮影前に iframe を強制リロードして最新ファイルを反映させる ---
+    console.log(`[takeScreenshot] Reloading preview iframe to pick up the latest files...`);
+    const reloadResult = await reloadPreviewIframe(previewIframe);
+
     // --- iframe コンテンツの読み込み + レンダリング完了を待つ ---
     const waitMs = options?.waitAfterLoad ?? 2000;
-    console.log(`[takeScreenshot] Waiting for iframe content load + ${waitMs}ms render time...`);
-    await waitForIframeReady(previewIframe, waitMs);
+    if (reloadResult === "no-src") {
+      // リロード未実施（src なし等）の場合のみ、従来の load 待ちを使う。
+      console.log(`[takeScreenshot] Waiting for iframe content load + ${waitMs}ms render time...`);
+      await waitForIframeReady(previewIframe, waitMs);
+    } else {
+      // reload 側で新しい load を受信済み（またはタイムアウト）なので、既に消費した
+      // load を `waitForIframeReady` が再度待って 30 秒待つことを避け、レンダリング
+      // 猶予（waitAfterLoad）だけ与える。
+      console.log(`[takeScreenshot] Reload ${reloadResult}; waiting ${waitMs}ms render time...`);
+      if (waitMs > 0) await delay(waitMs);
+    }
+
+    // --- #root が実際に描画されるまで追加で待つ（固定待ちだけに頼らない）---
+    const renderTimeoutMs = options?.renderTimeoutMs ?? RENDER_POLL_TIMEOUT_MS;
+    const renderPollIntervalMs = options?.renderPollIntervalMs ?? RENDER_POLL_INTERVAL_MS;
+    const renderFallbackWaitMs =
+      options?.renderFallbackWaitMs ?? RENDER_CROSS_ORIGIN_FALLBACK_MS;
+    console.log(
+      `[takeScreenshot] Waiting up to ${renderTimeoutMs}ms for #root to render (cross-origin fallback ${renderFallbackWaitMs}ms)...`,
+    );
+    await waitForRenderedRoot(
+      previewIframe,
+      renderTimeoutMs,
+      renderPollIntervalMs,
+      renderFallbackWaitMs,
+    );
     console.log(`[takeScreenshot] Iframe ready, capturing...`);
 
     // --- oklch fallback: html2canvasがoklchをパースできない問題を回避 ---
