@@ -13,7 +13,7 @@ import { providerLabels } from "../lib/constants";
 import { isDesktopEnv } from "../lib/platform";
 import { newMessageId } from "../lib/ids";
 import { getModel } from "../engine/providers";
-import { runWithTriage } from "../engine/orchestrator";
+import { runWithTriage, type QaVerdict } from "../engine/orchestrator";
 import { tools } from "../engine/tools";
 import {
   readFile,
@@ -256,22 +256,70 @@ function hasFailMarker(text: string): boolean {
 }
 
 /**
+ * 時間切れ行に埋め込む短いフェーズ名。
+ * 既存 locale の phase.* は説明的で（例: 「エラーチェックと修正」）、
+ * インラインのフェーズ言及には長いため、サマリ専用の短い名称を持つ。
+ */
+const PHASE_NAMES: Record<string, { ja: string; en: string }> = {
+  planner: { ja: "計画", en: "planning" },
+  coder: { ja: "実装", en: "coding" },
+  verifier: { ja: "検証", en: "verification" },
+  visual_qa: { ja: "表示確認", en: "visual check" },
+};
+
+function phaseName(phase: string | undefined, isJa: boolean): string {
+  const entry = phase ? PHASE_NAMES[phase] : undefined;
+  if (entry) return isJa ? entry.ja : entry.en;
+  return isJa ? "最終" : "final";
+}
+
+export interface SummarizeOptions {
+  simpleMode?: boolean;
+  language?: string;
+  /**
+   * stepLogs に記録された error 件数（試行錯誤を検証フェーズの失敗と
+   * 区別して情報表示するために使う）。
+   */
+  stepErrorCount?: number;
+  /**
+   * 例外などで停止したフェーズが存在するか（failedPhases）。
+   * テキストにエラー語が現れない失敗でも警告を出すための構造的シグナル。
+   */
+  phaseFailed?: boolean;
+  /**
+   * 直近の visual_qa 判定の鮮度。
+   * current = 判定は最終コードを指す（断定してよい）。
+   * stale   = 判定はあるが、その後に修正が入った（断定しない）。
+   * absent  = 有効な判定が無い（未実行または失敗。断定しない）。
+   */
+  qaVerdict?: QaVerdict;
+  /** ループを中断した理由。'aborted' はユーザーの停止操作。 */
+  interruptedBy?: "timeout" | "aborted" | "error";
+  /** 例外などで停止したフェーズ名（interruptedBy のフェーズ表示に使う）。 */
+  failedPhases?: string[];
+  /** パイプライン中に成功したファイル変更が1つでもあったか。 */
+  fileChangesApplied?: boolean;
+}
+
+/**
  * Summarize all phase outputs into a single clean response.
  * In simpleMode: user-friendly summary (what was built, key features, errors).
  * In !simpleMode: includes technical details (files, tests, build status).
- *
- * @param stepErrorCount stepLogs に記録された error 件数（試行錯誤を
- *   検証フェーズの失敗と区別して情報表示するために使う）。
- * @param phaseFailed 例外などで停止したフェーズが存在するか（failedPhases）。
- *   テキストにエラー語が現れない失敗でも警告を出すための構造的シグナル。
  */
 export function summarizePipelineResult(
   phaseOutputs: Record<string, { label: string; text: string }>,
-  simpleMode?: boolean,
-  language?: string,
-  stepErrorCount = 0,
-  phaseFailed = false,
+  options: SummarizeOptions = {},
 ): string {
+  const {
+    simpleMode,
+    language,
+    stepErrorCount = 0,
+    phaseFailed = false,
+    qaVerdict = "current",
+    interruptedBy,
+    failedPhases = [],
+    fileChangesApplied = false,
+  } = options;
   const phases = ["planner", "coder", "verifier", "visual_qa"];
   const availablePhases = phases.filter((p) => phaseOutputs[p]?.text?.trim());
   if (availablePhases.length === 0) return "";
@@ -301,6 +349,8 @@ export function summarizePipelineResult(
   // hasErrors として「⚠️ 警告付きパス」に残す（旧来の分岐を到達可能に戻す）。
   const failStatus = hasFailMarker(visualQaText) || hasUnnegatedCritical(visualQaText);
   const hasStepErrors = stepErrorCount > 0;
+  // 時間切れ行のフェーズ表示（生 id を出さない）。
+  const timeoutPhase = phaseName(failedPhases[0], language === "ja");
 
   // Extract file list from coder output
   const fileListMatch = coderText.match(/```[\s\S]*?(?:created?|files?)[\s\S]*?```/gi) || [];
@@ -310,6 +360,11 @@ export function summarizePipelineResult(
   if (simpleMode) {
     const parts: string[] = [];
     const isJa = language === "ja";
+    // 検証の後に修正が入った場合（stale）、目の前の判定は最終コードではなく
+    // 古い状態を指す。検証自体が失敗した場合（absent）は判定が存在しない。
+    // どちらも「問題が検出された／修正が必要」と断定しない。
+    const staleVerdict = qaVerdict === "stale";
+    const absentVerdict = qaVerdict === "absent";
 
     if (isJa) {
       parts.push("## 生成完了\n");
@@ -323,7 +378,11 @@ export function summarizePipelineResult(
         parts.push(`**ファイル数**: ${fileCount} ファイルを作成・更新しました\n`);
       }
 
-      if (verificationFailed) {
+      if (absentVerdict) {
+        parts.push("⚠️ **ステータス**: 検証が完了しませんでした（時間切れまたはエラー）。最終状態は確認できていません。\n");
+      } else if (staleVerdict) {
+        parts.push("⚠️ **ステータス**: 検証で問題が指摘され、修正を適用しました。最終状態はまだ確認されていません。\n");
+      } else if (verificationFailed) {
         parts.push("⚠️ **ステータス**: 一部の問題が検出されました。詳細は下の「フェーズ詳細」で確認できます。\n");
       } else if (hasStepErrors) {
         parts.push(`ℹ️ **ステータス**: 生成中に ${stepErrorCount} 件のツールエラーがありましたが、生成は完了しました。\n`);
@@ -331,13 +390,23 @@ export function summarizePipelineResult(
         parts.push("✅ **ステータス**: 正常に生成されました\n");
       }
 
-      if (verificationFailed) {
+      if (absentVerdict || staleVerdict) {
+        parts.push("ℹ️ **確認**: プレビューで最終状態をご確認ください。\n");
+      } else if (verificationFailed) {
         parts.push("⚠️ **注意**: エラーが検出されました。修正が必要な場合があります。\n");
       } else if (hasWarnings) {
         parts.push("💡 **ヒント**: 一部の警告がありますが、アプリは動作します。\n");
       }
 
-      parts.push("\nアプリはチャット下のプレビューパネルで確認できます。");
+      if (interruptedBy === "timeout") {
+        parts.push(
+          fileChangesApplied
+            ? `⏱️ **時間切れ**: ${timeoutPhase} フェーズが時間切れで終了しました（適用済みの変更はそのまま残っています）。\n`
+            : `⏱️ **時間切れ**: ${timeoutPhase} フェーズがタイムアウトしたため終了しました。\n`,
+        );
+      }
+
+      parts.push("\nアプリはプレビューパネルで確認できます。");
     } else {
       parts.push("## Generation Complete\n");
       const descMatch = plannerText.match(/(?:summary|description)[\s:]+([^\n]+)/i);
@@ -349,7 +418,11 @@ export function summarizePipelineResult(
         parts.push(`**Files**: ${fileCount} file(s) created/updated\n`);
       }
 
-      if (verificationFailed) {
+      if (absentVerdict) {
+        parts.push("⚠️ **Status**: Verification did not complete (timeout or error). The final state has not been confirmed.\n");
+      } else if (staleVerdict) {
+        parts.push("⚠️ **Status**: Issues were reported during verification and fixes were applied. The final state has not been verified yet.\n");
+      } else if (verificationFailed) {
         parts.push("⚠️ **Status**: Some issues were detected. Check 'Phase Details' below for more info.\n");
       } else if (hasStepErrors) {
         parts.push(`ℹ️ **Status**: ${stepErrorCount} tool error(s) occurred during generation, but the generation completed.\n`);
@@ -357,13 +430,23 @@ export function summarizePipelineResult(
         parts.push("✅ **Status**: Generated successfully\n");
       }
 
-      if (verificationFailed) {
+      if (absentVerdict || staleVerdict) {
+        parts.push("ℹ️ **Check**: Please review the final state in the preview.\n");
+      } else if (verificationFailed) {
         parts.push("⚠️ **Note**: Errors were detected. You may need to make corrections.\n");
       } else if (hasWarnings) {
         parts.push("💡 **Tip**: Some warnings were found, but the app should work.\n");
       }
 
-      parts.push("\nYou can preview the app in the preview panel below.");
+      if (interruptedBy === "timeout") {
+        parts.push(
+          fileChangesApplied
+            ? `⏱️ **Timeout**: The ${timeoutPhase} phase ended due to a timeout (applied changes have been kept).\n`
+            : `⏱️ **Timeout**: The ${timeoutPhase} phase ended because it timed out.\n`,
+        );
+      }
+
+      parts.push("\nYou can preview the app in the preview panel.");
     }
 
     return parts.join("\n");
@@ -389,7 +472,11 @@ export function summarizePipelineResult(
     parts.push(coderText.substring(0, 300) + (coderText.length > 300 ? "..." : "") + "\n");
 
     parts.push("### バリデーター\n");
-    if (failStatus) {
+    if (qaVerdict === "absent") {
+      parts.push("⚠️ **判定なし**: 検証が完了しませんでした\n");
+    } else if (qaVerdict === "stale") {
+      parts.push("❌ **判定は修正前のもの**: 修正を適用済み／最終確認は未実施\n");
+    } else if (failStatus) {
       parts.push("❌ **失敗**: 問題が検出されました\n");
     } else if (hasErrors) {
       parts.push("⚠️ **警告付きパス**: エラーあり\n");
@@ -403,6 +490,14 @@ export function summarizePipelineResult(
     parts.push("### ビジュアルQA\n");
     if (visualQaText) {
       parts.push(visualQaText.substring(0, 500) + (visualQaText.length > 500 ? "..." : "") + "\n");
+    }
+
+    if (interruptedBy === "timeout") {
+      parts.push(
+        fileChangesApplied
+          ? `⏱️ **時間切れ**: ${timeoutPhase} フェーズが時間切れで終了しました（適用済みの変更はそのまま残っています）。\n`
+          : `⏱️ **時間切れ**: ${timeoutPhase} フェーズがタイムアウトしたため終了しました。\n`,
+      );
     }
 
     parts.push("\n> 完全なフェーズ出力は下の「フェーズ詳細」パネルで確認できます。");
@@ -421,7 +516,11 @@ export function summarizePipelineResult(
     parts.push(coderText.substring(0, 300) + (coderText.length > 300 ? "..." : "") + "\n");
 
     parts.push("### Verifier\n");
-    if (failStatus) {
+    if (qaVerdict === "absent") {
+      parts.push("⚠️ **No verdict**: Verification did not complete\n");
+    } else if (qaVerdict === "stale") {
+      parts.push("❌ **Verdict is from before fixes**: Fixes were applied / final check not performed\n");
+    } else if (failStatus) {
       parts.push("❌ **Failed**: Issues detected\n");
     } else if (hasErrors) {
       parts.push("⚠️ **Passed with warnings**: Errors found\n");
@@ -435,6 +534,14 @@ export function summarizePipelineResult(
     parts.push("### Visual QA\n");
     if (visualQaText) {
       parts.push(visualQaText.substring(0, 500) + (visualQaText.length > 500 ? "..." : "") + "\n");
+    }
+
+    if (interruptedBy === "timeout") {
+      parts.push(
+        fileChangesApplied
+          ? `⏱️ **Timeout**: The ${timeoutPhase} phase ended due to a timeout (applied changes have been kept).\n`
+          : `⏱️ **Timeout**: The ${timeoutPhase} phase ended because it timed out.\n`,
+      );
     }
 
     parts.push("\n> Full phase outputs are available in the 'Phase Details' panel below.");
@@ -851,13 +958,16 @@ export function useChatStream(): UseChatStreamReturn {
           }
 
           // Generate summary from phase outputs instead of showing raw pipeline text
-          const summaryText = summarizePipelineResult(
-            localPhaseOutputs,
-            settings.simpleMode,
-            settings.language,
-            stepLogs.filter((l) => l.status === "error").length,
-            pipelineResult.failedPhases.length > 0,
-          );
+          const summaryText = summarizePipelineResult(localPhaseOutputs, {
+            simpleMode: settings.simpleMode,
+            language: settings.language,
+            stepErrorCount: stepLogs.filter((l) => l.status === "error").length,
+            phaseFailed: pipelineResult.failedPhases.length > 0,
+            qaVerdict: pipelineResult.qaVerdict,
+            interruptedBy: pipelineResult.interruptedBy,
+            failedPhases: pipelineResult.failedPhases,
+            fileChangesApplied: pipelineResult.fileChangesApplied,
+          });
           updateMessage(botMsgId, {
             content: summaryText || pipelineResult.text,
             checkpointId,
