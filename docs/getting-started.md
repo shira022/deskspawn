@@ -14,8 +14,10 @@ evaluation.
 ### 1. Install
 
 Download the latest installer from
-[GitHub Releases](https://github.com/shira022/deskspawn/releases) and run it.
-See [Installation](./installation.md) for requirements.
+[GitHub Releases](https://github.com/shira022/deskspawn/releases) and run it — or,
+to build from source with one command, use the bootstrap script
+(`scripts/bootstrap.ps1` on Windows, `scripts/bootstrap.sh` on Linux/macOS).
+See [Installation](./installation.md) for requirements, options, and troubleshooting.
 
 ### 2. Configure Your AI Provider
 
