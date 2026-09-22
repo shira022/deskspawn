@@ -156,3 +156,130 @@ describe("summarizePipelineResult (simple mode)", () => {
     }
   });
 });
+
+describe("R2: get_errors() の語境界", () => {
+  it("verifier の成功定型文「get_errors() returns empty」は警告しない", () => {
+    const text = summarizePipelineResult(
+      makeOutputs({ verifier: "✅ All errors resolved (get_errors() returns empty)." }),
+      true,
+      "ja",
+      0,
+    );
+    expect(text).toContain("正常に生成されました");
+    expect(text).not.toContain("一部の問題が検出されました");
+  });
+
+  it("実エラー「3 errors found in src/App.tsx」は警告する", () => {
+    const text = summarizePipelineResult(
+      makeOutputs({ verifier: "3 errors found in src/App.tsx" }),
+      true,
+      "ja",
+      0,
+    );
+    expect(text).toContain("一部の問題が検出されました");
+  });
+});
+
+describe("R3: critical は visual_qa のみ", () => {
+  it("verifier の「No critical issues」は警告しない", () => {
+    const text = summarizePipelineResult(
+      makeOutputs({ verifier: "No critical issues found", visual_qa: "✅ PASS" }),
+      true,
+      "ja",
+      0,
+    );
+    expect(text).toContain("正常に生成されました");
+    expect(text).not.toContain("一部の問題が検出されました");
+  });
+
+  it("visual_qa の critical は失敗扱い", () => {
+    const text = summarizePipelineResult(
+      makeOutputs({ verifier: "All good", visual_qa: "❌ Critical errors on page" }),
+      true,
+      "ja",
+      0,
+    );
+    expect(text).toContain("一部の問題が検出されました");
+  });
+});
+
+describe("R4: 後置否定と否定窓の精度", () => {
+  const suppressedAfter = ["Errors: 0", "errors: none", "エラー 0件"];
+  for (const text of suppressedAfter) {
+    it(`後置否定で抑制: ${text}`, () => {
+      const out = summarizePipelineResult(makeOutputs({ verifier: text }), true, "ja", 0);
+      expect(out).toContain("正常に生成されました");
+      expect(out).not.toContain("一部の問題が検出されました");
+    });
+  }
+
+  it("節をまたいだ否定では本物のエラーを抑制しない", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "No files changed. 3 errors found" }),
+      true,
+      "ja",
+      0,
+    );
+    expect(out).toContain("一部の問題が検出されました");
+  });
+});
+
+describe("R5: technical mode (simpleMode=false)", () => {
+  it("verifier にエラー語・visual_qa は PASS → ⚠️ 警告付きパス", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "3 errors found in src/App.tsx", visual_qa: "✅ PASS" }),
+      false,
+      "ja",
+      0,
+    );
+    expect(out).toContain("⚠️ **警告付きパス**");
+    expect(out).not.toContain("❌ **失敗**");
+    expect(out).not.toContain("✅ **パス**");
+  });
+
+  it("visual_qa が ❌ のときは ❌ 失敗", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "All good", visual_qa: "❌ FAIL: blank page" }),
+      false,
+      "ja",
+      0,
+    );
+    expect(out).toContain("❌ **失敗**");
+    expect(out).not.toContain("⚠️ **警告付きパス**");
+  });
+
+  it("英語でも verifier エラー + visual  PASS は Passed with warnings", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "3 errors found", visual_qa: "✅ PASS" }),
+      false,
+      "en",
+      0,
+    );
+    expect(out).toContain("⚠️ **Passed with warnings**");
+    expect(out).not.toContain("❌ **Failed**");
+  });
+});
+
+describe("R7: stepLogs エラーは自動修正を断定しない", () => {
+  it("日本語: 「自動修正」と断定しない", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "Verification passed", visual_qa: "✅ PASS" }),
+      true,
+      "ja",
+      3,
+    );
+    expect(out).toContain("ツールエラー");
+    expect(out).not.toContain("自動修正");
+  });
+
+  it("英語: 'auto-corrected' と断定しない", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "Verification passed", visual_qa: "✅ PASS" }),
+      true,
+      "en",
+      3,
+    );
+    expect(out).toContain("tool error");
+    expect(out).not.toContain("auto-corrected");
+  });
+});

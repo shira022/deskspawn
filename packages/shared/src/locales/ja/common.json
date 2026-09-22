@@ -251,9 +251,11 @@
       "apiKeyInvalid": "APIキーが無効か設定されていません。",
       "networkError": "ネットワークエラーが発生しました。接続を確認してください。",
       "timeout": "応答がタイムアウトしました。もう一度お試しください。",
-      "modelNotFound": "モデル「{{model}}」が見つかりません。ツールバーのモデル名をクリックして設定を確認してください。",
+      "modelNotFound": "モデルが見つかりません。ツールバーのモデル名をクリックして設定を確認してください。",
+      "modelNotFoundDetailed": "モデル「{{model}}」が見つかりません。ツールバーのモデル名をクリックして設定を確認してください。",
       "phaseFailedDetail": "⚠️ {{phase}} フェーズで問題が発生しました: {{message}}",
-      "rateLimit": "レートリミットに達しました。しばらく待ってから再試行してください（{{retryCount}}/{{maxRetries}} 回目、待機 {{waitMs}}ms）。"
+      "rateLimit": "レートリミットに達しました。しばらく待ってから再試行してください。",
+      "rateLimitDetailed": "レートリミットに達しました（{{retryCount}}/{{maxRetries}} 回目、待機 {{waitMs}}ms）。しばらく待ってから再試行してください。"
     }
   },
   "step": {

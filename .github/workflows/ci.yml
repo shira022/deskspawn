@@ -42,6 +42,10 @@ jobs:
           node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm --filter web exec vitest run --passWithNoTests
+      # check-i18n-keys.py の回帰テスト（t('key', { ... }) 形式の検出）
+      - run: pnpm test:scripts
+      # コード中の t() キーと ja/en ロケールの整合チェック（exit 0 を要求）
+      - run: python3 scripts/check-i18n-keys.py
 
   frontend-build:
     runs-on: ubuntu-latest

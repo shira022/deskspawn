@@ -425,6 +425,33 @@ describe("runWithTriage", () => {
     expect(result.failedPhases).toEqual([]);
   });
 
+  it("stops at a phase that ended with stoppedReason 'error' (no later phases run)", async () => {
+    // manual L3: planner → coder → verifier。2番目の coder が例外で停止したら、
+    // 3番目の verifier を実行せずパイプラインを中断すること。
+    // （catch の errorText は ⚠️ で始まるため、テキストの ⚠️ では判定できない）
+    vi.mocked(generateText)
+      .mockResolvedValueOnce({ text: "Planned", usage: { inputTokens: 1, outputTokens: 1 } } as any)
+      .mockRejectedValueOnce(new Error("API failure"));
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Add a feature"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      3, // manual L3
+    );
+
+    expect(result.phases).toEqual(["planner", "coder"]);
+    expect(result.phases).not.toContain("verifier");
+    expect(result.failedPhases).toEqual(["coder"]);
+    expect(generateText).toHaveBeenCalledTimes(2); // planner + coder(next throws)
+  });
+
   it("calls onTriageResult hook with the triage result", async () => {
     vi.mocked(generateText)
       .mockResolvedValueOnce({ text: JSON.stringify({ level: 2, reason: "Tiny tweak" }) } as any)

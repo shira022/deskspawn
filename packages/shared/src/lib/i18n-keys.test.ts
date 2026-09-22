@@ -8,8 +8,10 @@ import i18n from "./i18n";
 
 const REQUIRED_KEYS = [
   "chat.error.modelNotFound",
+  "chat.error.modelNotFoundDetailed",
   "chat.error.phaseFailedDetail",
   "chat.error.rateLimit",
+  "chat.error.rateLimitDetailed",
 ];
 
 function getByPath(obj: unknown, path: string): unknown {
@@ -45,25 +47,50 @@ describe("chat.error i18n keys", () => {
     }
   });
 
-  it("modelNotFound expands model", () => {
+  it("modelNotFoundDetailed expands model", () => {
     for (const lng of ["ja", "en"] as const) {
-      const text = i18n.t("chat.error.modelNotFound", { model: "gpt-4o", lng });
-      expect(text).not.toBe("chat.error.modelNotFound");
+      const text = i18n.t("chat.error.modelNotFoundDetailed", { model: "gpt-4o", lng });
+      expect(text).not.toBe("chat.error.modelNotFoundDetailed");
       expect(text).toContain("gpt-4o");
     }
   });
 
-  it("rateLimit expands all placeholders", () => {
+  it("rateLimitDetailed expands all placeholders", () => {
     for (const lng of ["ja", "en"] as const) {
-      const text = i18n.t("chat.error.rateLimit", {
+      const text = i18n.t("chat.error.rateLimitDetailed", {
         waitMs: "1000",
         retryCount: "1",
         maxRetries: "3",
         lng,
       });
-      expect(text).not.toBe("chat.error.rateLimit");
+      expect(text).not.toBe("chat.error.rateLimitDetailed");
       expect(text).toContain("1000");
       expect(text).toContain("3");
+    }
+  });
+
+  it("R6: 空値でも汎用文言が破綻しない（「」/（）/空クォート/二重スペース無し）", () => {
+    for (const lng of ["ja", "en"] as const) {
+      const cases: Array<[string, string]> = [
+        [
+          "chat.error.rateLimit",
+          i18n.t("chat.error.rateLimit", {
+            waitMs: "",
+            retryCount: "",
+            maxRetries: "",
+            lng,
+          }),
+        ],
+        ["chat.error.modelNotFound", i18n.t("chat.error.modelNotFound", { model: "", lng })],
+      ];
+      for (const [key, text] of cases) {
+        expect(text, `${lng}:${key}`).not.toBe(key);
+        expect(text, `${lng}:${key}`).not.toContain("「」");
+        expect(text, `${lng}:${key}`).not.toContain("（）");
+        expect(text, `${lng}:${key}`).not.toContain('""');
+        expect(text, `${lng}:${key}`).not.toContain("  ");
+        expect(text, `${lng}:${key}`).not.toMatch(/[（(]\s*[）)]/);
+      }
     }
   });
 });

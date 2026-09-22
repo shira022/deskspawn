@@ -356,11 +356,16 @@ export async function runPhase(
     if (errMsg.includes('failed to fetch') || errMsg.includes('networkerror') || errMsg.includes('econnrefused') || errMsg.includes('network')) {
       errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.networkError') });
     } else if (errMsg.includes('429') || errMsg.includes('rate limit')) {
-      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.rateLimit', { waitMs: '', retryCount: '', maxRetries: '' }) });
+      // この経路では retryCount / maxRetries / waitMs の実値が無い。空値で
+      // プレースホルダを埋めると「（/ 回目、待機 ms）」と破綻するため、
+      // プレースホルダを持たない汎用文言を使う。
+      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.rateLimit') });
     } else if (errMsg.includes('401') || errMsg.includes('403') || errMsg.includes('api key') || errMsg.includes('unauthorized')) {
       errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.apiKeyInvalid') });
     } else if (errMsg.includes('404') || errMsg.includes('model') && (errMsg.includes('not found') || errMsg.includes('does not exist'))) {
-      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.modelNotFound', { model: '' }) });
+      // この経路ではモデル名が取得できない。空の {{model}} で「モデル「」」と
+      // 破綻しないよう、プレースホルダを持たない汎用文言を使う。
+      errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.modelNotFound') });
     } else if (errMsg.includes('timeout') || errMsg.includes('aborted')) {
       errorText = i18n.t('chat.error.phaseFailedDetail', { phase, message: i18n.t('chat.error.timeout') });
     } else {
@@ -634,9 +639,9 @@ export async function runPipelineForLevel(
 
     hooks?.onPhaseEnd?.(phase, result);
 
-    // 例外などで停止したフェーズを構造的シグナルとして記録する。
-    // テキストにエラー語が含まれない経路（rateLimit / timeout 等）でも
-    // 検証失敗をUIへ伝えられるようにするため。
+    // 例外などで停止したフェーズ（stoppedReason === "error"）を構造的シグナルとして
+    // 記録する。これは検証フェーズに限らず全フェーズが対象。テキストにエラー語が
+    // 含まれない経路（rateLimit / timeout 等）でも失敗をUIへ伝えるため。
     if (result.stoppedReason === "error") {
       failedPhases.push(phase);
     }
@@ -688,8 +693,13 @@ export async function runPipelineForLevel(
       }
     }
 
-    // 致命的エラーで中断
-    if (result.stoppedReason === "error" && !result.text.startsWith("⚠️")) {
+    // 致命的エラーで中断する。stoppedReason は step-limits の
+    // "normal_completion" / "max_steps" / "loop_detected" と、runPhase の catch が
+    // 返す "error" のみ。以前はテキスト先頭の ⚠️ で「例外以外の停止」を
+    // 見分けていたが、catch の errorText（phaseFailedDetail）が全て ⚠️ で
+    // 始まるようになりヒューリスティックが常に false になっていたため、
+    // 構造的シグナルである stoppedReason だけで判定する。
+    if (result.stoppedReason === "error") {
       break;
     }
   }
