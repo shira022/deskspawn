@@ -944,7 +944,7 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
     expect(result.interruptedBy).toBe("timeout");
   });
 
-  it("qaVerdict is 'stale' when files change after the last visual_qa; timeout is reported", async () => {
+  it("re-runs visual_qa after a fix round cut short by a verifier timeout, so the verdict is current", async () => {
     mockTextWithTools("Plan");
     mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
     mockTextWithTools("No errors found");
@@ -953,6 +953,94 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
     mockTextWithTools("Code fixed", [{ toolName: "apply_artifact", args: { id: "b" } }]);
     // ...then the verifier is cut off by a per-call timeout.
     vi.mocked(generateText).mockRejectedValueOnce(new Error("signal timed out"));
+    // The pipeline still re-runs visual_qa once after the fix round to refresh
+    // the verdict against the latest files (the preview now renders).
+    mockTextWithTools("✅ PASS: app renders");
+
+    const visualQaDetails: string[] = [];
+    const hooks: PipelineHooks = {
+      onPhaseDetail: (phase, text) => {
+        if (phase === "visual_qa") visualQaDetails.push(text);
+      },
+    };
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Build a new app"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      hooks,
+      undefined,
+      undefined,
+      5,
+    );
+
+    expect(result.phases).toEqual([
+      "planner", "coder", "verifier", "visual_qa", "coder", "verifier", "visual_qa",
+    ]);
+    expect(result.qaVerdict).toBe("current");
+    expect(result.interruptedBy).toBe("timeout");
+    expect(result.failedPhases).toEqual(["verifier"]);
+    // phaseOutputs はフェーズ単位で後勝ち: 最後の visual_qa 詳細は最新の PASS
+    expect(visualQaDetails).toEqual(["❌ FAIL: blank page", "✅ PASS: app renders"]);
+  });
+
+  it("does not re-run visual_qa when a fix round is cut short by a non-timeout error", async () => {
+    // 接続障害（network/auth/ratelimit/model）は interruptedBy === "error" になり、
+    // 再実行しても回復しないため追加の LLM 呼び出しを行わない（timeout のみ対象）。
+    mockTextWithTools("Plan");
+    mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
+    mockTextWithTools("No errors found");
+    mockTextWithTools("❌ FAIL: blank page", [{ toolName: "take_screenshot", args: {} }]);
+    mockTextWithTools("Code fixed", [{ toolName: "apply_artifact", args: { id: "b" } }]);
+    // fix round の verifier がタイムアウト以外の例外で停止する
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("API failure"));
+    // 仮に再実行されればこれを消費してしまう（呼ばれないことを検証する）
+    mockTextWithTools("✅ PASS: app renders");
+
+    const visualQaDetails: string[] = [];
+    const hooks: PipelineHooks = {
+      onPhaseDetail: (phase, text) => {
+        if (phase === "visual_qa") visualQaDetails.push(text);
+      },
+    };
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Build a new app"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      hooks,
+      undefined,
+      undefined,
+      5,
+    );
+
+    expect(result.phases).toEqual([
+      "planner", "coder", "verifier", "visual_qa", "coder", "verifier",
+    ]);
+    expect(result.interruptedBy).toBe("error");
+    // 再実行しないため、最後の visual_qa 判定は変更前のまま（stale）
+    expect(result.qaVerdict).toBe("stale");
+    expect(result.failedPhases).toEqual(["verifier"]);
+    expect(visualQaDetails).toEqual(["❌ FAIL: blank page"]);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(6);
+  });
+
+  it("keeps qaVerdict 'stale' when a user stop cuts off a fix round after files changed", async () => {
+    // 修正ループの coder がファイルを変えた後、ユーザー停止で末尾の visual_qa が
+    // 実行されなかった場合は、古い判定（stale）を保持する。aborted では再実行しない。
+    mockTextWithTools("Plan");
+    mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
+    mockTextWithTools("No errors found");
+    mockTextWithTools("❌ FAIL: blank page", [{ toolName: "take_screenshot", args: {} }]);
+    mockTextWithTools("Code fixed", [{ toolName: "apply_artifact", args: { id: "b" } }]);
+    // fix round の verifier でユーザーが停止する
+    vi.mocked(generateText).mockRejectedValueOnce(makeAbortError());
 
     const result = await runWithTriage(
       mockModel,
@@ -967,10 +1055,107 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
       5,
     );
 
-    expect(result.phases).toEqual(["planner", "coder", "verifier", "visual_qa", "coder", "verifier"]);
+    expect(result.phases).toEqual([
+      "planner", "coder", "verifier", "visual_qa", "coder", "verifier",
+    ]);
+    expect(result.qaVerdict).toBe("stale");
+    expect(result.interruptedBy).toBe("aborted");
+    expect(result.failedPhases).toEqual(["verifier"]);
+  });
+
+  it("does not re-run visual_qa when the pipeline signal is already aborted", async () => {
+    // パイプライン全体タイムアウト等で phaseSignal が aborted の場合、再実行しても
+    // 即エラーになり executedPhases / failedPhases に visual_qa が追加され、旧判定
+    // テキストをエラー文言で上書きしてしまう。aborted 済みなら再実行しない。
+    const abortedController = new AbortController();
+    abortedController.abort();
+
+    mockTextWithTools("Plan");
+    mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
+    mockTextWithTools("No errors found");
+    mockTextWithTools("❌ FAIL: blank page", [{ toolName: "take_screenshot", args: {} }]);
+    mockTextWithTools("Code fixed", [{ toolName: "apply_artifact", args: { id: "b" } }]);
+    // per-call タイムアウトとして報告される（signal 自体は既に aborted）
+    vi.mocked(generateText).mockRejectedValueOnce(
+      Object.assign(new Error("signal timed out"), { name: "TimeoutError" }),
+    );
+    // 仮に再実行されればこれを消費してしまう（呼ばれないことを検証する）
+    mockTextWithTools("✅ PASS: app renders");
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Build a new app"),
+      buildTools,
+      abortedController.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      5,
+    );
+
+    expect(result.phases).toEqual([
+      "planner", "coder", "verifier", "visual_qa", "coder", "verifier",
+    ]);
     expect(result.qaVerdict).toBe("stale");
     expect(result.interruptedBy).toBe("timeout");
     expect(result.failedPhases).toEqual(["verifier"]);
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(6);
+  });
+
+  it("does not re-run visual_qa after a fix round when the verdict is already current", async () => {
+    // 修正ループの末尾 visual_qa が判定を返していれば、余分な再検証は行わない。
+    mockTextWithTools("Plan");
+    mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
+    mockTextWithTools("Verify");
+    mockTextWithTools("❌ FAIL: blank page", [{ toolName: "take_screenshot", args: {} }]);
+    mockTextWithTools("Code fixed", [{ toolName: "apply_artifact", args: { id: "b" } }]);
+    mockTextWithTools("Verify 1");
+    mockTextWithTools("✅ PASS", [{ toolName: "take_screenshot", args: {} }]);
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Build a new app"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      5,
+    );
+
+    expect(result.phases).toEqual([
+      "planner", "coder", "verifier", "visual_qa",
+      "coder", "verifier", "visual_qa",
+    ]);
+    expect(result.qaVerdict).toBe("current");
+    // 7 回で打ち止め（末尾 visual_qa が current のため再検証なし）
+    expect(vi.mocked(generateText)).toHaveBeenCalledTimes(7);
+  });
+
+  it("does not re-run visual_qa for tiers without visual_qa (qaVerdict stays 'not-run')", async () => {
+    mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
+    mockTextWithTools("No errors found");
+
+    const result = await runWithTriage(
+      mockModel,
+      makeMessages("Small feature"),
+      buildTools,
+      controller.signal,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      2,
+    );
+
+    expect(result.phases).toEqual(["coder", "verifier"]);
+    expect(result.qaVerdict).toBe("not-run");
+    expect(result.failedPhases).toEqual([]);
   });
 
   it("keeps qaVerdict 'current' when the final visual_qa runs after fix rounds (fix cap reached)", async () => {

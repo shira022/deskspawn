@@ -807,6 +807,61 @@ export async function runPipelineForLevel(
     }
   }
 
+  // 修正ループ後の visual_qa 再実行 ──────────────────────────────────────
+  // 修正ループ（visual_qa → coder → verifier）が走った後、verifier のタイムアウト等で
+  // 末尾に予約された visual_qa が実行されないと、最後のファイル変更より前に撮った
+  // 古い判定（stale）が残ってしまう。その場合に限り visual_qa をもう一度だけ実行し、
+  // 最新の判定で上書きする。fixRounds の上限とは独立した 1 回の再検証であり、
+  // 無制限ループにはしない（この再実行自体が次の修正ラウンドを起動しない）。
+  //
+  // 再実行は「パイプライン全体タイムアウトで末尾 visual_qa が予約実行されなかった」
+  // ケースだけを対象にする。接続障害（network / auth / ratelimit / model）で
+  // interruptedBy === "error" の場合は、追加の LLM 呼び出しをしても回復しないため
+  // 対象外。phaseSignal.aborted は「ユーザーの停止」と「パイプライン全体タイムアウト」
+  // の両方を含み、aborted 済みでは再実行しても即エラーになり旧判定をエラー文言で
+  // 上書きしてしまうため、aborted でも再実行しない。
+  if (
+    phases.includes("visual_qa") &&
+    fixRound > 0 &&
+    !phaseSignal.aborted &&
+    (interruptedBy === undefined || interruptedBy === "timeout") &&
+    lastFileChangeIndex !== -1 &&
+    lastVisualQaIndex < lastFileChangeIndex
+  ) {
+    const phase: Phase = "visual_qa";
+    hooks?.onPhaseStart?.(phase);
+    const refreshResult = await runPhase(
+      model,
+      phase,
+      [...requestMessages],
+      buildTools,
+      phaseSignal,
+      hooks,
+      planContext,
+      _simpleMode,
+      language,
+      isDesktop,
+      maxSteps,
+    );
+    hooks?.onPhaseEnd?.(phase, refreshResult);
+
+    executedPhases.push(phase);
+    const refreshIndex = executionIndex;
+    if (refreshResult.stoppedReason !== "error" && refreshResult.text.trim().length > 0) {
+      lastVisualQaIndex = refreshIndex;
+    }
+    if (refreshResult.stoppedReason === "error") {
+      failedPhases.push(phase);
+    }
+    if (refreshResult.text) {
+      hooks?.onPhaseDetail?.(phase, refreshResult.text);
+      accumulatedText += accumulatedText ? "\n\n" : "";
+      accumulatedText += refreshResult.text;
+    }
+    totalUsage.inputTokens += refreshResult.usage.inputTokens;
+    totalUsage.outputTokens += refreshResult.usage.outputTokens;
+  }
+
   // visual_qa がそのティアに含まれない場合は not-run（未実行）。含まれるのに
   // 有効な判定が無ければ failed（実行されたが判定を返さなかった）。あれば、
   // 最後の成功変更より後かで current / stale を分ける。
