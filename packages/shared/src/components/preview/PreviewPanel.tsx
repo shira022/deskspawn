@@ -167,6 +167,19 @@ export function PreviewPanel() {
   const prevAppRef = useRef<string | null>(null);
   const prevReloadRef = useRef(0);
   const iframeLoadTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // running → complete 遷移直後〜 iframe 再読込完了（onLoad）の谷間で
+  // ベールを継続するフラグ。complete は fetchCheckpoints（await）→
+  // triggerReload より先に立つため、その間は iframeLoading が false の
+  // まま古い/壊れた iframe が露出する。
+  const [holdVeil, setHoldVeil] = useState(false);
+  const holdVeilTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const clearHoldVeil = useCallback(() => {
+    setHoldVeil(false);
+    if (holdVeilTimeoutRef.current) {
+      clearTimeout(holdVeilTimeoutRef.current);
+      holdVeilTimeoutRef.current = null;
+    }
+  }, []);
 
   // ── Device Preset & Zoom ────────────────────────────────────────────────────
   // `null` = auto-fit (fill available width, original behaviour)
@@ -271,6 +284,24 @@ export function PreviewPanel() {
     const wasRunning = prevAgentStatusRef.current === "running";
     const nowRunning = agentStatus === "running";
     prevAgentStatusRef.current = agentStatus;
+
+    // running → complete を検知したら、iframe の読み込み完了（onLoad）
+    // までベールを継続する。complete → fetchCheckpoints（await）→
+    // triggerReload → syncAndReload の .then まで iframeLoading が false
+    // の谷間では古い/壊れた iframe が露出するため、ここで塞ぐ。
+    if (wasRunning && agentStatus === "complete") {
+      setHoldVeil(true);
+      // 固着防止: 30 秒以内に onLoad が来なければ強制解除
+      if (holdVeilTimeoutRef.current) clearTimeout(holdVeilTimeoutRef.current);
+      holdVeilTimeoutRef.current = setTimeout(() => {
+        holdVeilTimeoutRef.current = null;
+        setHoldVeil(false);
+      }, 30000);
+    } else if (agentStatus === "error" || agentStatus === "idle") {
+      // 固着防止: エラー終了・中断（stop）では再読込が走らないため解除
+      clearHoldVeil();
+    }
+
     if (!wasRunning || nowRunning) return; // 完了時のみ反応
     if (status !== "error") return;
     if (!currentAppId) return;
@@ -284,7 +315,7 @@ export function PreviewPanel() {
         console.error("[preview] Post-generation retry failed:", e);
         setError(e.message || String(e));
       });
-  }, [agentStatus, status, currentAppId]);
+  }, [agentStatus, status, currentAppId, clearHoldVeil]);
 
   // previewUrl 変更時 → iframe のローディング状態をリセット
   useEffect(() => {
@@ -306,6 +337,7 @@ export function PreviewPanel() {
   useEffect(() => {
     return () => {
       if (iframeLoadTimeoutRef.current) clearTimeout(iframeLoadTimeoutRef.current);
+      if (holdVeilTimeoutRef.current) clearTimeout(holdVeilTimeoutRef.current);
     };
   }, []);
 
@@ -315,6 +347,17 @@ export function PreviewPanel() {
   useEffect(() => {
     if (!currentAppId || reloadCounter <= prevReloadRef.current) return;
     prevReloadRef.current = reloadCounter;
+
+    // syncAndReload の前に iframeLoading を先行立上げ、完了後の同期中
+    // （.then まで）もベールで隠す。.then 内の setIframeLoading では
+    // 同期完了後にしか立たず、その間に壊れた中身が露出する。30 秒の
+    // 安全タイムアウトも予約して固着を防ぐ。
+    setIframeLoading(true);
+    if (iframeLoadTimeoutRef.current) clearTimeout(iframeLoadTimeoutRef.current);
+    iframeLoadTimeoutRef.current = setTimeout(() => {
+      iframeLoadTimeoutRef.current = null;
+      setIframeLoading(false);
+    }, 30000);
 
     previewManager
       .syncAndReload(currentAppId)
@@ -333,8 +376,15 @@ export function PreviewPanel() {
       .catch((e: any) => {
         console.error("[preview] Sync failed:", e);
         setError(e.message || String(e));
+        // 再読込されないため先行立上げたフラグを下ろす（固着防止）
+        setIframeLoading(false);
+        if (iframeLoadTimeoutRef.current) {
+          clearTimeout(iframeLoadTimeoutRef.current);
+          iframeLoadTimeoutRef.current = null;
+        }
+        clearHoldVeil();
       });
-  }, [reloadCounter, currentAppId, previewUrl]);
+  }, [reloadCounter, currentAppId, previewUrl, clearHoldVeil]);
 
   // ★ injectIframeModule は削除済み
   // 理由: HTML内の <script type="module" src="/__virtual__/5174/src/main.tsx"> で
@@ -581,18 +631,47 @@ export function PreviewPanel() {
                 transformOrigin: "top center",
               }}
             >
-              {/* Iframe コンテンツ読み込み中 — ローディングオーバーレイ */}
-              {iframeLoading && (
-                <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/80 backdrop-blur-[1px] dark:bg-black/80">
+              {/* ベール — 生成中・iframe 再読込中はプレビューの上に覆いを掛け、
+                  壊れた中身（白画面＋赤エラー）を見えなくする。HMR が途中
+                  書き込みされたファイルを再読込して React がクラッシュする
+                  際、ユーザーは生成中に壊れたプレビューを見ることになる。
+                  表示条件: agentStatus === "running"、iframeLoading
+                  （ビルド後・チェックポイント復元・triggerReload 時に立つ）、
+                  または holdVeil（running → complete 遷移直後〜 onLoad まで。
+                  fetchCheckpoints の await 中は iframeLoading が false の
+                  まま谷間になるため）。setAgentStatus("complete") は
+                  プレビュー再読込より先に走る（useChatStream.ts）ため、
+                  complete 後も再読込完了まで隠して「完了＝まだ古い/壊れた」
+                  の谷間をカバーする。error / stop（idle）時は holdVeil を
+                  解除して固着を防ぐ。
+                  ⚠️ takeScreenshot (#161) は html2canvas(previewIframe) で
+                  iframe 要素そのものだけを撮る。このベールは iframe の兄弟
+                  要素（子孫ではない）なので撮影結果には写り込まない。写り込む
+                  と撮影が白画面 FAIL になるため、子要素として入れないこと。 */}
+              {(iframeLoading || holdVeil || agentStatus === "running") && (
+                <div
+                  role="status"
+                  aria-live="polite"
+                  data-testid="preview-veil"
+                  className={`absolute inset-0 flex items-center justify-center bg-white/95 backdrop-blur-[2px] dark:bg-black/95 pointer-events-auto ${
+                    // 生成中は同期ログオーバーレイ (z-20) の上まで覆い、半透明の
+                    // ログ枠越しに壊れた中身が透けないようにする
+                    agentStatus === "running" ? "z-30" : "z-10"
+                  }`}
+                >
                   <div className="flex flex-col items-center gap-3">
                     <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
                     <div className="flex flex-col items-center gap-1">
                       <span className="text-xs font-medium text-muted-foreground">
-                        {t("preview.rendering")}
+                        {agentStatus === "running"
+                          ? t("chat.generating")
+                          : t("preview.rendering")}
                       </span>
-                      <span className="text-[10px] text-muted-foreground/60">
-                        {t("preview.loadingApp")}
-                      </span>
+                      {agentStatus !== "running" && (
+                        <span className="text-[10px] text-muted-foreground/60">
+                          {t("preview.loadingApp")}
+                        </span>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -622,6 +701,8 @@ export function PreviewPanel() {
                 sandbox="allow-scripts allow-forms allow-popups allow-same-origin"
                 onLoad={() => {
                   setIframeLoading(false);
+                  // 再読込完了 = running → complete の継続フラグも解除
+                  clearHoldVeil();
                   if (iframeLoadTimeoutRef.current) {
                     clearTimeout(iframeLoadTimeoutRef.current);
                     iframeLoadTimeoutRef.current = null;
