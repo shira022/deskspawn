@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
-import { render, screen, act } from "@testing-library/react";
+import { render, screen, act, fireEvent, waitFor } from "@testing-library/react";
 import { PreviewPanel } from "./PreviewPanel";
 
 // Mock react-i18next
@@ -13,6 +13,9 @@ vi.mock("react-i18next", () => ({
         "preview.waitingForServer": "Waiting for the app's dev server...",
         "preview.localBadge": "Local :{{port}}",
         "preview.openInBrowser": "Open in browser",
+        "preview.rendering": "Rendering preview...",
+        "preview.loadingApp": "Loading app...",
+        "chat.generating": "Generating app...",
         "common.refresh": "Refresh",
         "common.minimize": "Minimize",
         "common.maximize": "Maximize",
@@ -33,6 +36,7 @@ const mockStore = {
   previewMaximized: false,
   togglePreviewMaximized: vi.fn(),
   messages: [],
+  agentStatus: "idle",
 };
 
 vi.mock("../../store/useAppStore", () => ({
@@ -285,5 +289,201 @@ describe("PreviewPanel — app switch does not leak the previous app", () => {
     expect(iframe.getAttribute("src")).toBe("http://localhost:5175/");
     expect(screen.getByText("Local :5175")).toBeTruthy();
     expect(screen.queryByText("Local :4174")).toBeNull();
+  });
+});
+
+// ─── 生成中・再読込中のベール ─────────────────────────────────────────────────
+// HMR が途中書き込みされたファイルを再読込して React がクラッシュし、生成中に
+// 白画面＋赤エラーが見える問題への対策。ベールが iframe の兄弟要素であること
+// （= takeScreenshot の html2canvas(previewIframe) に写り込まないこと）も併せて
+// 検証する — ベールが撮影に写ると「白画面 FAIL」が復活する重大な回帰になる。
+
+describe("PreviewPanel — generation veil (ベール)", () => {
+  const veil = () => screen.queryByTestId("preview-veil");
+
+  beforeEach(() => {
+    (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean })
+      .__DESKSPAWN_DESKTOP__ = true;
+    mockStore.agentStatus = "idle";
+    mockStore.reloadCounter = 0;
+  });
+
+  afterEach(() => {
+    delete (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean })
+      .__DESKSPAWN_DESKTOP__;
+    mockStore.agentStatus = "idle";
+    mockStore.reloadCounter = 0;
+    previewManagerMock.onStateChange.mockClear();
+    previewManagerMock.boot.mockClear();
+    previewManagerMock.syncAndReload.mockClear();
+    mockStore.currentAppId = "app-1";
+    resetPreviewManagerMock();
+  });
+
+  it("agentStatus: running → ベールが表示される（iframe 読み込み完了後も隠し続ける）", async () => {
+    mockStore.agentStatus = "running";
+    render(<PreviewPanel />);
+
+    const veilEl = veil();
+    expect(veilEl).toBeTruthy();
+    expect(screen.getByText("Generating app...")).toBeTruthy();
+
+    // 読み込み完了（load）後も生成中はベールを維持する
+    fireEvent.load(screen.getByTitle("App Preview"));
+    expect(veil()).toBeTruthy();
+    expect(screen.getByText("Generating app...")).toBeTruthy();
+
+    // クリックをブロックし、aria-live で進行状況を通知する
+    expect(veilEl!.className).toContain("pointer-events-auto");
+    expect(veilEl!.getAttribute("role")).toBe("status");
+    expect(veilEl!.getAttribute("aria-live")).toBe("polite");
+  });
+
+  it("agentStatus: complete かつ iframeLoading: false → ベールは非表示", async () => {
+    mockStore.agentStatus = "complete";
+    render(<PreviewPanel />);
+
+    // iframe の load で iframeLoading が false になる
+    fireEvent.load(screen.getByTitle("App Preview"));
+    expect(veil()).toBeNull();
+    expect(screen.queryByText("Generating app...")).toBeNull();
+  });
+
+  it("iframeLoading: true（agentStatus が complete でも）→ ベール表示 — 完了マークと再読込の谷間をカバー", async () => {
+    // useChatStream.ts では setAgentStatus("complete") が triggerReload より
+    // 先に走る。complete 直後〜iframe 再読込完了までは中身が古い/壊れたまま
+    // なので、iframeLoading が立っている間はベールで隠す。
+    mockStore.agentStatus = "complete";
+    const { rerender } = render(<PreviewPanel />);
+    const iframe = screen.getByTitle("App Preview");
+
+    // まず読み込み完了まで到達させてベールが無い状態を作る
+    fireEvent.load(iframe);
+    expect(veil()).toBeNull();
+
+    // 完了後の triggerReload（reloadCounter 増加）→ iframeLoading 再立上
+    mockStore.reloadCounter = 1;
+    rerender(<PreviewPanel />);
+    await waitFor(() => expect(veil()).toBeTruthy());
+
+    // 生成は完了しているので文言はロード中のベール表示のまま（非表示にならない）
+    expect(screen.queryByText("Generating app...")).toBeNull();
+    expect(screen.getByText("Rendering preview...")).toBeTruthy();
+  });
+
+  it("running → complete 遷移直後（iframeLoading が false のまま）でもベールを継続 — 谷間の露出を塞ぐ", async () => {
+    // useChatStream.ts は setAgentStatus("complete") → await fetchCheckpoints
+    // → triggerReload の順。iframeLoading は triggerReload エフェクト内
+    // （syncAndReload 前）で初めて立つため、complete 立上〜 triggerReload
+    // 発火までの谷間では iframeLoading は false のままになる。
+    mockStore.agentStatus = "running";
+    const { rerender } = render(<PreviewPanel />);
+    const iframe = screen.getByTitle("App Preview");
+
+    // iframe の読み込み完了 → iframeLoading は false（生成中は running で維持）
+    fireEvent.load(iframe);
+    expect(veil()).toBeTruthy();
+
+    // running → complete へ遷移（reloadCounter は据え置き＝ triggerReload 未発火）
+    mockStore.agentStatus = "complete";
+    rerender(<PreviewPanel />);
+
+    // ★ 谷間の直接検出: リロードはまだ始まっていない（iframeLoading が
+    //   立つタイミング以前）のに、ベールはまだ下りている
+    expect(previewManagerMock.syncAndReload).not.toHaveBeenCalled();
+    expect(veil()).toBeTruthy();
+    expect(screen.getByText("Rendering preview...")).toBeTruthy();
+  });
+
+  it("complete + リロード完了（onLoad）→ ベール解除", async () => {
+    mockStore.agentStatus = "running";
+    const { rerender } = render(<PreviewPanel />);
+    const iframe = screen.getByTitle("App Preview");
+
+    // 読み込み完了 → running 中はベール維持
+    fireEvent.load(iframe);
+    expect(veil()).toBeTruthy();
+
+    // running → complete（holdVeil 立上）
+    mockStore.agentStatus = "complete";
+    rerender(<PreviewPanel />);
+    expect(veil()).toBeTruthy();
+
+    // triggerReload（reloadCounter 増加）→ syncAndReload 実行
+    mockStore.reloadCounter = 1;
+    rerender(<PreviewPanel />);
+    await waitFor(() => expect(previewManagerMock.syncAndReload).toHaveBeenCalled());
+    // syncAndReload の .then（iframe.src 更新 → setIframeLoading(true)）まで消化
+    await act(async () => {});
+    expect(veil()).toBeTruthy();
+
+    // ★ 再読込完了（onLoad）→ holdVeil / iframeLoading とも解除されベールが上がる
+    fireEvent.load(screen.getByTitle("App Preview"));
+    expect(veil()).toBeNull();
+    expect(screen.queryByText("Generating app...")).toBeNull();
+  });
+
+  it("error 終了（リロード無し）→ ベール解除（固着しない）", async () => {
+    mockStore.agentStatus = "running";
+    const { rerender } = render(<PreviewPanel />);
+    const iframe = screen.getByTitle("App Preview");
+
+    fireEvent.load(iframe);
+    expect(veil()).toBeTruthy();
+
+    // running → complete で holdVeil が立つ（この後リロードは来ない）
+    mockStore.agentStatus = "complete";
+    rerender(<PreviewPanel />);
+    expect(veil()).toBeTruthy();
+    expect(previewManagerMock.syncAndReload).not.toHaveBeenCalled();
+
+    // ★ エラー終了: triggerReload されないため holdVeil を確実に解除する
+    mockStore.agentStatus = "error";
+    rerender(<PreviewPanel />);
+    expect(veil()).toBeNull();
+
+    // 中断（stop → idle）でも固着しないこと
+    mockStore.agentStatus = "running";
+    rerender(<PreviewPanel />);
+    expect(veil()).toBeTruthy();
+    mockStore.agentStatus = "complete";
+    rerender(<PreviewPanel />);
+    expect(veil()).toBeTruthy();
+    mockStore.agentStatus = "idle";
+    rerender(<PreviewPanel />);
+    expect(veil()).toBeNull();
+  });
+
+  it("生成中ベールは z-30（同期ログオーバーレイ z-20 の上）／完了後ロード中は z-10", async () => {
+    mockStore.agentStatus = "running";
+    const { rerender } = render(<PreviewPanel />);
+
+    // ★ 生成中: z-30 でないと z-20 のログ枠越しに壊れた中身が透ける
+    expect(veil()!.className).toContain("z-30");
+
+    // 完了後（holdVeil 継続中）は通常時の z-10
+    fireEvent.load(screen.getByTitle("App Preview"));
+    mockStore.agentStatus = "complete";
+    rerender(<PreviewPanel />);
+    expect(veil()).toBeTruthy();
+    expect(veil()!.className).toContain("z-10");
+    expect(veil()!.className).not.toContain("z-30");
+  });
+
+  it("撮影前提: ベールは iframe の兄弟要素であり html2canvas(iframe) に写り込まない", async () => {
+    mockStore.agentStatus = "running";
+    render(<PreviewPanel />);
+
+    const iframe = screen.getByTitle("App Preview");
+    const veilEl = veil();
+    expect(veilEl).toBeTruthy();
+
+    // takeScreenshot は document.getElementById("preview-iframe") を
+    // html2canvas に渡し、iframe 要素そのもの（＝その子孫）だけを撮る。
+    // ベールが iframe の子孫でなければ撮影結果にベールは入り得ない。
+    expect(iframe.contains(veilEl)).toBe(false);
+    expect(veilEl!.parentElement).toBe(iframe.parentElement);
+    // ベールが iframe の中に injected されていないこと（撮影回帰の防止）
+    expect((iframe as HTMLElement).querySelector("[data-testid='preview-veil']")).toBeNull();
   });
 });
