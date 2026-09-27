@@ -712,7 +712,10 @@ describe("runPhase", () => {
   });
 
   it("classifies 'signal timed out' as timeout and never leaks the raw SDK text", async () => {
-    vi.mocked(generateText).mockRejectedValueOnce(new Error("signal timed out"));
+    // per-call タイムアウトは1回だけ即時リトライされるため、2回とも落ちる。
+    vi.mocked(generateText)
+      .mockRejectedValueOnce(new Error("signal timed out"))
+      .mockRejectedValueOnce(new Error("signal timed out"));
 
     const result = await runPhase(
       mockModel,
@@ -778,7 +781,11 @@ describe("runPhase", () => {
   });
 
   it("treats 'connection timed out' as a timeout (not network)", async () => {
-    vi.mocked(generateText).mockRejectedValueOnce(new Error("connection timed out"));
+    // "timed out" 系は per-call タイムアウト扱いのため1回リトライされ、
+    // 2回目も同じエラーで落ちること。
+    vi.mocked(generateText)
+      .mockRejectedValueOnce(new Error("connection timed out"))
+      .mockRejectedValueOnce(new Error("connection timed out"));
     const result = await runPhase(
       mockModel,
       "verifier",
@@ -787,6 +794,112 @@ describe("runPhase", () => {
       controller.signal,
     );
     expect(result.errorKind).toBe("timeout");
+  });
+
+  it("retries a per-call timeout once and succeeds on the second attempt", async () => {
+    vi.mocked(generateText)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("signal timed out"), { name: "TimeoutError" }),
+      )
+      .mockResolvedValueOnce({
+        text: "Recovered after retry",
+        usage: { inputTokens: 2, outputTokens: 1 },
+      } as any);
+
+    const result = await runPhase(
+      mockModel,
+      "verifier",
+      makeMessages("Do work"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    // per-call タイムアウトは 120s → 240s（全体10分の40%）に引き上げ済み。
+    expect(vi.mocked(generateText).mock.calls[0][0]?.timeout).toBe(240_000);
+    expect(vi.mocked(generateText).mock.calls[1][0]?.timeout).toBe(240_000);
+    expect(result.stoppedReason).toBe("normal_completion");
+    expect(result.errorKind).toBeUndefined();
+    expect(result.text).toBe("Recovered after retry");
+  });
+
+  it("gives up after the second per-call timeout and classifies the phase as timeout", async () => {
+    vi.mocked(generateText)
+      .mockRejectedValueOnce(
+        Object.assign(new Error("signal timed out"), { name: "TimeoutError" }),
+      )
+      .mockRejectedValueOnce(
+        Object.assign(new Error("signal timed out"), { name: "TimeoutError" }),
+      );
+
+    const result = await runPhase(
+      mockModel,
+      "verifier",
+      makeMessages("Do work"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(generateText).toHaveBeenCalledTimes(2);
+    expect(result.stoppedReason).toBe("error");
+    expect(result.errorKind).toBe("timeout");
+  });
+
+  it("does not retry non-timeout errors (generateText is called once)", async () => {
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("fetch failed"));
+
+    const result = await runPhase(
+      mockModel,
+      "verifier",
+      makeMessages("Do work"),
+      buildTools,
+      controller.signal,
+    );
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(result.stoppedReason).toBe("error");
+    expect(result.errorKind).toBe("network");
+  });
+
+  it("does not retry a per-call timeout when the signal is already aborted", async () => {
+    const abortedController = new AbortController();
+    abortedController.abort();
+    vi.mocked(generateText).mockRejectedValueOnce(new Error("signal timed out"));
+
+    const result = await runPhase(
+      mockModel,
+      "verifier",
+      makeMessages("Do work"),
+      buildTools,
+      abortedController.signal,
+    );
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(result.stoppedReason).toBe("error");
+    expect(result.errorKind).toBe("timeout");
+  });
+
+  it("does not retry a per-call timeout when the signal aborts between attempts", async () => {
+    const raceController = new AbortController();
+    // 1回目の per-call タイムアウト失敗と同時に Stop/全体タイムアウトで signal が
+    // abort され、2回目の試行直前に aborted が見える競合を再現する。
+    vi.mocked(generateText).mockImplementationOnce(async () => {
+      raceController.abort();
+      throw Object.assign(new Error("signal timed out"), { name: "TimeoutError" });
+    });
+
+    const result = await runPhase(
+      mockModel,
+      "verifier",
+      makeMessages("Do work"),
+      buildTools,
+      raceController.signal,
+    );
+
+    expect(generateText).toHaveBeenCalledTimes(1);
+    expect(result.stoppedReason).toBe("error");
+    expect(result.errorKind).toBe("timeout");
+    expect(result.text).toContain(i18n.t("chat.error.timeout"));
   });
 
   it("marks appliedChanges only when apply_artifact succeeded", async () => {
@@ -923,7 +1036,10 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
     mockTextWithTools("Code", [{ toolName: "apply_artifact", args: { id: "a" } }]);
     mockTextWithTools("No errors found");
     // visual_qa がタイムアウトで失敗し、判定を返さない
-    vi.mocked(generateText).mockRejectedValueOnce(new Error("signal timed out"));
+    // （per-call タイムアウトは1回リトライされるが、2回目も同じエラー）
+    vi.mocked(generateText)
+      .mockRejectedValueOnce(new Error("signal timed out"))
+      .mockRejectedValueOnce(new Error("signal timed out"));
 
     const result = await runWithTriage(
       mockModel,
@@ -951,8 +1067,11 @@ describe("runPipelineForLevel: qaVerdict / interruptedBy / fileChangesApplied", 
     mockTextWithTools("❌ FAIL: blank page", [{ toolName: "take_screenshot", args: {} }]);
     // fix round: coder changes files after the visual_qa verdict...
     mockTextWithTools("Code fixed", [{ toolName: "apply_artifact", args: { id: "b" } }]);
-    // ...then the verifier is cut off by a per-call timeout.
-    vi.mocked(generateText).mockRejectedValueOnce(new Error("signal timed out"));
+    // ...then the verifier is cut off by a per-call timeout
+    // （1回リトライ後も2回目で同じタイムアウトに落ちる）.
+    vi.mocked(generateText)
+      .mockRejectedValueOnce(new Error("signal timed out"))
+      .mockRejectedValueOnce(new Error("signal timed out"));
     // The pipeline still re-runs visual_qa once after the fix round to refresh
     // the verdict against the latest files (the preview now renders).
     mockTextWithTools("✅ PASS: app renders");

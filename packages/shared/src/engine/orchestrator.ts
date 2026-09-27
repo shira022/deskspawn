@@ -21,8 +21,11 @@ import type { PipelineTierLevel } from "../types";
 
 // ── Timeouts ──────────────────────────────────────────────────────────────────
 
-/** 各 generateText 呼び出しの壁時計タイムアウト (ms) */
-const GENERATE_TIMEOUT_MS = 120_000;
+/**
+ * 各 generateText 呼び出しの壁時計タイムアウト (ms)。
+ * 120s は P8 で実測した遅延型打ち切り（1回/run）→240s=全体10分の40%まで。
+ */
+const GENERATE_TIMEOUT_MS = 240_000;
 
 /** パイプライン全体の壁時計タイムアウト (ms) — UI の abort controller と併用 */
 const PIPELINE_TIMEOUT_MS = 10 * 60 * 1000;
@@ -34,6 +37,46 @@ const PIPELINE_TIMEOUT_MS = 10 * 60 * 1000;
 function withPipelineTimeout(signal: AbortSignal): AbortSignal {
   if (signal.aborted) return signal;
   return AbortSignal.any([signal, AbortSignal.timeout(PIPELINE_TIMEOUT_MS)]);
+}
+
+/** per-call タイムアウトのエラーか（AI SDK は "signal timed out" で throw する）。 */
+function isPerCallTimeoutError(error: unknown): boolean {
+  const err = error as { name?: string; message?: string } | null;
+  if (err?.name === "TimeoutError") return true;
+  return /timed out/i.test(String(err?.message ?? ""));
+}
+
+/**
+ * per-call タイムアウト時のみ1回だけ即時リトライする。
+ *
+ * 1回目が per-call タイムアウトで、かつ引数の signal がまだ aborted でない
+ * （Stop ボタン / パイプライン全体タイムアウト以外）場合のみ2回目を試す。
+ * それ以外のエラー（ネットワーク・auth・abort 等）は即 throw する。
+ * 2回目の直前に signal.aborted を再チェックし、aborted 済みならリトライしない。
+ * 2回目も同じ per-call タイムアウトで落ちたら、そのエラーをそのまま throw する
+ * （既存の errorKind: 'timeout' 分岐へ）。引数・signal は2回目も同一。
+ *
+ * リトライ時に `collected`（toolCalls/appliedChanges）や `StepManager`
+ * （stepCount/loopScore/fileWriteCount）はリセットされない。attempt1 のツール
+ * 実行分が二重計上され得る（`shouldStop` は `opts.steps.length` 基準のため予算
+ * 短縮は起きない・既存の rate-limit リトライと同一構造・非自明なので明記）。
+ *
+ * 本ヘルパーは `withRateLimitRetry` の内側で動くため、rate-limit（最大4回）×
+ * timeout リトライ（最大2回）で最大8呼び出しになり得る。10分の
+ * `PIPELINE_TIMEOUT_MS` 合成 signal が無限ループを防ぐ。
+ */
+async function generateWithTimeoutRetry<T>(
+  call: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (!isPerCallTimeoutError(error)) throw error;
+    // 2回目の試行直前にも再チェック（Stop / 全体タイムアウトとの競合回避）
+    if (signal.aborted) throw error;
+    return call();
+  }
 }
 
 // ── Phase Configuration ───────────────────────────────────────────────────────
@@ -332,18 +375,23 @@ export async function runPhase(
   try {
     do {
       const result = await withRateLimitRetry(
-        () => generateText({
-          model,
-          system: systemPrompt,
-          messages: roundMessages as any,
-          tools: tools as unknown as ToolSet,
-          abortSignal: signal,
-          timeout: GENERATE_TIMEOUT_MS,
-          stopWhen: (opts) => stepManager.shouldStop(opts),
-          temperature: 0.2,
-          maxOutputTokens: 16384,
-          onStepFinish,
-        }),
+        () =>
+          generateWithTimeoutRetry(
+            () =>
+              generateText({
+                model,
+                system: systemPrompt,
+                messages: roundMessages as any,
+                tools: tools as unknown as ToolSet,
+                abortSignal: signal,
+                timeout: GENERATE_TIMEOUT_MS,
+                stopWhen: (opts) => stepManager.shouldStop(opts),
+                temperature: 0.2,
+                maxOutputTokens: 16384,
+                onStepFinish,
+              }),
+            signal,
+          ),
         hooks
           ? (retryEvent) => {
               hooks.onRateLimit?.(phase, retryEvent.retryCount, retryEvent.maxRetries, retryEvent.waitMs);
