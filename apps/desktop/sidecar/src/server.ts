@@ -19,6 +19,7 @@ import * as executors from './tool-executors.js';
 import { createSerialQueue } from './install-queue.js';
 import { initMCPClients, closeMCPClients } from './mcp-client.js';
 import { findListeningPids, nextFallbackPort } from './port-utils.js';
+import { writeFileAtomic } from './atomic-write.js';
 // preview import removed — no longer needed (no Tauri backend)
 
 // ── In-memory API key store (received from Rust backend, never from frontend) ─
@@ -1881,7 +1882,7 @@ function writePreviewFiles(dir: string, files: Record<string, string>) {
       throw new Error(`Invalid file path in preview payload: ${rel}`);
     }
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content, 'utf-8');
+    writeFileAtomic(dir, rel, content);
   }
 }
 
@@ -2042,7 +2043,7 @@ app.post('/api/preview/sync', (req, res) => {
         res.status(400).json({ error: `Invalid content for ${rel}` });
         return;
       }
-      fs.writeFileSync(target, content, 'utf-8');
+      writeFileAtomic(rootResolved, rel, content);
     }
     // Critical-1: package.json が書き込まれた場合、scripts.dev が "vite" 以外なら
     // 取り込まない（次回起動時の任意コード実行を防止）。
