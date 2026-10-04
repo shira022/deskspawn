@@ -14,3 +14,7 @@ onlyBuiltDependencies:
 overrides:
   postcss: 8.5.26
   qs: "^6.14.0"
+  # High-2 (監査対応): undici < 7.29.1 が TLS 証明書検証バイパス 2件
+  # (GHSA-rfgv-xxqx-mfg5 / GHSA-w293-vg96-wgc3, first patched: 7.29.1)。
+  # package.json の pnpm.overrides と同内容を維持すること（上記の過渡期仕様）。
+  undici: 7.29.1
