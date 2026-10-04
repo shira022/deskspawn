@@ -14,3 +14,11 @@ onlyBuiltDependencies:
 overrides:
   postcss: 8.5.26
   qs: "^6.14.0"
+  # High-2 (監査対応): undici < 7.29.1 にアドバイザリ2件（first patched: 7.29.1）
+  # GHSA-rfgv-xxqx-mfg5: DoS via unrequested WebSocket subprotocol (CVE-2026-19534)
+  # GHSA-w293-vg96-wgc3: TLS 証明書検証バイパス (CVE-2026-84961)
+  # package.json の pnpm.overrides と同内容を維持すること（上記の過渡期仕様）。
+  # 実測 2026-10-04 (pnpm 10.4.1, 分離実験): package.json 側は
+  # "pnpm field ... ignored" と警告するが lockfile に反映される=実効。
+  # 本 yaml 側は 10.4.1 では無視され pnpm 11+ で有効 → 両方書くのが正。
+  undici: 7.29.1

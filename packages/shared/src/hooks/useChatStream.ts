@@ -77,7 +77,7 @@ function getProviderConfigIssue(cfg: NonNullable<ReturnType<typeof useAppStore.g
  * Return a provider- and error-specific localized hint string for the generic
  * error message shown to the user.
  */
-function getErrorHint(provider: string | undefined, cfg: { model?: string; customEndpoint?: string } | null, error: unknown): string {
+export function getErrorHint(provider: string | undefined, cfg: { model?: string; customEndpoint?: string } | null, error: unknown): string {
   const providerLabel = provider
     ? (providerLabels[provider as keyof typeof providerLabels] || provider)
     : '';
@@ -136,6 +136,9 @@ function getErrorHint(provider: string | undefined, cfg: { model?: string; custo
     errMsg.includes('fetch failed') ||
     errMsg.includes('failed to fetch') ||
     errMsg.includes('networkerror') ||
+    // WebKit(WKWebView) が fetch 失敗時に返す "TypeError: Load failed"。
+    // CORS ヘッダ無しのエラー応答（例: OpenAI の 401）でも発生する。
+    errMsg.includes('load failed') ||
     errMsg.includes('econnrefused') ||
     errMsg.includes('network') ||
     errMsg.includes('econnreset') ||
