@@ -634,9 +634,24 @@ describe("getErrorHint: WebKit 'Load failed' を network として扱う", () =>
     const hint = getErrorHint("openai", null, new TypeError("Load failed"));
     expect(hint).toBe(i18n.t("chat.error.networkError"));
   });
+});
 
-  it("ollama の場合は接続確認ヒントを返す", () => {
+// ollama は getErrorHint の network 分岐の先頭条件（provider === 'ollama'）で
+// 短絡するため、エラーメッセージの内容に依存しない。
+// `load failed` の分類検証は上記の「Load failed」describe の2ケースが担う。
+describe("getErrorHint: ollama プロバイダの短絡", () => {
+  it("エラーメッセージの内容に関わらず接続確認ヒントを返す", () => {
     const hint = getErrorHint("ollama", { model: "llama3.2" }, new Error("Load failed"));
+    expect(hint).toBe(
+      i18n.t("chat.error.checkOllamaConnection", {
+        endpoint: "http://localhost:11434/v1",
+        model: "llama3.2",
+      }),
+    );
+  });
+
+  it("無関係なエラーメッセージでも同じ checkOllamaConnection を返す（メッセージ非依存）", () => {
+    const hint = getErrorHint("ollama", { model: "llama3.2" }, new Error("unrelated failure"));
     expect(hint).toBe(
       i18n.t("chat.error.checkOllamaConnection", {
         endpoint: "http://localhost:11434/v1",
