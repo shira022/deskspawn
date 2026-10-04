@@ -466,9 +466,12 @@ export async function runPhase(
     // 判定は例外の message と name（TimeoutError / AbortError）で行う。
     let errorText: string;
     let errorKind: PhaseErrorKind;
-    if (errMsg.includes("failed to fetch") || errMsg.includes("fetch failed") || errMsg.includes("networkerror") || errMsg.includes("econnrefused") || errMsg.includes("econnreset") || errMsg.includes("enotfound") || errMsg.includes("network")) {
+    if (errMsg.includes("failed to fetch") || errMsg.includes("fetch failed") || errMsg.includes("networkerror") || errMsg.includes("econnrefused") || errMsg.includes("econnreset") || errMsg.includes("enotfound") || errMsg.includes("network") || errMsg.includes("load failed")) {
       // "connection timed out" は接続タイムアウトだが、network ではなく
       // timeout として扱いたいため、ここには含めない（下の timeout 分岐に落ちる）。
+      // "load failed" は WebKit(WKWebView) が fetch 失敗時に返すメッセージ。
+      // プロバイダが CORS ヘッダ無しのエラー応答（例: OpenAI の 401）を返すと、
+      // WebView は本文を読めず "TypeError: Load failed" になるため network 扱いにする。
       errorKind = "network";
       errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.networkError") });
     } else if (errMsg.includes("429") || errMsg.includes("rate limit")) {

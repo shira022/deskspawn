@@ -8,7 +8,8 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { summarizePipelineResult } from "./useChatStream";
+import { summarizePipelineResult, getErrorHint } from "./useChatStream";
+import i18n from "../lib/i18n";
 
 function makeOutputs(over: Record<string, string> = {}) {
   const outputs: Record<string, { label: string; text: string }> = {
@@ -620,5 +621,27 @@ describe("R14: technical mode も qaVerdict / 中断を反映する", () => {
     expect(failed).toContain("⚠️ **Visual QA did not complete**");
     expect(failed).not.toContain("❌ **Failed**");
     expect(failed).not.toContain("No verdict");
+  });
+});
+
+describe("getErrorHint: WebKit 'Load failed' を network として扱う", () => {
+  it("'Load failed' は networkError を返す（CORS ヘッダ無しエラー応答の対策）", () => {
+    const hint = getErrorHint("openai", { model: "gpt-5.6-luna" }, new Error("Load failed"));
+    expect(hint).toBe(i18n.t("chat.error.networkError"));
+  });
+
+  it("'TypeError: Load failed' も networkError を返す", () => {
+    const hint = getErrorHint("openai", null, new TypeError("Load failed"));
+    expect(hint).toBe(i18n.t("chat.error.networkError"));
+  });
+
+  it("ollama の場合は接続確認ヒントを返す", () => {
+    const hint = getErrorHint("ollama", { model: "llama3.2" }, new Error("Load failed"));
+    expect(hint).toBe(
+      i18n.t("chat.error.checkOllamaConnection", {
+        endpoint: "http://localhost:11434/v1",
+        model: "llama3.2",
+      }),
+    );
   });
 });

@@ -24,6 +24,15 @@ Each release is documented on **GitHub Releases**. See the full history at
 - 📊 Inline status display (`Auto: <name>` / `Manual: <name>`) backed by the
   new `lastTriage` store state.
 
+**Error reporting:**
+
+- 🛠️ WebKit's `TypeError: Load failed` is now classified as a network error
+  instead of being surfaced raw. This message appears when a provider
+  returns an error response without CORS headers (e.g. OpenAI's `401`), and
+  the WebView cannot read the body — the UI now shows a localized
+  "network error" hint (with the Ollama connection hint where relevant)
+  rather than a bare `Load failed`.
+
 ---
 
 ## v0.4.2 (Security Hardening & Desktop-First Renewal) — 2026-08-06

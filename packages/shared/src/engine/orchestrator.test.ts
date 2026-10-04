@@ -735,6 +735,7 @@ describe("runPhase", () => {
     const cases: Array<[string, string]> = [
       ["failed to fetch", "network"],
       ["fetch failed", "network"],
+      ["Load failed", "network"],
       ["read ECONNRESET", "network"],
       ["getaddrinfo ENOTFOUND api.example.com", "network"],
       ["401 Unauthorized", "auth"],
