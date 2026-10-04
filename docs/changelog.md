@@ -36,9 +36,10 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 **Dependency updates:**
 
-- ⬆️ `undici` override 7.29.0 → 7.29.1 (GHSA-rfgv-xxqx-mfg5 /
-  GHSA-w293-vg96-wgc3 — TLS certificate validation bypass, high severity;
-  keeps the CI `npm-audit` gate green).
+- ⬆️ `undici` override 7.29.0 → 7.29.1 (GHSA-rfgv-xxqx-mfg5 — DoS via
+  unrequested WebSocket subprotocol, CVE-2026-19534; GHSA-w293-vg96-wgc3 —
+  TLS certificate validation bypass, CVE-2026-84961; both high severity).
+  Keeps the CI `npm-audit` gate green.
 
 ---
 

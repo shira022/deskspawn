@@ -636,11 +636,13 @@ describe("getErrorHint: WebKit 'Load failed' を network として扱う", () =>
   });
 });
 
-// ollama は getErrorHint の network 分岐の先頭条件（provider === 'ollama'）で
-// 短絡するため、エラーメッセージの内容に依存しない。
+// ollama は getErrorHint の network 分岐の先頭条件（provider === 'ollama'）で短絡するが、
+// その network 分岐の前には 429 / auth / model / timeout の先行分岐がある。
+// したがって短絡が効くのは「先行分岐（429/auth/model/timeout）に該当しない」エラーに限られ、
+// それらに該当するエラーはメッセージ内容に関わらず先行分岐のヒントが返る。
 // `load failed` の分類検証は上記の「Load failed」describe の2ケースが担う。
 describe("getErrorHint: ollama プロバイダの短絡", () => {
-  it("エラーメッセージの内容に関わらず接続確認ヒントを返す", () => {
+  it("先行分岐に該当しないエラーはメッセージ内容に関わらず接続確認ヒントを返す", () => {
     const hint = getErrorHint("ollama", { model: "llama3.2" }, new Error("Load failed"));
     expect(hint).toBe(
       i18n.t("chat.error.checkOllamaConnection", {
@@ -650,7 +652,7 @@ describe("getErrorHint: ollama プロバイダの短絡", () => {
     );
   });
 
-  it("無関係なエラーメッセージでも同じ checkOllamaConnection を返す（メッセージ非依存）", () => {
+  it("先行分岐に該当しない範囲なら無関係なエラーメッセージでも同じ checkOllamaConnection を返す", () => {
     const hint = getErrorHint("ollama", { model: "llama3.2" }, new Error("unrelated failure"));
     expect(hint).toBe(
       i18n.t("chat.error.checkOllamaConnection", {
@@ -658,5 +660,10 @@ describe("getErrorHint: ollama プロバイダの短絡", () => {
         model: "llama3.2",
       }),
     );
+  });
+
+  it("先行分岐（429）が優先され、ollama ヒントではなく rateLimit を返す", () => {
+    const hint = getErrorHint("ollama", { model: "llama3.2" }, new Error("429 rate limit"));
+    expect(hint).toBe(i18n.t("chat.error.rateLimit"));
   });
 });
