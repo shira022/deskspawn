@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { providerCategories } from "./constants";
-import type { ProviderKind } from "../types";
+import type { ModelInfo, ProviderKind } from "../types";
 
 // デスクトップ(Tauri)経路のモック。platform はモックせず本物を通り、
 // window.__DESKSPAWN_DESKTOP__ のスタブで isDesktopEnv() を切り替える
@@ -535,6 +535,226 @@ describe("getModelsForProvider", () => {
     expect(ids).toContain("vision-chat");
     // 除外系フィルタ（embedding 等）も引き続き効いている
     expect(ids).not.toContain("text-embedding-3-small");
+  });
+
+  // ── モデル一覧フィルタの分岐カバレッジ（表駆動） ─────────────────────────
+
+  describe("models.dev catalog filter branches", () => {
+    type RawModel = Record<string, unknown>;
+
+    /** フィルタ通過用の既定モデル（表側で個別に上書きする） */
+    function rawModel(over: RawModel = {}): RawModel {
+      return {
+        id: "candidate",
+        name: "Candidate",
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 8192, output: 2048 },
+        cost: { input: 1, output: 2 },
+        status: "available",
+        modalities: { input: ["text"], output: ["text"] },
+        ...over,
+      };
+    }
+
+    /** candidate を1件だけ差し込んだ openai カタログ（正常モデルは常に残す） */
+    function openaiCatalog(candidate: RawModel) {
+      return {
+        openai: {
+          name: "OpenAI",
+          models: {
+            "normal-model": rawModel({ id: "normal-model", name: "Normal Model" }),
+            candidate,
+          },
+        },
+      };
+    }
+
+    type FilterCase = {
+      label: string;
+      model: RawModel;
+      kept: boolean;
+      check?: (cand: ModelInfo) => void;
+    };
+
+    const FILTER_CASES: FilterCase[] = [
+      // family/name/id に除外語を含むモデル → 結果に入らない
+      {
+        label: "除外: family に embed を含むモデル",
+        model: rawModel({ id: "chroma-v1", name: "Chroma", family: "text-embedding-latest" }),
+        kept: false,
+      },
+      {
+        label: "除外: name に embed を含むモデル",
+        model: rawModel({ id: "proj-9000", name: "Project Embedder", family: "custom" }),
+        kept: false,
+      },
+      {
+        label: "除外: id に embed を含むモデル",
+        model: rawModel({ id: "prod-embed-7", name: "Vector Hub", family: "vectorhub" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に moderation を含むモデル",
+        model: rawModel({ id: "mod-1", name: "Mod Guard", family: "text-moderation-latest" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に tts を含むモデル",
+        model: rawModel({ id: "tts-1", name: "Voice One", family: "tts-1" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に whisper を含むモデル",
+        model: rawModel({ id: "whisper-lg", name: "Dictation", family: "whisper-large-v3" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に dall を含むモデル",
+        model: rawModel({ id: "dall-e-3", name: "DALL E 3", family: "dall-e-3" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に audio を含むモデル",
+        model: rawModel({ id: "voice-chat", name: "Voice Chat", family: "gpt-4o-audio" }),
+        kept: false,
+      },
+      // どれにも該当しない通常モデルは残る
+      {
+        label: "残存: 除外語を含まない通常モデル",
+        model: rawModel({ id: "candidate", name: "Plain Chat", family: "plain" }),
+        kept: true,
+      },
+      // limit が 0 のモデル → 除外
+      {
+        label: "除外: limit.context が 0 のモデル",
+        model: rawModel({ limit: { context: 0, output: 2048 } }),
+        kept: false,
+      },
+      {
+        label: "除外: limit.output が 0 のモデル",
+        model: rawModel({ limit: { context: 8192, output: 0 } }),
+        kept: false,
+      },
+      // output modalities に text が無い → 除外 / 欠落 → 残る
+      {
+        label: "除外: output modalities が image のみのモデル",
+        model: rawModel({ modalities: { input: ["text"], output: ["image"] } }),
+        kept: false,
+      },
+      {
+        label: "残存: modalities 自体が欠落したモデル",
+        model: rawModel({ modalities: undefined }),
+        kept: true,
+        check: (cand) => expect(cand.supportsImageInput).toBe(false),
+      },
+      {
+        label: "残存: modalities.input が欠落したモデル",
+        model: rawModel({ modalities: { output: ["text"] } }),
+        kept: true,
+        check: (cand) => expect(cand.supportsImageInput).toBe(false),
+      },
+      {
+        label: "残存: modalities.output が欠落したモデル",
+        model: rawModel({ modalities: { input: ["text"] } }),
+        kept: true,
+        check: (cand) => expect(cand.contextLimit).toBe(8192),
+      },
+      // image 入力に対応 → supportsImageInput: true
+      {
+        label: "残存: modalities.input に image を含むモデル",
+        model: rawModel({ modalities: { input: ["text", "image"], output: ["text"] } }),
+        kept: true,
+        check: (cand) => expect(cand.supportsImageInput).toBe(true),
+      },
+      // cost 欠落 → cost: undefined
+      {
+        label: "残存: cost が無いモデルは cost: undefined",
+        model: rawModel({ cost: undefined }),
+        kept: true,
+        check: (cand) => expect(cand.cost).toBeUndefined(),
+      },
+      // name / id 欠落の分岐（欠落語は別フィルタで除外される前提）
+      {
+        label: "除外: name が欠落したモデル（family の embed 判定で除外）",
+        model: rawModel({ name: undefined, family: "text-embedding-latest" }),
+        kept: false,
+      },
+      {
+        label: "除外: id が欠落したモデル（family の whisper 判定で除外）",
+        model: rawModel({ id: undefined, family: "whisper-large-v3" }),
+        kept: false,
+      },
+    ];
+
+    it.each(FILTER_CASES)("$label", async ({ model, kept, check }) => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse(openaiCatalog(model)));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider("openai");
+      const ids = models.map((m) => m.id);
+
+      // 正常モデルは常に残る（過剰排除していないこと）
+      expect(ids).toContain("normal-model");
+      // candidate は id を差し替える行もあるため normal-model 以外で判定する
+      const candidate = models.filter((m) => m.id !== "normal-model");
+      if (kept) {
+        expect(candidate, "candidate should be kept").toHaveLength(1);
+        check?.(candidate[0]);
+      } else {
+        expect(candidate, "candidate should be excluded").toHaveLength(0);
+      }
+    });
+
+    it("returns [] when the catalog has no entry for the requested provider", async () => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse({}));
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(getModelsForProvider("openai")).resolves.toEqual([]);
+    });
+
+    it("returns [] when the catalog provider entry has no models map", async () => {
+      mockFetch.mockResolvedValueOnce(
+        createJsonResponse({ openai: { name: "OpenAI" } }),
+      );
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(getModelsForProvider("openai")).resolves.toEqual([]);
+    });
+
+    it("returns [] when the ollama response has no models array", async () => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse({}));
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(getModelsForProvider("ollama", "http://my-ollama:11434")).resolves.toEqual(
+        [],
+      );
+      expect(mockFetch).toHaveBeenCalledWith("http://my-ollama:11434/api/tags");
+    });
+
+    it("returns [] when the openai-compatible response has no data array", async () => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse({}));
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(
+        getModelsForProvider("openai-compatible", "https://my-api.example.com/v1"),
+      ).resolves.toEqual([]);
+    });
+
+    it("falls back to http://localhost:11434 when the ollama endpoint is an empty string", async () => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse(OLLAMA_RESPONSE));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider("ollama", "");
+
+      expect(models).toHaveLength(2);
+      expect(mockFetch).toHaveBeenCalledWith("http://localhost:11434/api/tags");
+    });
   });
 
   // ── タイムアウト signal ───────────────────────────────────────────────────
