@@ -7,7 +7,7 @@ title: プライバシーポリシー
 
 最終更新日: 2026-10-05
 
-DeskSpawn は、開発者自身のマシン上で動作する AI 駆動のアプリケーション生成ツールです。
+DeskSpawn は、あなた自身のマシン上で動作する AI 駆動のアプリケーション生成ツールです。
 **DeskSpawn の開発者は、ユーザーの個人データを一切収集・保存・販売しません。**
 アナリティクス・トラッキング・広告 SDK は組み込まれていません（コードベースで確認済み）。
 
@@ -20,21 +20,23 @@ DeskSpawn は以下の目的でのみ外部へ通信します。
 | **ユーザーが設定した AI プロバイダー**（OpenAI / Google / Azure / 任意のカスタムエンドポイント等） | チャットのプロンプト、会話履歴、生成指示、およびプロバイダーの API 認証情報 | アプリ生成・チャット応答のための AI 推論 |
 | **models.dev** | 個人を特定する情報なしのリクエスト | モデル一覧・価格情報の取得 |
 | **npm レジストリ** | 個人を特定する情報なしのリクエスト | 生成したアプリの依存パッケージのインストール |
+| **WebContainer のホスト（Web 版のみ・StackBlitz 系）** | 個人を特定する情報なしのリクエスト | ブラウザ内ランタイム（Node.js / WASM 等）の取得と起動 |
 | **GitHub（shira022.github.io）** | 個人を特定する情報なしのリクエスト | デスクトップ版の更新確認（Microsoft Store 版では無効化されています） |
 
 - **AI プロバイダーへの送信は、ユーザー自身が設定したアカウント・契約のもとで行われます。**
   どのプロバイダーにどこまで送信されるかは、各プロバイダーのプライバシーポリシーの適用範囲です。
 - 生成されたアプリが外部と通信する場合、それは生成物側の挙動であり、DeskSpawn 本体のデータ収集とは別です。
+- 上記以外への送信は行っていません。送信先はすべてユーザーの設定または生成フローに必要なものに限定されています。
 
 ## 2. ローカルに保存されるデータ
 
 | 保存先 | 内容 |
 |---|---|
-| **OS キーチェーン**（Windows Credential Manager / macOS Keychain） | AI プロバイダーの API キー。アプリ外へは書き出されません |
+| **OS キーチェーン**（Windows Credential Manager / macOS Keychain） | デスクトップ版の AI プロバイダー API キー。**キーチェーンが利用できない環境では、平文の設定ファイルにフォールバックし、アプリ内にその旨を表示します** |
 | `~/deskspawn/`（ローカルファイル） | 作成したアプリのソースコード、チャット履歴（SQLite）、設定（JSON）、レジストリ |
-| Web 版のブラウザ（IndexedDB / localStorage） | 言語設定・UI 状態・AI 設定のメタデータ（API キーはキーチェーンまたはユーザー指定の保管先） |
+| Web 版のブラウザ（IndexedDB / OPFS / localStorage） | 言語設定・UI 状態・AI 設定・チャット履歴・生成アプリのファイル。**Web 版の API キーはブラウザの IndexedDB に平文で保存されます**（この点は [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md) にも記載） |
 
-すべてのプロジェクトデータはユーザーの端末内に留まります。DeskSpawn の開発者がこれらにアクセスすることはありません。
+プロジェクトのファイル・チャット履歴・設定の保存はすべてあなたの端末内に留まり、DeskSpawn の開発者がこれらにアクセスすることはありません。ただし、セクション 1 で挙げた送信先へは送信内容が渡ります（それらは送信先のプライバシーポリシーの適用範囲です）。
 
 ## 3. 収集・共有しないもの
 
@@ -45,13 +47,13 @@ DeskSpawn は以下の目的でのみ外部へ通信します。
 
 ## 4. セキュリティ
 
-- API キーは平文ファイルではなく OS キーチェーンに保存します
+- デスクトップ版の API キーは、原則として OS キーチェーンに保存します。キーチェーンが使えない場合は平文の設定ファイルへフォールバックし、UI でその旨をユーザーに表示します
 - チャット履歴はローカルの SQLite データベースに保存されます
 - プロバイダーのカスタムエンドポイントへの転送は、許可リスト・URL 検証などの多層防御で検証されます（詳細は [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md)）
 
-## 5. 未成年人
+## 5. 未成年者
 
-DeskSpawn は未成年人を対象として設計されたサービスではなく、未成年人の個人データを意図的に収集しません。
+DeskSpawn は未成年者を対象として設計されたサービスではなく、未成年者の個人データを意図的に収集しません。
 
 ## 6. 変更
 
@@ -71,20 +73,59 @@ DeskSpawn is an AI-powered application generator that runs on your own machine.
 **The developers of DeskSpawn do not collect, store, or sell any user data.**
 There is no analytics, tracking, or advertising SDK in the product (verified against the codebase).
 
-**Network transmissions occur only for:**
+## 1. Network transmissions
 
-- **Your configured AI provider** (OpenAI, Google, Azure, or any custom endpoint): your prompts,
-  conversation history, and provider API credentials — solely to generate apps and answers,
-  under *your* account and subject to *that provider's* privacy policy.
-- **models.dev**: anonymous requests to fetch model lists and pricing.
-- **npm registry**: anonymous requests to install dependencies of generated apps.
-- **GitHub (shira022.github.io)**: anonymous update checks for the desktop build
-  (disabled in the Microsoft Store build).
+DeskSpawn communicates externally only for the following purposes:
 
-**Locally stored data:** API keys in the OS keychain (Windows Credential Manager / macOS Keychain);
-projects, chat history (SQLite), and settings under `~/deskspawn/` — never leaves your device.
+| Destination | Data sent | Purpose |
+|---|---|---|
+| **Your configured AI provider** (OpenAI, Google, Azure, or any custom endpoint) | Prompts, conversation history, generation instructions, and the provider's API credentials | AI inference for app generation and chat responses |
+| **models.dev** | Anonymous requests | Model lists and pricing |
+| **npm registry** | Anonymous requests | Installing dependencies of generated apps |
+| **WebContainer hosts (web version only, StackBlitz ecosystem)** | Anonymous requests | Fetching and booting the in-browser runtime (Node.js / WASM) |
+| **GitHub (shira022.github.io)** | Anonymous requests | Update checks for the desktop build (disabled in the Microsoft Store build) |
 
-We do not collect personally identifiable information, do not track usage, do not sell data,
-and do not sync your data to any cloud service.
+- **AI provider transmissions happen under the account and contract you configure.**
+  What is sent to which provider is governed by that provider's privacy policy.
+- If a generated app communicates with the outside, that is behavior of the generated artifact,
+  separate from DeskSpawn's own data collection.
+- No other transmissions are made.
+
+## 2. Data stored locally
+
+| Location | Contents |
+|---|---|
+| **OS keychain** (Windows Credential Manager / macOS Keychain) | Desktop API keys. **If the keychain is unavailable, keys fall back to a plain-text settings file, and the app discloses this in the UI** |
+| `~/deskspawn/` (local files) | Generated app source code, chat history (SQLite), settings (JSON), registry |
+| Web version browser storage (IndexedDB / OPFS / localStorage) | Language settings, UI state, AI settings, chat history, and generated app files. **Web version API keys are stored in the browser's IndexedDB in plain text** (also documented in [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md)) |
+
+Project files, chat history, and settings always remain on your device and are never
+accessible to the DeskSpawn developers. However, the content described in section 1 is
+transmitted to the destinations listed there, where their privacy policies apply.
+
+## 3. What we do not collect or share
+
+- No collection of personally identifiable information (name, email, etc.)
+- No usage analytics or tracking
+- No sale or third-party provision of data
+- No cloud sync of user data (everything is stored locally)
+
+## 4. Security
+
+- Desktop API keys are stored in the OS keychain where possible. If the keychain is
+  unavailable, they fall back to a plain-text settings file, and the UI discloses this
+- Chat history is stored in a local SQLite database
+- Forwarding to user-configured custom provider endpoints is protected by allow-listing
+  and URL validation (details in [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md))
+
+## 5. Minors
+
+DeskSpawn is not designed for minors and does not knowingly collect minors' personal data.
+
+## 6. Changes
+
+This policy may be updated; changes will be posted on this page.
+
+## 7. Contact
 
 Questions: [GitHub Issues](https://github.com/shira022/deskspawn/issues).
