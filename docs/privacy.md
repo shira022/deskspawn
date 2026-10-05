@@ -26,13 +26,13 @@ DeskSpawn は以下の目的でのみ外部へ通信します。
 - **AI プロバイダーへの送信は、ユーザー自身が設定したアカウント・契約のもとで行われます。**
   どのプロバイダーにどこまで送信されるかは、各プロバイダーのプライバシーポリシーの適用範囲です。
 - 生成されたアプリが外部と通信する場合、それは生成物側の挙動であり、DeskSpawn 本体のデータ収集とは別です。
-- 上記以外への送信は行っていません。送信先はすべてユーザーの設定または生成フローに必要なものに限定されています。
+- 上記以外への送信は行っていません。各送信先はいずれも DeskSpawn の機能（AI 生成・依存パッケージのインストール・更新確認・Web 版ランタイムの起動）のために必要なものです。
 
 ## 2. ローカルに保存されるデータ
 
 | 保存先 | 内容 |
 |---|---|
-| **OS キーチェーン**（Windows Credential Manager / macOS Keychain） | デスクトップ版の AI プロバイダー API キー。**キーチェーンが利用できない環境では、平文の設定ファイルにフォールバックし、アプリ内にその旨を表示します** |
+| **OS キーチェーン**（Windows Credential Manager / macOS Keychain） | デスクトップ版の AI プロバイダー API キー。**キーチェーンが利用できない環境では、平文の設定ファイルにフォールバックし、保存時にその旨をアプリ内表示します** |
 | `~/deskspawn/`（ローカルファイル） | 作成したアプリのソースコード、チャット履歴（SQLite）、設定（JSON）、レジストリ |
 | Web 版のブラウザ（IndexedDB / OPFS / localStorage） | 言語設定・UI 状態・AI 設定・チャット履歴・生成アプリのファイル。**Web 版の API キーはブラウザの IndexedDB に平文で保存されます**（この点は [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md) にも記載） |
 
@@ -47,7 +47,7 @@ DeskSpawn は以下の目的でのみ外部へ通信します。
 
 ## 4. セキュリティ
 
-- デスクトップ版の API キーは、原則として OS キーチェーンに保存します。キーチェーンが使えない場合は平文の設定ファイルへフォールバックし、UI でその旨をユーザーに表示します
+- デスクトップ版の API キーは、原則として OS キーチェーンに保存します。キーチェーンが使えない場合は平文の設定ファイルへフォールバックし、保存時にその旨を UI でユーザーに表示します
 - チャット履歴はローカルの SQLite データベースに保存されます
 - プロバイダーのカスタムエンドポイントへの転送は、許可リスト・URL 検証などの多層防御で検証されます（詳細は [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md)）
 
@@ -89,13 +89,15 @@ DeskSpawn communicates externally only for the following purposes:
   What is sent to which provider is governed by that provider's privacy policy.
 - If a generated app communicates with the outside, that is behavior of the generated artifact,
   separate from DeskSpawn's own data collection.
-- No other transmissions are made.
+- No other transmissions are made. Each destination listed above is required for
+  DeskSpawn's functionality (AI generation, dependency installation, update checks,
+  and the web runtime).
 
 ## 2. Data stored locally
 
 | Location | Contents |
 |---|---|
-| **OS keychain** (Windows Credential Manager / macOS Keychain) | Desktop API keys. **If the keychain is unavailable, keys fall back to a plain-text settings file, and the app discloses this in the UI** |
+| **OS keychain** (Windows Credential Manager / macOS Keychain) | Desktop API keys. **If the keychain is unavailable, keys fall back to a plain-text settings file, and the app discloses this in the UI at save time** |
 | `~/deskspawn/` (local files) | Generated app source code, chat history (SQLite), settings (JSON), registry |
 | Web version browser storage (IndexedDB / OPFS / localStorage) | Language settings, UI state, AI settings, chat history, and generated app files. **Web version API keys are stored in the browser's IndexedDB in plain text** (also documented in [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md)) |
 
@@ -113,7 +115,7 @@ transmitted to the destinations listed there, where their privacy policies apply
 ## 4. Security
 
 - Desktop API keys are stored in the OS keychain where possible. If the keychain is
-  unavailable, they fall back to a plain-text settings file, and the UI discloses this
+  unavailable, they fall back to a plain-text settings file, and the UI discloses this at save time
 - Chat history is stored in a local SQLite database
 - Forwarding to user-configured custom provider endpoints is protected by allow-listing
   and URL validation (details in [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md))
