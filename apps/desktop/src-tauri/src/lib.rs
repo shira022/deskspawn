@@ -15,6 +15,11 @@ use tauri_plugin_updater::UpdaterExt;
 #[cfg(windows)]
 const APPMODEL_ERROR_NO_PACKAGE: i32 = 15700;
 
+/// `ERROR_INSUFFICIENT_BUFFER`: パッケージ有りで、バッファ長 0 + ヌル
+/// バッファに対して呼び出した際に必ず返る戻り値。
+#[cfg(windows)]
+const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
+
 // Windows のアプリパッケージ有無をプローブする kernel32 API。
 //
 // 新しいクレート依存を追加しないため direct FFI 宣言で利用する。
@@ -37,18 +42,38 @@ extern "system" {
 /// し、false のときは従来どおり updater を有効に保つ（NSIS 版等）。
 ///
 /// Windows: `kernel32!GetCurrentPackageFullName` を extern "system" で直接
-/// FFI 呼び出しする。戻り値 15700（APPMODEL_ERROR_NO_PACKAGE）なら非パッケージ、
-/// それ以外（パッケージ有り時に必ず返る 122 ERROR_INSUFFICIENT_BUFFER を含む）
-/// ならパッケージ有と判定する。
+/// FFI 呼び出しする。戻り値 122（ERROR_INSUFFICIENT_BUFFER）ならパッケージ有、
+/// 15700（APPMODEL_ERROR_NO_PACKAGE）なら非パッケージと判定する。それ以外の
+/// 想定外 rc は警告ログを出して非パッケージ扱い（fail-open: updater は有効のまま）。
 ///
 /// 非 Windows プラットフォームでは常に `false`。
 #[cfg(windows)]
 fn is_packaged() -> bool {
     // SAFETY: 第一引数は有効な stack 上の u32、第二引数は長さ 0 に対する
-    // ヌルバッファ（仕様上許可）。書き込みされるのは length のみ。
-    unsafe {
+    // ヌルバッファ（仕様上許可）。書き込まれるのは length のみ。
+    let rc = unsafe {
         let mut length: u32 = 0;
-        GetCurrentPackageFullName(&mut length, std::ptr::null_mut()) != APPMODEL_ERROR_NO_PACKAGE
+        GetCurrentPackageFullName(&mut length, std::ptr::null_mut())
+    };
+    match rc {
+        ERROR_INSUFFICIENT_BUFFER => {
+            log::info!(
+                "Packaged (Store/MSIX) build detected: updater disabled \
+                 (updates are store-managed)."
+            );
+            true
+        }
+        APPMODEL_ERROR_NO_PACKAGE => false,
+        _ => {
+            log::warn!(
+                "Unexpected GetCurrentPackageFullName rc={} (expected {} or {}); \
+                 treating as non-packaged, updater stays enabled.",
+                rc,
+                ERROR_INSUFFICIENT_BUFFER,
+                APPMODEL_ERROR_NO_PACKAGE
+            );
+            false
+        }
     }
 }
 
@@ -73,15 +98,9 @@ pub fn run() {
 
             // MSIX (Microsoft Store) 版ではストアが更新を握るため updater を
             // 無効化する。非パッケージ版（NSIS / 開発実行）は従来どおり有効。
+            // パッケージ検出時の info ログは is_packaged() 内で出力される。
             #[cfg(desktop)]
             let packaged = is_packaged();
-            #[cfg(desktop)]
-            if packaged {
-                log::info!(
-                    "Packaged (Store/MSIX) build detected: updater disabled \
-                     (updates are store-managed)."
-                );
-            }
 
             // Register updater plugin (skipped for packaged builds)
             #[cfg(desktop)]
@@ -258,9 +277,9 @@ pub fn run() {
 mod tests {
     use super::is_packaged;
 
-    /// CI / 開発実行（NSIS 版・cargo test の通常 exe）はパッケージ無し前提。
-    /// 非パッケージ経路では is_packaged() が false を返し、updater は
-    /// 従来どおり有効に保たれることを検証する。
+    /// CI / 開発実行（NSIS 版・cargo test の通常 exe）で is_packaged() が
+    /// false を返すことを検証する。updater 本体の挙動（登録・起動時チェック）は
+    /// 実機検証で担保する。
     ///
     /// 前提: パッケージ識別子を継承したシェル（Store 版アプリの子プロセス等）から
     /// 実行していないこと。CI の通常ランナーはこの前提を満たす。
