@@ -62,6 +62,14 @@ const NEEDS_ENDPOINT = ['openai-compatible', 'anthropic', 'azure-foundry', 'olla
 /** APIキー入力欄が表示されるプロバイダー (ローカル: ollama / lm-studio は不要) */
 const NEEDS_API_KEY = PROVIDER !== 'ollama' && PROVIDER !== 'lm-studio';
 
+/**
+ * リージョン入力欄のプレースホルダ。
+ * aws-bedrock は `ai.regionPlaceholder`（例: us-east-1 / e.g. us-east-1）、
+ * gcp-vertexai は `ai.gcpRegionPlaceholder`（例: us-central1 / e.g. us-central1）と
+ * 別キーのため両方を含める。ja/en どちらでも値部分（us-east-1 / us-central1）は共通。
+ */
+const REGION_PLACEHOLDER = /us-east-1|us-central1|リージョン/;
+
 let browser: Browser;
 let page: Page;
 
@@ -389,6 +397,59 @@ test('02: AI設定フロー — プロバイダーを保存しツールバーに
 
   // プロバイダー選択 (ネイティブselect)
   const providerSelect = page.locator('select').first();
+  await expect(providerSelect).toBeVisible();
+
+  // ── optgroup 3グループ + 9プロバイダーの実機アサーション ─────────────────
+  // 期待値は packages/shared/src/lib/constants.ts の実値（providerCategoryLabels /
+  // providerLabels / providerCategories）と一致させるハードコード。
+  // optgroup label と option テキストはどちらも constants の英語リテラルで
+  // i18n (t()) 経由しないため、ja/en 表示言語のどちらでも同じ値になる
+  // （AiConfigDialog.tsx の <optgroup label={group.label}> / {providerLabels[id]} 参照）。
+  const EXPECTED_GROUP_LABELS = ['Cloud', 'Local', 'OpenAI Compatible'];
+  const EXPECTED_GROUP_PROVIDERS = [
+    ['openai', 'anthropic', 'google', 'aws-bedrock', 'azure-foundry', 'gcp-vertexai'],
+    ['ollama', 'lm-studio'],
+    ['openai-compatible'],
+  ];
+  const EXPECTED_PROVIDER_LABELS: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    google: 'Google',
+    'aws-bedrock': 'AWS Bedrock',
+    'azure-foundry': 'Azure Foundry',
+    'gcp-vertexai': 'Google Cloud (Vertex AI)',
+    ollama: 'Ollama (Local)',
+    'lm-studio': 'LM Studio (Local)',
+    'openai-compatible': 'Custom (OpenAI Compatible)',
+  };
+
+  const groupEls = providerSelect.locator('optgroup');
+  await expect(groupEls).toHaveCount(EXPECTED_GROUP_LABELS.length);
+  const groupLabels = await groupEls.evaluateAll((els) =>
+    els.map((el) => el.getAttribute('label')),
+  );
+  expect(groupLabels).toEqual(EXPECTED_GROUP_LABELS);
+
+  const optionEls = providerSelect.locator('option');
+  await expect(optionEls).toHaveCount(9);
+  const optionData = await optionEls.evaluateAll((els) =>
+    els.map((el) => ({
+      value: (el as HTMLOptionElement).value,
+      text: (el.textContent || '').trim(),
+      disabled: (el as HTMLOptionElement).disabled,
+      group: el.parentElement?.getAttribute('label') ?? null,
+    })),
+  );
+  expect(optionData.map((o) => o.value)).toEqual(EXPECTED_GROUP_PROVIDERS.flat());
+  for (const [idx, ids] of EXPECTED_GROUP_PROVIDERS.entries()) {
+    expect(optionData.filter((o) => o.group === EXPECTED_GROUP_LABELS[idx]).map((o) => o.value)).toEqual(ids);
+  }
+  for (const opt of optionData) {
+    expect(opt.text, `${opt.value} label`).toBe(EXPECTED_PROVIDER_LABELS[opt.value]);
+    expect(opt.disabled, `${opt.value} disabled`).toBe(false);
+    expect(opt.group, `${opt.value} group`).not.toBeNull();
+  }
+
   await providerSelect.selectOption({ value: PROVIDER });
 
   // エンドポイント入力 (表示されるプロバイダーのみ)
@@ -409,7 +470,7 @@ test('02: AI設定フロー — プロバイダーを保存しツールバーに
 
   // リージョン (aws-bedrock / gcp-vertexai)
   if (PROVIDER === 'aws-bedrock' || PROVIDER === 'gcp-vertexai') {
-    const regionInput = page.getByPlaceholder(/us-east-1|リージョン/).first();
+    const regionInput = page.getByPlaceholder(REGION_PLACEHOLDER).first();
     await regionInput.fill(REGION);
   }
 
@@ -468,8 +529,10 @@ test('03: アプリ生成 — ToDoアプリを英語で作成してプレビュ�
   }
 
   // プレビューエリアにアプリが表示されることを確認
-  // ローカルサーバー（Local :5174）に接続済み
-  await expect(page.getByText(/Local/)).toBeVisible({ timeout: 15_000 });
+  // ローカルサーバー（Local :5174）に接続済み。
+  // 新規アプリの初回は bun install 等で 16〜20秒かかる実績 (2026-10-05 実機) のため
+  // 15秒ではボーダー（2回失敗・キャッシュ温効後16.8秒で僅かに PASS）→ 60秒に緩和。
+  await expect(page.getByText(/Local/)).toBeVisible({ timeout: 60_000 });
   // チャットにAI応答があることを確認（メッセージ数が増加）
   await expect(page.locator('[id^="chat-msg-"]')).toHaveCount(msgCountBefore + 2, {
     timeout: 30_000,

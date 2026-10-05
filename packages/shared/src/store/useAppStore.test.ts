@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vite
 import type { ChatMessage, FileNode, AppMeta, ProviderKind } from "../types";
 import { getModelsForProvider } from "../lib/models-fetcher";
 import { clearModelCostCache, setModelCostCache } from "../lib/cost";
+import { hasAppFiles, seedAppFromWorkspace, seedAppFromFilesystem } from "../lib/seed-app";
 
 // ── Mocks (hoisted by vitest) ────────────────────────────────────────────────────
 
@@ -929,5 +930,313 @@ describe("useAppStore — setAiConfig のサイドカー同期", () => {
     });
 
     expect(sidecarFetchMock).not.toHaveBeenCalled();
+  });
+});
+
+// ── 状態更新アクション（UI から呼ばれるが単体では未実行だったもの） ──────────
+
+describe("useAppStore — 状態更新アクション", () => {
+  it("setLayoutMode はレイアウトモードを切り替える", () => {
+    expect(useAppStore.getState().layoutMode).toBe("2-pane");
+    useAppStore.getState().setLayoutMode("3-pane");
+    expect(useAppStore.getState().layoutMode).toBe("3-pane");
+    useAppStore.getState().setLayoutMode("2-pane");
+    expect(useAppStore.getState().layoutMode).toBe("2-pane");
+  });
+
+  it("setEditingMessageId は編集中メッセージ ID を保持する", () => {
+    expect(useAppStore.getState().editingMessageId).toBeNull();
+    useAppStore.getState().setEditingMessageId("msg-9");
+    expect(useAppStore.getState().editingMessageId).toBe("msg-9");
+    useAppStore.getState().setEditingMessageId(null);
+    expect(useAppStore.getState().editingMessageId).toBeNull();
+  });
+
+  it("setAppSwitching / setAppLoading は読込中フラグを切り替える", () => {
+    expect(useAppStore.getState().appSwitching).toBe(false);
+    expect(useAppStore.getState().appLoading).toBe(false);
+
+    useAppStore.getState().setAppSwitching(true);
+    useAppStore.getState().setAppLoading(true);
+    expect(useAppStore.getState().appSwitching).toBe(true);
+    expect(useAppStore.getState().appLoading).toBe(true);
+
+    useAppStore.getState().setAppSwitching(false);
+    useAppStore.getState().setAppLoading(false);
+    expect(useAppStore.getState().appSwitching).toBe(false);
+    expect(useAppStore.getState().appLoading).toBe(false);
+  });
+
+  it("setCheckpoints / setCurrentCheckpointIndex はチェックポイント状態を更新する", () => {
+    const checkpoints = [{ id: "cp-1", createdAt: "2026-01-01" }];
+    useAppStore.getState().setCheckpoints(checkpoints);
+    expect(useAppStore.getState().checkpoints).toEqual(checkpoints);
+
+    useAppStore.getState().setCurrentCheckpointIndex(0);
+    expect(useAppStore.getState().currentCheckpointIndex).toBe(0);
+  });
+
+  it("setVisibleMessageCount は表示件数を更新する", () => {
+    expect(useAppStore.getState().visibleMessageCount).toBe(-1);
+    useAppStore.getState().setVisibleMessageCount(20);
+    expect(useAppStore.getState().visibleMessageCount).toBe(20);
+  });
+
+  it("setPreviewMaximized はトグルと独立に値を設定できる", () => {
+    expect(useAppStore.getState().previewMaximized).toBe(false);
+    useAppStore.getState().setPreviewMaximized(true);
+    expect(useAppStore.getState().previewMaximized).toBe(true);
+    useAppStore.getState().setPreviewMaximized(false);
+    expect(useAppStore.getState().previewMaximized).toBe(false);
+  });
+
+  it("setResolvedTheme はライト/ダークを切り替える", () => {
+    expect(useAppStore.getState().resolvedTheme).toBe("light");
+    useAppStore.getState().setResolvedTheme("dark");
+    expect(useAppStore.getState().resolvedTheme).toBe("dark");
+    useAppStore.getState().setResolvedTheme("light");
+    expect(useAppStore.getState().resolvedTheme).toBe("light");
+  });
+});
+
+// ── チャット履歴の永続化・復元 ────────────────────────────────────────────────
+
+describe("useAppStore — チャット履歴の永続化と復元", () => {
+  const msg1: ChatMessage = {
+    id: "hist-1",
+    role: "user",
+    content: "first",
+    timestamp: 1,
+  };
+  const msg2: ChatMessage = {
+    id: "hist-2",
+    role: "assistant",
+    content: "second",
+    timestamp: 2,
+  };
+
+  const flush = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  beforeEach(() => {
+    mockEngineFns.persistChatHistory.mockResolvedValue(true);
+    mockEngineFns.loadChatHistory.mockResolvedValue([]);
+  });
+
+  it("truncateMessages は残したメッセージを現在のアプリへ保存する", async () => {
+    useAppStore.setState({ currentAppId: "app-persist", messages: [] });
+    useAppStore.getState().addMessage(msg1);
+    useAppStore.getState().addMessage(msg2);
+
+    useAppStore.getState().truncateMessages(1);
+    expect(useAppStore.getState().messages).toHaveLength(1);
+    await flush();
+
+    expect(mockEngineFns.persistChatHistory).toHaveBeenCalledWith("app-persist", [msg1]);
+    expect(useAppStore.getState().saveFailed).toBe(false);
+  });
+
+  it("履歴の保存に失敗したら saveFailed を立てる", async () => {
+    useAppStore.setState({ currentAppId: "app-persist", messages: [], saveFailed: false });
+    mockEngineFns.persistChatHistory.mockResolvedValue(false);
+
+    useAppStore.getState().addMessage(msg1);
+    await flush();
+
+    expect(useAppStore.getState().saveFailed).toBe(true);
+  });
+
+  it("fetchChatHistory は保存済みメッセージを復元する", async () => {
+    useAppStore.setState({ currentAppId: "app-hist", messages: [] });
+    mockEngineFns.loadChatHistory.mockResolvedValue([msg1, msg2]);
+
+    await useAppStore.getState().fetchChatHistory();
+
+    expect(mockEngineFns.loadChatHistory).toHaveBeenCalledWith("app-hist");
+    expect(useAppStore.getState().messages).toEqual([msg1, msg2]);
+  });
+
+  it("保存が空でも例外でも、既存メッセージは消えない", async () => {
+    useAppStore.setState({ currentAppId: "app-hist", messages: [msg1] });
+
+    mockEngineFns.loadChatHistory.mockResolvedValue([]);
+    await useAppStore.getState().fetchChatHistory();
+    expect(useAppStore.getState().messages).toEqual([msg1]);
+
+    mockEngineFns.loadChatHistory.mockRejectedValue(new Error("db error"));
+    await expect(useAppStore.getState().fetchChatHistory()).resolves.toBeUndefined();
+    expect(useAppStore.getState().messages).toEqual([msg1]);
+
+    // アプリ未選択ではストレージへ問い合わせない
+    useAppStore.setState({ currentAppId: null });
+    await useAppStore.getState().fetchChatHistory();
+    expect(mockEngineFns.loadChatHistory).toHaveBeenCalledTimes(2);
+  });
+});
+
+// ── カレントアプリの保存と自動シード ────────────────────────────────────────
+
+describe("useAppStore — setCurrentAppId（カレントアプリ保存・自動シード）", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockStorageFns.saveCurrentAppId.mockResolvedValue(undefined);
+    mockEngineFns.listCheckpoints.mockResolvedValue([]);
+    vi.mocked(hasAppFiles).mockResolvedValue(true);
+    vi.mocked(seedAppFromWorkspace).mockResolvedValue({ seeded: 0, skipped: 0 });
+    vi.mocked(seedAppFromFilesystem).mockResolvedValue({ seeded: 0, skipped: 0 });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("ID を設定すると engine へ伝わり、保存とチェックポイント読込も走る", () => {
+    useAppStore.getState().setCurrentAppId("app-9");
+
+    expect(useAppStore.getState().currentAppId).toBe("app-9");
+    expect(mockEngineFns.setAppId).toHaveBeenCalledWith("app-9");
+    expect(mockStorageFns.saveCurrentAppId).toHaveBeenCalledWith("app-9");
+    expect(mockEngineFns.listCheckpoints).toHaveBeenCalledWith("app-9");
+  });
+
+  it("null を設定すると保存も null で走り、シードは試みない", async () => {
+    vi.mocked(hasAppFiles).mockClear();
+
+    useAppStore.getState().setCurrentAppId(null);
+
+    expect(useAppStore.getState().currentAppId).toBeNull();
+    expect(mockStorageFns.saveCurrentAppId).toHaveBeenCalledWith(null);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(vi.mocked(hasAppFiles)).not.toHaveBeenCalled();
+  });
+
+  it("Web でファイルが無ければ workspace → apps の順にシードし、完了でプレビューを再読込する", async () => {
+    vi.mocked(hasAppFiles).mockResolvedValue(false);
+    vi.mocked(seedAppFromWorkspace).mockResolvedValue({ seeded: 0, skipped: 0 });
+    vi.mocked(seedAppFromFilesystem).mockResolvedValue({ seeded: 2, skipped: 0 });
+    const before = useAppStore.getState().reloadCounter;
+
+    useAppStore.getState().setCurrentAppId("app-seed");
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(vi.mocked(hasAppFiles)).toHaveBeenCalledWith("app-seed");
+    expect(vi.mocked(seedAppFromWorkspace)).toHaveBeenCalledWith("app-seed");
+    expect(vi.mocked(seedAppFromFilesystem)).toHaveBeenCalledWith("app-seed");
+    expect(useAppStore.getState().reloadCounter).toBe(before + 1);
+  });
+
+  it("workspace 側に既にあれば apps/ へフォールバックせずそのまま終える", async () => {
+    vi.mocked(hasAppFiles).mockResolvedValue(false);
+    vi.mocked(seedAppFromWorkspace).mockResolvedValue({ seeded: 3, skipped: 0 });
+    const before = useAppStore.getState().reloadCounter;
+
+    useAppStore.getState().setCurrentAppId("app-ws-only");
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(vi.mocked(seedAppFromFilesystem)).not.toHaveBeenCalled();
+    expect(useAppStore.getState().reloadCounter).toBe(before + 1);
+  });
+
+  it("ファイルが既にある場合はシードも再読込も走らない", async () => {
+    vi.mocked(hasAppFiles).mockResolvedValue(true);
+    const before = useAppStore.getState().reloadCounter;
+
+    useAppStore.getState().setCurrentAppId("app-has-files");
+    await vi.advanceTimersByTimeAsync(600);
+
+    expect(vi.mocked(seedAppFromWorkspace)).not.toHaveBeenCalled();
+    expect(vi.mocked(seedAppFromFilesystem)).not.toHaveBeenCalled();
+    expect(useAppStore.getState().reloadCounter).toBe(before);
+  });
+
+  it("デスクトップでは実ファイルが使えるためシードを試みない", async () => {
+    vi.mocked(hasAppFiles).mockClear();
+
+    await withDesktopEnv(async () => {
+      useAppStore.getState().setCurrentAppId("app-desktop");
+      await vi.advanceTimersByTimeAsync(600);
+    });
+
+    expect(vi.mocked(hasAppFiles)).not.toHaveBeenCalled();
+    expect(mockStorageFns.saveCurrentAppId).toHaveBeenCalledWith("app-desktop");
+  });
+});
+
+// ── initialize() の全体タイムアウト ─────────────────────────────────────────
+
+describe("useAppStore — initialize() のタイムアウト強制完了", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("10秒以内に完了しなければ警告を出して initialized を立てる", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    // 設定読込が永遠に返らない状態を再現（ネットワーク/DB ハング）
+    mockStorageFns.loadSettingsDesktop.mockImplementation(() => new Promise(() => {}));
+
+    try {
+      const init = useAppStore.getState().initialize();
+      await vi.advanceTimersByTimeAsync(10_000);
+      await init;
+
+      expect(warn).toHaveBeenCalledWith(
+        "[initialize] Timed out after 10000ms — forcing app to load",
+      );
+      expect(useAppStore.getState().initialized).toBe(true);
+    } finally {
+      warn.mockRestore();
+      mockStorageFns.loadSettingsDesktop.mockResolvedValue({
+        theme: "system",
+        uiFontSize: 14,
+        codeFontSize: 13,
+        language: "ja",
+        simpleMode: true,
+      });
+    }
+  });
+});
+
+// ── 追加の未到達パス（言語変更の i18n 適用・無効ID時のチェックポイント取得・
+//    デスクトップでの同期ペイロード空チェック） ────────────────────────────────
+
+describe("useAppStore — 追加の未到達パス", () => {
+  it("updateSettings は言語変更を i18n に反映する", async () => {
+    useAppStore.getState().updateSettings({ language: "en" });
+
+    const i18nMod = await import("../lib/i18n");
+    expect(vi.mocked(i18nMod.default.changeLanguage)).toHaveBeenCalledWith("en");
+    expect(useAppStore.getState().settings.language).toBe("en");
+    expect(mockStorageFns.saveSettingsDesktop).toHaveBeenCalledWith(
+      expect.objectContaining({ language: "en" }),
+    );
+  });
+
+  it("アプリ未選択時はチェックポイントを問い合わせない", async () => {
+    useAppStore.setState({ currentAppId: null });
+
+    await useAppStore.getState().fetchCheckpoints();
+
+    expect(mockEngineFns.listCheckpoints).not.toHaveBeenCalled();
+    expect(useAppStore.getState().checkpoints).toEqual([]);
+  });
+
+  it("desktop: 同期する値が無いときはサイドカーへ送信しない", async () => {
+    sidecarFetchMock.mockClear();
+
+    await withDesktopEnv(() =>
+      useAppStore.getState().setAiConfig({
+        provider: "ollama",
+        model: "llama3.2",
+        apiKey: "",
+        apiKeyConfigured: true,
+      }),
+    );
+
+    expect(sidecarFetchMock).not.toHaveBeenCalled();
+    expect(useAppStore.getState().aiConfig.provider).toBe("ollama");
+    expect(useAppStore.getState().apiKeyStorageMethod).toBe("");
   });
 });

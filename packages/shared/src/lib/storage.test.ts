@@ -28,8 +28,18 @@ vi.mock("./platform", () => ({
 }));
 
 const getChatHistoryDesktopMock = vi.fn();
+const saveChatHistoryDesktopMock = vi.fn();
+const listAppsDesktopMock = vi.fn();
+const getAppDesktopMock = vi.fn();
+const saveAppDesktopMock = vi.fn();
+const deleteAppDesktopMock = vi.fn();
 vi.mock("./storage-desktop", () => ({
   getChatHistoryDesktop: (...args: unknown[]) => getChatHistoryDesktopMock(...args),
+  saveChatHistoryDesktop: (...args: unknown[]) => saveChatHistoryDesktopMock(...args),
+  listAppsDesktop: (...args: unknown[]) => listAppsDesktopMock(...args),
+  getAppDesktop: (...args: unknown[]) => getAppDesktopMock(...args),
+  saveAppDesktop: (...args: unknown[]) => saveAppDesktopMock(...args),
+  deleteAppDesktop: (...args: unknown[]) => deleteAppDesktopMock(...args),
 }));
 
 // Desktop (Tauri) IPC — invoke が成功すれば keychain / config.json 経由になる
@@ -51,10 +61,21 @@ import {
   loadLastProvider,
   getSetting,
   setSetting,
+  saveCurrentAppId,
+  loadCurrentAppId,
+  listApps,
+  getApp,
+  saveApp,
+  deleteApp,
+  deleteAppDatabase,
+  getStorageStats,
+  saveSettingsDesktop,
+  loadSettingsDesktop,
 } from "./storage";
 import { clearModelCostCache, setModelCost } from "./cost";
 import { lookupModelCostById } from "./models-fetcher";
-import { providerCategories } from "./constants";
+import { providerCategories, SETTINGS_KEY } from "./constants";
+import { DEFAULT_SETTINGS, type AppSettings } from "../types";
 import type { ProviderKind } from "../types";
 
 const mockLookupModelCostById = vi.mocked(lookupModelCostById);
@@ -442,5 +463,327 @@ describe("provider config — desktop config.json migration", () => {
     invokeMock.mockResolvedValue(null);
 
     await expect(loadProviderConfig("openai")).resolves.toBeNull();
+  });
+});
+
+// ── Current app（B4: config.json / localStorage） ──────────────────────────────
+
+const CURRENT_APP_KEY = "deskspawn_current_app";
+
+/** node 環境に localStorage を用意し、書き込み内容を観測できるようにする。 */
+function stubLocalStorage(initial: Record<string, string> = {}) {
+  const data: Record<string, string> = { ...initial };
+  const localStorageMock = {
+    getItem: vi.fn((key: string) => (key in data ? data[key] : null)),
+    setItem: vi.fn((key: string, value: string) => {
+      data[key] = String(value);
+    }),
+    removeItem: vi.fn((key: string) => {
+      delete data[key];
+    }),
+  };
+  vi.stubGlobal("localStorage", localStorageMock);
+  return { data, localStorageMock };
+}
+
+describe("current app id（config.json / localStorage）", () => {
+  let data: Record<string, string>;
+  let ls: ReturnType<typeof stubLocalStorage>["localStorageMock"];
+
+  beforeEach(() => {
+    const stubbed = stubLocalStorage();
+    data = stubbed.data;
+    ls = stubbed.localStorageMock;
+    invokeMock.mockReset();
+    invokeMock.mockRejectedValue(new Error("not in a Tauri environment"));
+  });
+
+  it("web: 保存した ID をそのまま復元できる", async () => {
+    await saveCurrentAppId("app-42");
+
+    expect(ls.setItem).toHaveBeenCalledWith(CURRENT_APP_KEY, JSON.stringify("app-42"));
+    await expect(loadCurrentAppId()).resolves.toBe("app-42");
+  });
+
+  it("web: null 保存は localStorage から消去する", async () => {
+    data[CURRENT_APP_KEY] = JSON.stringify("app-42");
+
+    await saveCurrentAppId(null);
+
+    expect(ls.removeItem).toHaveBeenCalledWith(CURRENT_APP_KEY);
+    await expect(loadCurrentAppId()).resolves.toBeNull();
+  });
+
+  it("web: JSON でない生の旧値でも壊さずそのまま返す", async () => {
+    data[CURRENT_APP_KEY] = "legacy-plain-id";
+
+    await expect(loadCurrentAppId()).resolves.toBe("legacy-plain-id");
+  });
+
+  it("web: 保存が無ければ null", async () => {
+    await expect(loadCurrentAppId()).resolves.toBeNull();
+  });
+
+  it("desktop: config.json の ID を優先して返し、保存も IPC 経由にする", async () => {
+    invokeMock.mockImplementation(async (cmd: string) =>
+      cmd === "load_current_app" ? "app-from-config" : null,
+    );
+
+    await expect(loadCurrentAppId()).resolves.toBe("app-from-config");
+    expect(invokeMock).toHaveBeenCalledWith("load_current_app");
+
+    await saveCurrentAppId("app-42");
+    expect(invokeMock).toHaveBeenCalledWith("save_current_app", { appId: "app-42" });
+  });
+
+  it("desktop: config.json が空なら localStorage の旧値を移行して返す", async () => {
+    data[CURRENT_APP_KEY] = JSON.stringify("app-legacy");
+    invokeMock.mockResolvedValue(null);
+
+    await expect(loadCurrentAppId()).resolves.toBe("app-legacy");
+    expect(invokeMock).toHaveBeenCalledWith("save_current_app", { appId: "app-legacy" });
+  });
+
+  it("desktop: どこにも無い場合は null（null 保存でも IPC を呼ぶ）", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    await expect(loadCurrentAppId()).resolves.toBeNull();
+
+    await saveCurrentAppId(null);
+    expect(invokeMock).toHaveBeenCalledWith("save_current_app", { appId: null });
+  });
+});
+
+// ── アプリ CRUD ─────────────────────────────────────────────────────────────────
+
+describe("アプリ CRUD（Web IndexedDB / Desktop アダプタ）", () => {
+  beforeEach(() => {
+    isDesktopEnvMock.mockReturnValue(false);
+    invokeMock.mockReset();
+    invokeMock.mockRejectedValue(new Error("not in a Tauri environment"));
+  });
+
+  it("web: save → get → list で往復し、未知 ID は null", async () => {
+    const app = {
+      id: `app-crud-${Date.now()}`,
+      name: "CRUD App",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-02T00:00:00.000Z",
+    };
+
+    await expect(saveApp(app)).resolves.toBe(app.id);
+    await expect(getApp(app.id)).resolves.toEqual(app);
+    expect((await listApps()).some((a) => a.id === app.id)).toBe(true);
+    await expect(getApp(`${app.id}-missing`)).resolves.toBeNull();
+  });
+
+  it("web: deleteApp で一覧から消える（生成アプリの DB 削除も併せて実行される）", async () => {
+    const app = {
+      id: `app-del-${Date.now()}`,
+      name: "Delete Me",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    await saveApp(app);
+
+    await deleteApp(app.id);
+
+    await expect(getApp(app.id)).resolves.toBeNull();
+    expect((await listApps()).some((a) => a.id === app.id)).toBe(false);
+  });
+
+  it("web: deleteAppDatabase は生成アプリ固有の DB を削除する", async () => {
+    const appId = `probe-${Date.now()}`;
+    const dbName = `deskspawn_app_${appId}`;
+    const names = async () =>
+      ((await (indexedDB as IDBFactory).databases?.()) ?? []).map((d) => d.name);
+
+    await new Promise<void>((resolve, reject) => {
+      const req = indexedDB.open(dbName);
+      req.onupgradeneeded = () => req.result.createObjectStore("kv", { keyPath: "id" });
+      req.onsuccess = () => {
+        req.result.close();
+        resolve();
+      };
+      req.onerror = () => reject(req.error);
+    });
+    expect(await names()).toContain(dbName);
+
+    await deleteAppDatabase(appId);
+
+    expect(await names()).not.toContain(dbName);
+  });
+
+  it("web: 別接続で開かれている DB の削除は blocked でも完了扱いにして警告する", async () => {
+    const appId = `blocked-${Date.now()}`;
+    const dbName = `deskspawn_app_${appId}`;
+    const conn = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open(dbName);
+      req.onupgradeneeded = () => req.result.createObjectStore("kv", { keyPath: "id" });
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await deleteAppDatabase(appId);
+      expect(warn).toHaveBeenCalledWith(
+        `[storage] deleteDatabase "${dbName}" is blocked (open in another tab?)`,
+      );
+    } finally {
+      conn.close();
+      warn.mockRestore();
+    }
+  });
+
+  it("desktop: アダプタ（storage-desktop）へ委譲し、DB 削除はスキップする", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    const desktopApp = {
+      id: "desk-1",
+      name: "Desktop App",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    listAppsDesktopMock.mockResolvedValue([desktopApp]);
+    getAppDesktopMock.mockResolvedValue(desktopApp);
+    saveAppDesktopMock.mockResolvedValue("desk-1");
+    deleteAppDesktopMock.mockResolvedValue(undefined);
+
+    await expect(listApps()).resolves.toEqual([desktopApp]);
+    await expect(getApp("desk-1")).resolves.toEqual(desktopApp);
+    await expect(saveApp(desktopApp)).resolves.toBe("desk-1");
+    await deleteApp("desk-1");
+    expect(deleteAppDesktopMock).toHaveBeenCalledWith("desk-1");
+
+    // C8: デスクトップには生成アプリの DB が存在しないので no-op
+    await expect(deleteAppDatabase("desk-1")).resolves.toBeUndefined();
+    expect(listAppsDesktopMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("保存統計はアプリ一覧の件数を返す（チャット件数は常に 0）", async () => {
+    isDesktopEnvMock.mockReturnValue(false);
+    const before = (await listApps()).length;
+
+    await saveApp({
+      id: `app-stats-${Date.now()}`,
+      name: "Stats",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      updatedAt: "2026-01-01T00:00:00.000Z",
+    });
+
+    await expect(getStorageStats()).resolves.toEqual({ apps: before + 1, chatMessages: 0 });
+  });
+
+  it("desktop: チャット履歴の保存はアダプタへ委譲される", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    saveChatHistoryDesktopMock.mockResolvedValue(undefined);
+    const messages = [{ id: "m1", role: "user", content: "hi" }];
+
+    await saveChatHistory("app-1", messages);
+
+    expect(saveChatHistoryDesktopMock).toHaveBeenCalledWith("app-1", messages);
+  });
+});
+
+// ── UI 設定（言語・テーマ等） ────────────────────────────────────────────────────
+
+describe("UI設定（saveSettingsDesktop / loadSettingsDesktop）", () => {
+  let data: Record<string, string>;
+  let ls: ReturnType<typeof stubLocalStorage>["localStorageMock"];
+
+  const settings: AppSettings = {
+    theme: "dark",
+    uiFontSize: 16,
+    codeFontSize: 15,
+    language: "en",
+    simpleMode: false,
+  };
+
+  beforeEach(() => {
+    const stubbed = stubLocalStorage();
+    data = stubbed.data;
+    ls = stubbed.localStorageMock;
+    invokeMock.mockReset();
+    invokeMock.mockRejectedValue(new Error("not in a Tauri environment"));
+  });
+
+  it("web: localStorage へ丸ごと保存し、読み込み時は既定値とマージする", async () => {
+    await saveSettingsDesktop(settings);
+
+    expect(ls.setItem).toHaveBeenCalledWith(SETTINGS_KEY, JSON.stringify(settings));
+    await expect(loadSettingsDesktop()).resolves.toEqual(settings);
+  });
+
+  it("web: 保存が無い初回起動は null", async () => {
+    await expect(loadSettingsDesktop()).resolves.toBeNull();
+  });
+
+  it("web: 壊れた JSON は初回起動同様 null 扱い", async () => {
+    data[SETTINGS_KEY] = "{not json";
+
+    await expect(loadSettingsDesktop()).resolves.toBeNull();
+  });
+
+  it("desktop: config.json へ保存し、言語/テーマだけ localStorage へミラーする", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    await saveSettingsDesktop(settings);
+
+    expect(invokeMock).toHaveBeenCalledWith("save_settings", { settings });
+    expect(JSON.parse(data[SETTINGS_KEY])).toEqual({ language: "en", theme: "dark" });
+  });
+
+  it("desktop: 既存のミラー値は残し、言語/テーマだけ更新する", async () => {
+    data[SETTINGS_KEY] = JSON.stringify({ uiFontSize: 99 });
+    invokeMock.mockResolvedValue(null);
+
+    await saveSettingsDesktop(settings);
+
+    expect(JSON.parse(data[SETTINGS_KEY])).toEqual({
+      uiFontSize: 99,
+      language: "en",
+      theme: "dark",
+    });
+  });
+
+  it("desktop: ミラーが失敗しても config.json 保存は成功する", async () => {
+    invokeMock.mockResolvedValue(null);
+    ls.getItem.mockImplementation(() => {
+      throw new Error("storage disabled");
+    });
+
+    await expect(saveSettingsDesktop(settings)).resolves.toBeUndefined();
+    expect(invokeMock).toHaveBeenCalledWith("save_settings", { settings });
+  });
+
+  it("desktop: load_settings の結果を既定値とマージして返す", async () => {
+    invokeMock.mockImplementation(async (cmd: string) =>
+      cmd === "load_settings" ? { theme: "dark" } : null,
+    );
+
+    await expect(loadSettingsDesktop()).resolves.toEqual({ ...DEFAULT_SETTINGS, theme: "dark" });
+  });
+
+  it("desktop: config.json が空なら localStorage の旧設定を移行する", async () => {
+    data[SETTINGS_KEY] = JSON.stringify({ language: "en" });
+    invokeMock.mockResolvedValue(null);
+
+    await expect(loadSettingsDesktop()).resolves.toEqual({ ...DEFAULT_SETTINGS, language: "en" });
+    expect(invokeMock).toHaveBeenCalledWith("save_settings", {
+      settings: { ...DEFAULT_SETTINGS, language: "en" },
+    });
+  });
+
+  it("desktop: 壊れた旧設定は無視して初回起動扱いにする", async () => {
+    data[SETTINGS_KEY] = "{oops";
+    invokeMock.mockResolvedValue(null);
+
+    await expect(loadSettingsDesktop()).resolves.toBeNull();
+  });
+
+  it("desktop: config.json・localStorage どちらも空なら null", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    await expect(loadSettingsDesktop()).resolves.toBeNull();
   });
 });

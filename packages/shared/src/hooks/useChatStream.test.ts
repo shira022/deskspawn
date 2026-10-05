@@ -625,8 +625,91 @@ describe("R14: technical mode も qaVerdict / 中断を反映する", () => {
   });
 });
 
-describe("getErrorHint: WebKit 'Load failed' を network として扱う", () => {
-  it("'Load failed' は networkError を返す（CORS ヘッダ無しエラー応答の対策）", () => {
+// ── サマリの未到達分岐（概要抽出 / 警告ヒント / technical の各ステータス） ────
+
+describe("summarizePipelineResult: 概要抽出とステータス行の残り分岐", () => {
+  it("simple(日): planner の summary 行をアプリ概要として抜き出す", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ planner: "summary: タスク管理アプリを生成" }),
+      { simpleMode: true, language: "ja", stepErrorCount: 0 },
+    );
+    expect(out).toContain("**アプリ概要**: タスク管理アプリを生成");
+  });
+
+  it("simple(英): planner の summary 行を App Overview として抜き出す", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ planner: "summary: a task management app" }),
+      { simpleMode: true, language: "en", stepErrorCount: 0 },
+    );
+    expect(out).toContain("**App Overview**: a task management app");
+  });
+
+  it("simple(英): 警告があっても生成は成功と伝え、ヒント行を添える", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "⚠️ Warning: unused import", visual_qa: "✅ PASS" }),
+      { simpleMode: true, language: "en", stepErrorCount: 0 },
+    );
+    expect(out).toContain("✅ **Status**: Generated successfully");
+    expect(out).toContain("💡 **Tip**: Some warnings were found, but the app should work.");
+    expect(out).not.toContain("Errors were detected");
+  });
+
+  it("technical(日): visual_qa が PASS なら ✅ パスと明示する", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "No issues", visual_qa: "✅ PASS" }),
+      { simpleMode: false, language: "ja", stepErrorCount: 0 },
+    );
+    expect(out).toContain("✅ **パス**: 問題なし");
+    expect(out).not.toContain("❌ **失敗**");
+    expect(out).not.toContain("⚠️ **警告付きパス**");
+  });
+
+  it("technical(英): visual_qa が ❌ なら ❌ Failed と明示する", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "All good", visual_qa: "❌ FAIL: blank page" }),
+      { simpleMode: false, language: "en", stepErrorCount: 0 },
+    );
+    expect(out).toContain("❌ **Failed**: Issues detected");
+    expect(out).not.toContain("⚠️ **Passed with warnings**");
+  });
+
+  it("technical(英): 問題が無ければ ✅ Passed と明示する", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "No issues", visual_qa: "✅ PASS" }),
+      { simpleMode: false, language: "en", stepErrorCount: 0 },
+    );
+    expect(out).toContain("✅ **Passed**: No issues");
+    expect(out).not.toContain("❌ **Failed**");
+  });
+
+  it("technical(英): 変更を適用したままのタイムアウトはその旨を伝える", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "Verify" }),
+      {
+        simpleMode: false,
+        language: "en",
+        stepErrorCount: 0,
+        interruptedBy: "timeout",
+        failedPhases: ["coder"],
+        fileChangesApplied: true,
+      },
+    );
+    expect(out).toContain(
+      "⏱️ **Timeout**: The coding phase ended due to a timeout (applied changes have been kept).",
+    );
+  });
+  it("フェーズ出力が1つも無ければ空文字を返す", () => {
+    expect(summarizePipelineResult({}, { simpleMode: true, language: "ja" })).toBe("");
+    expect(
+      summarizePipelineResult(
+        { coder: { label: "coder", text: "   " } },
+        { simpleMode: false, language: "en" },
+      ),
+    ).toBe("");
+  });
+});
+
+describe("getErrorHint: WebKit 'Load failed' を network として扱う", () => {  it("'Load failed' は networkError を返す（CORS ヘッダ無しエラー応答の対策）", () => {
     const hint = getErrorHint("openai", { model: "gpt-5.6-luna" }, new Error("Load failed"));
     expect(hint).toBe(i18n.t("chat.error.networkError"));
   });
