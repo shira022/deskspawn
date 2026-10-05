@@ -1,0 +1,963 @@
+/**
+ * @deskspawn/browser-engine — Multi-Agent Orchestrator
+ *
+ * Orchestrates the multi-agent pipeline:
+ *   Triage → Planner → Coder → Verifier → Visual QA
+ *
+ * Ported from sidecar/src/orchestrator.ts for browser execution.
+ */
+
+import { generateText, type LanguageModel, type ToolSet } from "ai";
+import { StepManager } from "./step-limits";
+import { withRateLimitRetry } from "./retry";
+import { triageRequest } from "./triage";
+import { plannerPrompt } from "./system-prompts/planner";
+import { coderPrompt } from "./system-prompts/coder";
+import i18n from "../lib/i18n";
+import { verifierPrompt } from "./system-prompts/verifier";
+import { visualQAPrompt } from "./system-prompts/visual-qa";
+import type { Phase, Usage } from "@deskspawn/ai-core";
+import type { PipelineTierLevel } from "../types";
+
+// ── Timeouts ──────────────────────────────────────────────────────────────────
+
+/**
+ * 各 generateText 呼び出しの壁時計タイムアウト (ms)。
+ * 120s は P8 で実測した遅延型打ち切り（1回/run）→240s=全体10分の40%まで。
+ */
+const GENERATE_TIMEOUT_MS = 240_000;
+
+/** パイプライン全体の壁時計タイムアウト (ms) — UI の abort controller と併用 */
+const PIPELINE_TIMEOUT_MS = 10 * 60 * 1000;
+
+/**
+ * UI の abort signal と全体タイムアウト信号を合成する。
+ * AbortSignal.timeout による強制停止は Stop ボタンと同様に生成中にも効く。
+ */
+function withPipelineTimeout(signal: AbortSignal): AbortSignal {
+  if (signal.aborted) return signal;
+  return AbortSignal.any([signal, AbortSignal.timeout(PIPELINE_TIMEOUT_MS)]);
+}
+
+/** per-call タイムアウトのエラーか（AI SDK は "signal timed out" で throw する）。 */
+function isPerCallTimeoutError(error: unknown): boolean {
+  const err = error as { name?: string; message?: string } | null;
+  if (err?.name === "TimeoutError") return true;
+  return /timed out/i.test(String(err?.message ?? ""));
+}
+
+/**
+ * per-call タイムアウト時のみ1回だけ即時リトライする。
+ *
+ * 1回目が per-call タイムアウトで、かつ引数の signal がまだ aborted でない
+ * （Stop ボタン / パイプライン全体タイムアウト以外）場合のみ2回目を試す。
+ * それ以外のエラー（ネットワーク・auth・abort 等）は即 throw する。
+ * 2回目の直前に signal.aborted を再チェックし、aborted 済みならリトライしない。
+ * 2回目も同じ per-call タイムアウトで落ちたら、そのエラーをそのまま throw する
+ * （既存の errorKind: 'timeout' 分岐へ）。引数・signal は2回目も同一。
+ *
+ * リトライ時に `collected`（toolCalls/appliedChanges）や `StepManager`
+ * （stepCount/loopScore/fileWriteCount）はリセットされない。attempt1 のツール
+ * 実行分が二重計上され得る（`shouldStop` は `opts.steps.length` 基準のため予算
+ * 短縮は起きない・既存の rate-limit リトライと同一構造・非自明なので明記）。
+ *
+ * 本ヘルパーは `withRateLimitRetry` の内側で動くため、rate-limit（最大4回）×
+ * timeout リトライ（最大2回）で最大8呼び出しになり得る。10分の
+ * `PIPELINE_TIMEOUT_MS` 合成 signal が無限ループを防ぐ。
+ */
+async function generateWithTimeoutRetry<T>(
+  call: () => Promise<T>,
+  signal: AbortSignal,
+): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (!isPerCallTimeoutError(error)) throw error;
+    // 2回目の試行直前にも再チェック（Stop / 全体タイムアウトとの競合回避）
+    if (signal.aborted) throw error;
+    return call();
+  }
+}
+
+// ── Phase Configuration ───────────────────────────────────────────────────────
+
+const PHASE_LABELS: Record<Phase, string> = {
+  planner: "Planning & Design",
+  coder: "Code Generation",
+  verifier: "Error Check & Fix",
+  visual_qa: "Visual Review",
+};
+
+const PHASE_CONFIGS: Record<Phase, { stepLimit: number; maxContinuations: number }> = {
+  planner:   { stepLimit: 8,  maxContinuations: 0 },
+  coder:     { stepLimit: 20, maxContinuations: 2 },
+  verifier:  { stepLimit: 15, maxContinuations: 0 },
+  visual_qa: { stepLimit: 5,  maxContinuations: 0 },
+};
+
+const PHASE_TOOLS: Record<Phase, string[]> = {
+  planner:   ["read_file", "list_files"],
+  coder:     ["read_file", "list_files", "apply_artifact", "get_errors"],
+  verifier:  ["read_file", "get_errors", "apply_artifact", "take_screenshot"],
+  visual_qa: ["take_screenshot", "read_file"],
+};
+
+// ── Agent Tier Table ──────────────────────────────────────────────────────────
+//
+// triage レベル（1–5）→ エージェント構成の唯一の対応表。
+// runWithTriage はこの表を引くだけにし、構成のロジックをここへ集約する。
+//
+//   L1: coder のみ（単体で完了）
+//   L2: coder + verifier（検証だけ追加・planner なし）
+//   L3: planner + coder + verifier（計画＋実装＋検証・visual_qa なし）
+//   L4: planner + coder + verifier + visual_qa（視覚QA追加・修正1回＋dummy-data 再生成）
+//   L5: planner + coder + verifier + visual_qa（フル＋修正ループ最大2＋dummy-data 再生成）
+//
+// 修正ループは visual_qa の出力から起動するため、visual_qa を含まない
+// L1〜L3 の fixRounds は 0。fixRounds が有効なのは L4=1, L5=2 のみ。
+
+export interface PipelineTierConfig {
+  /** 実行するフェーズの並び（修正ラウンドで追加されうる） */
+  phases: Phase[];
+  /** visual_qa 由来の修正ループ上限。L1〜L3 は visual_qa を含まないため 0 */
+  fixRounds: number;
+  /** coder 出力に dummy-data を検出した際の再生成を有効にするか（品質ゲート） */
+  dummyDataRegen: boolean;
+}
+
+export const PIPELINE_TIERS: Record<PipelineTierLevel, PipelineTierConfig> = {
+  1: { phases: ["coder"], fixRounds: 0, dummyDataRegen: false },
+  2: { phases: ["coder", "verifier"], fixRounds: 0, dummyDataRegen: false },
+  3: { phases: ["planner", "coder", "verifier"], fixRounds: 0, dummyDataRegen: false },
+  4: { phases: ["planner", "coder", "verifier", "visual_qa"], fixRounds: 1, dummyDataRegen: true },
+  5: { phases: ["planner", "coder", "verifier", "visual_qa"], fixRounds: 2, dummyDataRegen: true },
+};
+
+/** triage が返した任意の数値を 1–5 のティアレベルへ正規化する。 */
+function normalizeTierLevel(level: number): PipelineTierLevel {
+  if (!Number.isFinite(level)) return 2;
+  if (level <= 1) return 1;
+  if (level >= 5) return 5;
+  return Math.round(level) as PipelineTierLevel;
+}
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+export interface PhaseContext {
+  phase: Phase;
+  planContext?: string;
+}
+
+/**
+ * runPhase がエラーで停止したときの構造的な失敗種別。
+ *
+ * 現在 UI（summarizePipelineResult）が消費するのは 'timeout' / 'aborted' のみ。
+ * 'network' / 'auth' / 'ratelimit' / 'model' は将来の表示用にデータとして
+ * 保持しているが、まだ消費されていないデッドサーフェスである。
+ */
+export type PhaseErrorKind = 'timeout' | 'aborted' | 'network' | 'auth' | 'ratelimit' | 'model' | 'unknown';
+
+/** visual_qa 判定の状態。 */
+export type QaVerdict = 'current' | 'stale' | 'not-run' | 'failed';
+
+export interface PipelineResult {
+  text: string;
+  usage: Usage;
+  phases: Phase[];
+  /** 例外などで停止した（stoppedReason === "error"）フェーズ。失敗の構造的シグナル。 */
+  failedPhases: Phase[];
+  /**
+   * 直近の visual_qa 判定の状態。
+   * current = 最後のファイル変更より後に visual_qa が判定を返した。
+   * stale   = 判定はあるが、その後にファイル変更が入った。
+   * not-run = visual_qa が一度も実行されていない（そのティアに含まれない）。
+   * failed  = visual_qa は実行されたが判定を返さなかった（例外 / タイムアウト / 空応答）。
+   */
+  qaVerdict: QaVerdict;
+  /** ループを中断した理由。'aborted' はユーザーの停止操作。 */
+  interruptedBy?: 'timeout' | 'aborted' | 'error';
+  /** パイプライン中に成功したファイル変更が1つでもあったか。 */
+  fileChangesApplied: boolean;
+}
+
+export type ToolBuilderFn = (toolNames: string[]) => ToolSet;
+
+export interface PipelineHooks {
+  onPhaseStart?: (phase: Phase) => void;
+  onPhaseEnd?: (phase: Phase, result: PhaseRunResult) => void;
+  onPhaseDetail?: (phase: Phase, text: string) => void;
+  onToolCall?: (phase: Phase, toolName: string, args: Record<string, unknown>) => void;
+  onStepProgress?: (phase: Phase, progress: { step: number; maxSteps: number }) => void;
+  onRateLimit?: (phase: Phase, retryCount: number, maxRetries: number, waitMs: number) => void;
+  onContinuation?: (phase: Phase, round: number, maxRounds: number) => void;
+  onCheckpoint?: (phase: Phase, checkpointId: string) => void;
+  onTriageResult?: (result: { level: number; reason: string }) => void;
+}
+
+export interface PhaseRunResult {
+  text: string;
+  toolCalls: Array<{ toolName: string; args: Record<string, unknown> }>;
+  usage: Usage;
+  stepCount: number;
+  hitLimit: boolean;
+  stoppedReason: string;
+  continuationCount: number;
+  plan?: string;
+  /** エラーで停止した場合の失敗種別（成功時は undefined）。 */
+  errorKind?: PhaseErrorKind;
+  /**
+   * apply_artifact が実際にファイルを変更できた実行が1つ以上あったか。
+   * ツール呼び出しの有無ではなく、成功した結果（success/filesChanged）で判定する。
+   */
+  appliedChanges: boolean;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+export function getPhaseLabel(phase: Phase): string {
+  return PHASE_LABELS[phase];
+}
+
+function getSystemPrompt(phase: Phase, planContext?: string, simpleMode?: boolean, language?: string, isDesktop?: boolean): string {
+  switch (phase) {
+    case "planner": return plannerPrompt(simpleMode, language);
+    case "coder": return coderPrompt(planContext, simpleMode, language, isDesktop);
+    case "verifier": return verifierPrompt(simpleMode, language);
+    case "visual_qa": return visualQAPrompt(simpleMode, language);
+    default: return coderPrompt(planContext, simpleMode, language, isDesktop);
+  }
+}
+
+function getAllowedTools(phase: Phase): string[] {
+  return PHASE_TOOLS[phase];
+}
+
+// ── Plan Extraction ───────────────────────────────────────────────────────────
+
+function extractPlan(text: string): Record<string, unknown> | null {
+  const patterns = [
+    /```plan\s*\n?([\s\S]*?)```/,
+    /```json\s*\n?({[\s\S]*?})```/,
+    /({[\s\S]*?"tasks"[\s\S]*?})/,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (match) {
+      try {
+        return JSON.parse(match[1].trim()) as Record<string, unknown>;
+      } catch {
+        continue;
+      }
+    }
+  }
+
+  const jsonMatch = text.match(/{[\s\S]*?}/);
+  if (jsonMatch) {
+    try {
+      const parsed = JSON.parse(jsonMatch[0]);
+      if (parsed && typeof parsed === "object" && "tasks" in parsed) {
+        return parsed as Record<string, unknown>;
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
+}
+
+function formatPlanContext(plan: Record<string, unknown>): string {
+  const parts: string[] = [];
+
+  if (plan.summary) parts.push(`Summary: ${plan.summary}`);
+  if (plan.architecture) parts.push(`Architecture: ${plan.architecture}`);
+  if (plan.dataModel) parts.push(`Data Model: ${plan.dataModel}`);
+  if (plan.tasks && Array.isArray(plan.tasks)) {
+    parts.push(`\nFiles to create/modify (${plan.tasks.length} tasks):`);
+    for (const task of plan.tasks) {
+      const taskObj = task as Record<string, unknown>;
+      const type = (taskObj.type as string) || "?";
+      const filePath = (taskObj.filePath as string) || (taskObj.path as string) || "?";
+      const purpose = (taskObj.purpose as string) || (taskObj.description as string) || "";
+      parts.push(`  [${type}] ${filePath} — ${purpose}`);
+    }
+  }
+
+  return parts.join("\n");
+}
+
+// ── Phase Runner ──────────────────────────────────────────────────────────────
+
+/**
+ * apply_artifact のツール結果がファイル変更に成功したかを判定する。
+ * ツール呼び出しは失敗しても { success: false } を返すため、呼び出しの
+ * 有無ではなく結果で判定する（成功時は filesChanged が非空）。
+ */
+function didApplyArtifactSucceed(output: unknown): boolean {
+  if (!output || typeof output !== "object") return false;
+  const result = output as { success?: unknown; filesChanged?: unknown };
+  if (result.success === true) return true;
+  return Array.isArray(result.filesChanged) && result.filesChanged.length > 0;
+}
+
+function makeStepCallback(
+  phase: Phase,
+  stepManager: StepManager,
+  hooks: PipelineHooks | undefined,
+  collected: {
+    toolCalls: Array<{ toolName: string; args: Record<string, unknown> }>;
+    appliedChanges: boolean;
+  },
+) {
+  return (event: any) => {
+    const toolCalls = event.toolCalls || [];
+    const mapped = toolCalls.map((tc: any) => ({
+      toolName: tc.toolName,
+      args: (tc.args ?? tc.input ?? {}) as Record<string, unknown>,
+    }));
+    stepManager.recordStep(mapped);
+    // フェーズ単位の実行結果（toolCalls）に残す。ファイル変更の有無を
+    // 呼び出し側が構造的に判定できるようにするため。
+    collected.toolCalls.push(...mapped);
+
+    // apply_artifact（唯一のファイル書き込みツール）が成功した場合のみ
+    // ファイル変更として数える。失敗した呼び出しは変更として数えない。
+    const toolResults = event.toolResults || [];
+    for (const tr of toolResults) {
+      if (tr?.toolName === "apply_artifact" && didApplyArtifactSucceed(tr.output)) {
+        collected.appliedChanges = true;
+      }
+    }
+
+    const { step, maxSteps } = stepManager.getProgress();
+    hooks?.onStepProgress?.(phase, { step, maxSteps });
+
+    if (toolCalls.length > 0) {
+      for (const call of toolCalls) {
+        hooks?.onToolCall?.(phase, call.toolName, (call.args ?? call.input ?? {}) as Record<string, unknown>);
+      }
+    }
+  };
+}
+
+export async function runPhase(
+  model: LanguageModel,
+  phase: Phase,
+  messages: Array<Record<string, unknown>>,
+  buildTools: ToolBuilderFn,
+  signal: AbortSignal,
+  hooks?: PipelineHooks,
+  planContext?: string,
+  _simpleMode?: boolean,
+  language?: string,
+  isDesktop?: boolean,
+  maxSteps?: number,
+): Promise<PhaseRunResult> {
+  const systemPrompt = getSystemPrompt(phase, planContext, _simpleMode, language, isDesktop);
+  const toolNames = getAllowedTools(phase);
+  const tools = buildTools(toolNames);
+  const config = PHASE_CONFIGS[phase];
+
+  // AiConfig.maxSteps が設定されていれば動的ステップ管理のベース値として優先する
+  const stepManager = new StepManager(maxSteps ?? config.stepLimit, 120, config.maxContinuations);
+  const collected = {
+    toolCalls: [] as Array<{ toolName: string; args: Record<string, unknown> }>,
+    appliedChanges: false,
+  };
+  const onStepFinish = makeStepCallback(phase, stepManager, hooks, collected);
+
+  let allResultText = "";
+  let totalInputTokens = 0;
+  let totalOutputTokens = 0;
+  const roundMessages = [...messages];
+
+  try {
+    do {
+      const result = await withRateLimitRetry(
+        () =>
+          generateWithTimeoutRetry(
+            () =>
+              generateText({
+                model,
+                system: systemPrompt,
+                messages: roundMessages as any,
+                tools: tools as unknown as ToolSet,
+                abortSignal: signal,
+                timeout: GENERATE_TIMEOUT_MS,
+                stopWhen: (opts) => stepManager.shouldStop(opts),
+                temperature: 0.2,
+                maxOutputTokens: 16384,
+                onStepFinish,
+              }),
+            signal,
+          ),
+        hooks
+          ? (retryEvent) => {
+              hooks.onRateLimit?.(phase, retryEvent.retryCount, retryEvent.maxRetries, retryEvent.waitMs);
+            }
+          : undefined,
+        undefined, // config (default)
+        signal,    // abort signal for sleep interruption
+      );
+
+      allResultText += (result.text || "");
+      totalInputTokens += result.usage?.inputTokens ?? 0;
+      totalOutputTokens += result.usage?.outputTokens ?? 0;
+
+      if (stepManager.canAutoContinue()) {
+        stepManager.prepareForContinuation();
+        hooks?.onContinuation?.(phase, stepManager.continuationCount, stepManager.maxContinuations);
+
+        roundMessages.push({
+          role: "user" as const,
+          content:
+            "[Auto-continuation] The previous code generation reached the step limit, so the next round has started. Review the current app state and continue with unfinished implementation.",
+        });
+        continue;
+      }
+      break;
+    } while (true);
+
+    const finalState = stepManager.getFinalState();
+    const { hitLimit, stoppedReason } = finalState;
+
+    // If no text was produced but steps were taken, generate a fallback message.
+    // This can happen when the model only makes tool calls and never produces text.
+    if (!allResultText || allResultText.trim().length === 0) {
+      if (hitLimit) {
+        const suggestion = stepManager.getSuggestion();
+        if (stoppedReason === "loop_detected") {
+          allResultText = suggestion
+            ? `⚠️ Loop detected, stopping generation. ${suggestion}`
+            : `⚠️ Repeated the same actions. Generation stopped. Send "continue" to resume.`;
+        } else {
+          allResultText = suggestion
+            ? `⚠️ Reached max steps (${finalState.step}). ${suggestion}`
+            : `⚠️ Reached max steps (${finalState.step}). Send "continue" to resume.`;
+        }
+      } else {
+        allResultText = "⚠️ Response generation failed. Please try again.";
+      }
+    }
+
+    let plan: string | undefined;
+    if (phase === "planner") {
+      const parsedPlan = extractPlan(allResultText);
+      if (parsedPlan) {
+        plan = formatPlanContext(parsedPlan);
+      }
+    }
+
+    return {
+      text: allResultText,
+      toolCalls: collected.toolCalls,
+      usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+      stepCount: finalState.step,
+      hitLimit,
+      stoppedReason,
+      continuationCount: stepManager.continuationCount,
+      plan,
+      appliedChanges: collected.appliedChanges,
+    };
+  } catch (error: any) {
+    const errMsg = String(error?.message || error || "").toLowerCase();
+    // Determine i18n key and structural error kind based on error type.
+    // 判定は例外の message と name（TimeoutError / AbortError）で行う。
+    let errorText: string;
+    let errorKind: PhaseErrorKind;
+    if (errMsg.includes("failed to fetch") || errMsg.includes("fetch failed") || errMsg.includes("networkerror") || errMsg.includes("econnrefused") || errMsg.includes("econnreset") || errMsg.includes("enotfound") || errMsg.includes("network") || errMsg.includes("load failed")) {
+      // "connection timed out" は接続タイムアウトだが、network ではなく
+      // timeout として扱いたいため、ここには含めない（下の timeout 分岐に落ちる）。
+      // "load failed" は WebKit(WKWebView) が fetch 失敗時に返すメッセージ。
+      // プロバイダが CORS ヘッダ無しのエラー応答（例: OpenAI の 401）を返すと、
+      // WebView は本文を読めず "TypeError: Load failed" になるため network 扱いにする。
+      errorKind = "network";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.networkError") });
+    } else if (errMsg.includes("429") || errMsg.includes("rate limit")) {
+      // この経路では retryCount / maxRetries / waitMs の実値が無い。空値で
+      // プレースホルダを埋めると「（/ 回目、待機 ms）」と破綻するため、
+      // プレースホルダを持たない汎用文言を使う。
+      errorKind = "ratelimit";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.rateLimit") });
+    } else if (errMsg.includes("401") || errMsg.includes("403") || errMsg.includes("api key") || errMsg.includes("unauthorized")) {
+      errorKind = "auth";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.apiKeyInvalid") });
+    } else if (errMsg.includes("404") || (errMsg.includes("model") && (errMsg.includes("not found") || errMsg.includes("does not exist")))) {
+      // この経路ではモデル名が取得できない。空の {{model}} で「モデル「」」と
+      // 破綻しないよう、プレースホルダを持たない汎用文言を使う。
+      // （404 は無条件、model は not found 系と同時に現れた場合のみ）
+      errorKind = "model";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.modelNotFound") });
+    } else if (error?.name === "TimeoutError" || errMsg.includes("timeout") || errMsg.includes("timed out")) {
+      // AI SDK の per-call タイムアウトは "signal timed out" という
+      // メッセージで来るため 'timed out' も timeout として扱う。
+      errorKind = "timeout";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.timeout") });
+    } else if (error?.name === "AbortError" || signal.aborted) {
+      // 停止ボタンによる中断。タイムアウトと区別して 'aborted' にする。
+      errorKind = "aborted";
+      errorText = i18n.t("chat.error.phaseFailedDetail", { phase, message: i18n.t("chat.error.aborted") });
+    } else {
+      errorKind = "unknown";
+      errorText = allResultText || i18n.t("chat.error.phaseFailedDetail", { phase, message: error?.message || String(error) });
+    }
+
+    return {
+      text: errorText,
+      toolCalls: collected.toolCalls,
+      usage: { inputTokens: totalInputTokens, outputTokens: totalOutputTokens },
+      stepCount: 0,
+      hitLimit: false,
+      stoppedReason: "error",
+      continuationCount: 0,
+      errorKind,
+      appliedChanges: collected.appliedChanges,
+    };
+  }
+}
+
+// ── Main Pipeline ─────────────────────────────────────────────────────────────
+
+export async function runWithTriage(
+  model: LanguageModel,
+  requestMessages: Array<Record<string, unknown>>,
+  buildTools: ToolBuilderFn,
+  signal: AbortSignal,
+  _simpleMode?: boolean,
+  language?: string,
+  hooks?: PipelineHooks,
+  isDesktop?: boolean,
+  maxSteps?: number,
+  manualTier?: PipelineTierLevel | null,
+): Promise<PipelineResult> {
+  // 全体タイムアウト（10分）を UI の abort signal と合成してトリアージ以降の全生成に適用する
+  const triageSignal = withPipelineTimeout(signal);
+
+  let level: PipelineTierLevel;
+
+  if (manualTier != null && PIPELINE_TIERS[manualTier]) {
+    // 手動選択時は triage の LLM 判定をスキップ（コスト削減＋即時反映）。
+    // 規模表示のために手動レベルをそのまま通知する。
+    level = manualTier;
+    hooks?.onTriageResult?.({ level, reason: "" });
+  } else {
+    const triageResult = await triageRequest(requestMessages, model, triageSignal);
+    hooks?.onTriageResult?.(triageResult);
+    level = normalizeTierLevel(triageResult.level);
+  }
+
+  // ── ティア表引き（構成ロジックは PIPELINE_TIERS に集約）────────────────
+  const tier = PIPELINE_TIERS[level];
+  return runPipelineForLevel(
+    model, requestMessages, buildTools, triageSignal, hooks, _simpleMode, language, isDesktop, maxSteps,
+    tier.phases,
+    level,
+    tier.fixRounds,
+    tier.dummyDataRegen,
+  );
+}
+
+/**
+ * Visual QA の結果テキストを解析し、修正が必要な問題が報告されたかを判定する。
+ *
+ * プロンプトで ✅ PASS / ⚠️ WARN / ❌ FAIL の形式を指示しているため、
+ * 主に記号マーカーと明示的な否定語で判定する。
+ * "error" 単体は「no errors」「errors resolved」等での false positive を避けるため除外。
+ */
+function visualQaReportsIssues(text: string): boolean {
+  // ✅ PASS なら即座に通過
+  if (/✅\s*PASS/i.test(text)) return false;
+
+  // ❌ FAIL および重大エラーのみ fix round を発動する（⚠️ WARN は発動しない）
+  const negativeMarkers = [
+    "❌ FAIL",                  // 明示的な失敗
+    "❌ Critical errors",       // 明示的重大エラー
+    "❌",                       // ❌ 単体も FAIL 扱い
+    "critical error",           // 重大エラー
+    "blank page",               // 白画面
+    "white screen",             // 白画面
+    "nothing displayed",        // 何も表示されていない
+    "empty page",               // 空ページ
+    "真っ白",                   // 日本語: 真っ白
+    "何も表示",                 // 日本語: 何も表示されない
+    "no visible",               // 表示要素がない
+  ];
+  const lower = text.toLowerCase();
+  return negativeMarkers.some(marker => lower.includes(marker.toLowerCase()));
+}
+
+// ── Dummy Data Detection ──────────────────────────────────────────────────────
+
+/**
+ * Analyze the coder phase output to detect if the app contains real functionality
+ * vs. static/dummy content. Returns whether the app needs regeneration.
+ *
+ * Checks for:
+ * - Hardcoded/mock data patterns (e.g., `const data = [...]`, `mockData`, `dummyData`)
+ * - Lack of data fetching (no `fetch(`, `axios`, `useSWR`, `useQuery`, `useState`)
+ * - Static HTML with hardcoded values (no dynamic rendering)
+ * - Missing interactive functionality (no event handlers, forms, state management)
+ */
+function coderOutputHasDummyData(coderText: string, triageLevel?: number): boolean {
+  // ── Static data indicators ────────────────────────────────────────────────
+  const dummyDataPatterns = [
+    /const\s+(data|items|users?|products?|messages?|tasks?|todos?|posts?)\s*=\s*\[/,
+    /mockData|dummyData|sampleData|fakeData|hardcoded|static\s*data/i,
+    /Lorem\s+ipsum/i,
+    /["']John\s+Doe["']|["']Jane\s+Smith["']|["']example\.com["']/,
+    /TODO:\s*(implement|add|create|fetch|connect)/i,
+    /placeholder\s+(data|content|text)/i,
+  ];
+
+  const hasDummyPatterns = dummyDataPatterns.some(p => p.test(coderText));
+
+  // ── Dynamic functionality indicators (positive signals) ───────────────────
+  const dynamicPatterns = [
+    /fetch\s*\(/,
+    /axios\./,
+    /useSWR|useQuery|useMutation/,
+    /useState|useReducer|createContext/,
+    /addEventListener|onClick|onChange|onSubmit/,
+    /useEffect\s*\(\s*\(\)\s*=>/,
+    /\.get\(|\.post\(|\.put\(|\.delete\(/,
+    /supabase\.|prisma\.|mongoose\.|firebase\./,
+    /WebSocket|socket\.io|EventSource/,
+    /localStorage|sessionStorage|IndexedDB/,
+    /dynamic\s+import|lazy\s*\(/,
+  ];
+
+  const hasDynamicFeatures = dynamicPatterns.filter(p => p.test(coderText)).length;
+
+  // ── Triage-level thresholds ───────────────────────────────────────────────
+  const level = triageLevel ?? 3;
+  // Level 1 (trivial): skip check entirely — small apps may legitimately be static
+  if (level <= 1) return false;
+
+  // Level 2 (minor): only flag obvious dummy patterns
+  if (level <= 2) {
+    return hasDummyPatterns && hasDynamicFeatures === 0;
+  }
+
+  // Level 3 (standard): flag if dummy patterns AND no dynamic features
+  if (level <= 3) {
+    return hasDummyPatterns && hasDynamicFeatures < 2;
+  }
+
+  // Level 4-5 (complex/major): strict — any dummy pattern with insufficient dynamic features
+  return hasDummyPatterns && hasDynamicFeatures < 3;
+}
+
+/**
+ * Generate the re-generation instruction to send to the coder for fixing dummy data.
+ */
+function getDummyDataFixInstruction(language?: string): string {
+  const isJa = language === "ja";
+  if (isJa) {
+    return [
+      "[Dummy Data Detected — Re-generation Required]",
+      "",
+      "The previous code generation produced an app with hardcoded/static dummy data.",
+      "Please re-generate the app with the following requirements:",
+      "",
+      "1. Use REAL data fetching (fetch API, axios, or similar)",
+      "2. Add proper state management (useState, useReducer, or context)",
+      "3. Include interactive elements (forms, buttons with event handlers)",
+      "4. Remove all hardcoded/mock/sample data",
+      "5. If no external API is available, create a local data layer with",
+      "   realistic mock data that can be easily replaced with a real API",
+      "",
+      "The app must demonstrate REAL functionality, not just static content.",
+    ].join("\n");
+  }
+  return [
+    "[Dummy Data Detected — Re-generation Required]",
+    "",
+    "The previous code generation produced an app with hardcoded/static dummy data.",
+    "Please re-generate the app with the following requirements:",
+    "",
+    "1. Use REAL data fetching (fetch API, axios, or similar)",
+    "2. Add proper state management (useState, useReducer, or context)",
+    "3. Include interactive elements (forms, buttons with event handlers)",
+    "4. Remove all hardcoded/mock/sample data",
+    "5. If no external API is available, create a local data layer with",
+    "   realistic mock data that can be easily replaced with a real API",
+    "",
+    "The app must demonstrate REAL functionality, not just static content.",
+  ].join("\n");
+}
+
+/**
+ * Generic pipeline runner for a configurable phase sequence.
+ * Supports fix rounds (visual_qa → coder → verifier → visual_qa) just like runPipeline,
+ * but the initial phase order is supplied by the caller — allowing level-specific
+ * pipelines (e.g. skip visual_qa for Level 2).
+ */
+export async function runPipelineForLevel(
+  model: LanguageModel,
+  requestMessages: Array<Record<string, unknown>>,
+  buildTools: ToolBuilderFn,
+  signal: AbortSignal,
+  hooks?: PipelineHooks,
+  _simpleMode?: boolean,
+  language?: string,
+  isDesktop?: boolean,
+  maxSteps?: number,
+  initialPhases?: Phase[],
+  triageLevel?: number,
+  maxFixRounds = 0,
+  dummyDataRegen = false,
+): Promise<PipelineResult> {
+  // Use the provided phase order or fall back to default
+  const phases = initialPhases ?? ["planner", "coder", "verifier", "visual_qa"];
+
+  // runWithTriage から直接呼ばれる場合も含め、パイプライン全体にタイムアウトを適用する
+  const phaseSignal = withPipelineTimeout(signal);
+
+  // phaseQueue を使って動的に修正ラウンドを追加できるようにする
+  const phaseQueue: Phase[] = [...phases];
+  let planContext: string | undefined;
+  let accumulatedText = "";
+  const totalUsage: Usage = { inputTokens: 0, outputTokens: 0 };
+  let fixRound = 0;
+  let visualQaFeedback: string | null = null;
+  let dummyDataFeedback: string | null = null;
+  let dummyDataFixRound = 0;
+  const MAX_DUMMY_FIX_ROUNDS = 1;
+  // dummy-data 再生成はティア表のフラグで制御する（L4/L5 で有効）
+  const dummyDataDetectionEnabled = dummyDataRegen;
+  const executedPhases: Phase[] = [];
+  const failedPhases: Phase[] = [];
+  // 各フェーズ実行を 0 始まりで数え、成功したファイル変更と visual_qa の
+  // 「判定を返した」実行の最後の位置を記録する。両者の位置関係で qaVerdict を決める。
+  let executionIndex = 0;
+  let lastFileChangeIndex = -1;
+  let lastVisualQaIndex = -1;
+  let interruptedBy: 'timeout' | 'aborted' | 'error' | undefined;
+
+  while (phaseQueue.length > 0) {
+    const phase = phaseQueue.shift()!;
+    executedPhases.push(phase);
+    const currentIndex = executionIndex++;
+    hooks?.onPhaseStart?.(phase);
+
+    // 各フェーズのメッセージ構築
+    let messages: Array<Record<string, unknown>>;
+    if (phase === "planner") {
+      messages = requestMessages;
+    } else {
+      messages = [...requestMessages];
+      // 修正ラウンド用: Visual QA のフィードバックを追加
+      if (visualQaFeedback && (phase === "coder" || phase === "verifier")) {
+        messages.push({
+          role: "user" as const,
+          content: `[Fix Round ${fixRound}/${maxFixRounds}]\nThe previous verification found these issues that need to be fixed:\n\n${visualQaFeedback}\n\nPlease fix the issues described above.`,
+        });
+      }
+      // Dummy data fix: add re-generation instruction
+      if (dummyDataFeedback && phase === "coder") {
+        messages.push({
+          role: "user" as const,
+          content: dummyDataFeedback,
+        });
+      }
+    }
+
+    const result = await runPhase(
+      model,
+      phase,
+      messages,
+      buildTools,
+      phaseSignal,
+      hooks,
+      planContext,
+      _simpleMode,
+      language,
+      isDesktop,
+      maxSteps,
+    );
+
+    hooks?.onPhaseEnd?.(phase, result);
+
+    // 実行位置の記録: apply_artifact（唯一のファイル書き込みツール）が
+    // 成功した実行と、visual_qa が「判定を返した」実行の最後の位置を残す。
+    // visual_qa 判定が最終コードを指しているかを後段で構造的に判定するため。
+    if (result.appliedChanges) {
+      lastFileChangeIndex = currentIndex;
+    }
+    // タイムアウト等で stoppedReason === "error" になった visual_qa は
+    // 判定を返していないため記録しない（空テキストも判定とみなさない）。
+    if (phase === "visual_qa" && result.stoppedReason !== "error" && result.text.trim().length > 0) {
+      lastVisualQaIndex = currentIndex;
+    }
+
+    // 例外などで停止したフェーズ（stoppedReason === "error"）を構造的シグナルとして
+    // 記録する。これは検証フェーズに限らず全フェーズが対象。テキストにエラー語が
+    // 含まれない経路（rateLimit / timeout 等）でも失敗をUIへ伝えるため。
+    if (result.stoppedReason === "error") {
+      failedPhases.push(phase);
+    }
+
+    if (result.text) {
+      hooks?.onPhaseDetail?.(phase, result.text);
+    }
+
+    if (phase === "planner" && result.plan) {
+      planContext = result.plan;
+    }
+
+    if (result.text && (phase === "coder" || phase === "visual_qa")) {
+      accumulatedText += accumulatedText ? "\n\n" : "";
+      accumulatedText += result.text;
+    }
+    totalUsage.inputTokens += result.usage.inputTokens;
+    totalUsage.outputTokens += result.usage.outputTokens;
+
+    // ── Dummy Data Detection (after coder phase, full-tier only) ────────────
+    if (dummyDataDetectionEnabled && phase === "coder" && result.text && !dummyDataFeedback) {
+      if (coderOutputHasDummyData(result.text, triageLevel)) {
+        if (dummyDataFixRound < MAX_DUMMY_FIX_ROUNDS) {
+          dummyDataFixRound++;
+          dummyDataFeedback = getDummyDataFixInstruction(language);
+          console.log(`[pipeline] Dummy data detected in coder output — triggering re-generation (round ${dummyDataFixRound}/${MAX_DUMMY_FIX_ROUNDS})`);
+          // Add coder back to queue for re-generation
+          phaseQueue.unshift("coder");
+        }
+      }
+    }
+
+    // ── Visual QA 終了後の処理 ──────────────────────────────────────────────
+    // 問題があれば coder → verifier → visual_qa の fix round
+    if (phase === "visual_qa" && result.text) {
+      if (visualQaReportsIssues(result.text)) {
+        visualQaFeedback = result.text;
+        if (fixRound < maxFixRounds) {
+          fixRound++;
+          console.log(`[pipeline] Visual QA reports issues — starting fix round ${fixRound}/${maxFixRounds}`);
+          phaseQueue.unshift("visual_qa");
+          phaseQueue.unshift("verifier");
+          phaseQueue.unshift("coder");
+        } else {
+          visualQaFeedback = null;
+        }
+      } else {
+        visualQaFeedback = null;
+      }
+    }
+
+    // 致命的エラーで中断する。stoppedReason は step-limits の
+    // "normal_completion" / "max_steps" / "loop_detected" と、runPhase の catch が
+    // 返す "error" のみ。以前はテキスト先頭の ⚠️ で「例外以外の停止」を
+    // 見分けていたが、catch の errorText（phaseFailedDetail）が全て ⚠️ で
+    // 始まるようになりヒューリスティックが常に false になっていたため、
+    // 構造的シグナルである stoppedReason だけで判定する。
+    if (result.stoppedReason === "error") {
+      interruptedBy =
+        result.errorKind === "timeout" ? "timeout" : result.errorKind === "aborted" ? "aborted" : "error";
+      break;
+    }
+  }
+
+  // 修正ループ後の visual_qa 再実行 ──────────────────────────────────────
+  // 修正ループ（visual_qa → coder → verifier）が走った後、verifier のタイムアウト等で
+  // 末尾に予約された visual_qa が実行されないと、最後のファイル変更より前に撮った
+  // 古い判定（stale）が残ってしまう。その場合に限り visual_qa をもう一度だけ実行し、
+  // 最新の判定で上書きする。fixRounds の上限とは独立した 1 回の再検証であり、
+  // 無制限ループにはしない（この再実行自体が次の修正ラウンドを起動しない）。
+  //
+  // 再実行は「パイプライン全体タイムアウトで末尾 visual_qa が予約実行されなかった」
+  // ケースだけを対象にする。接続障害（network / auth / ratelimit / model）で
+  // interruptedBy === "error" の場合は、追加の LLM 呼び出しをしても回復しないため
+  // 対象外。phaseSignal.aborted は「ユーザーの停止」と「パイプライン全体タイムアウト」
+  // の両方を含み、aborted 済みでは再実行しても即エラーになり旧判定をエラー文言で
+  // 上書きしてしまうため、aborted でも再実行しない。
+  if (
+    phases.includes("visual_qa") &&
+    fixRound > 0 &&
+    !phaseSignal.aborted &&
+    (interruptedBy === undefined || interruptedBy === "timeout") &&
+    lastFileChangeIndex !== -1 &&
+    lastVisualQaIndex < lastFileChangeIndex
+  ) {
+    const phase: Phase = "visual_qa";
+    hooks?.onPhaseStart?.(phase);
+    const refreshResult = await runPhase(
+      model,
+      phase,
+      [...requestMessages],
+      buildTools,
+      phaseSignal,
+      hooks,
+      planContext,
+      _simpleMode,
+      language,
+      isDesktop,
+      maxSteps,
+    );
+    hooks?.onPhaseEnd?.(phase, refreshResult);
+
+    executedPhases.push(phase);
+    const refreshIndex = executionIndex;
+    if (refreshResult.stoppedReason !== "error" && refreshResult.text.trim().length > 0) {
+      lastVisualQaIndex = refreshIndex;
+    }
+    if (refreshResult.stoppedReason === "error") {
+      failedPhases.push(phase);
+    }
+    if (refreshResult.text) {
+      hooks?.onPhaseDetail?.(phase, refreshResult.text);
+      accumulatedText += accumulatedText ? "\n\n" : "";
+      accumulatedText += refreshResult.text;
+    }
+    totalUsage.inputTokens += refreshResult.usage.inputTokens;
+    totalUsage.outputTokens += refreshResult.usage.outputTokens;
+  }
+
+  // visual_qa がそのティアに含まれない場合は not-run（未実行）。含まれるのに
+  // 有効な判定が無ければ failed（実行されたが判定を返さなかった）。あれば、
+  // 最後の成功変更より後かで current / stale を分ける。
+  let qaVerdict: QaVerdict;
+  if (!phases.includes("visual_qa")) {
+    qaVerdict = "not-run";
+  } else if (lastVisualQaIndex === -1) {
+    qaVerdict = "failed";
+  } else {
+    qaVerdict = lastVisualQaIndex > lastFileChangeIndex ? "current" : "stale";
+  }
+
+  return {
+    text: accumulatedText,
+    usage: totalUsage,
+    phases: executedPhases,
+    failedPhases,
+    qaVerdict,
+    interruptedBy,
+    fileChangesApplied: lastFileChangeIndex !== -1,
+  };
+}
+
+/**
+ * Convenience wrapper for the standard 4-phase pipeline (full fix loop).
+ * Equivalent to L5 (`runPipelineForLevel(..., ["planner","coder","verifier","visual_qa"], triageLevel, 2, true)`).
+ * Kept for backward compatibility. `runWithTriage` uses `PIPELINE_TIERS` directly.
+ */
+export function runPipeline(
+  model: LanguageModel,
+  requestMessages: Array<Record<string, unknown>>,
+  buildTools: ToolBuilderFn,
+  signal: AbortSignal,
+  hooks?: PipelineHooks,
+  _simpleMode?: boolean,
+  language?: string,
+  isDesktop?: boolean,
+  maxSteps?: number,
+  triageLevel?: number,
+): Promise<PipelineResult> {
+  return runPipelineForLevel(
+    model, requestMessages, buildTools, signal, hooks, _simpleMode, language, isDesktop, maxSteps,
+    ["planner", "coder", "verifier", "visual_qa"],
+    triageLevel,
+    PIPELINE_TIERS[5].fixRounds,
+    PIPELINE_TIERS[5].dummyDataRegen,
+  );
+}

@@ -152,3 +152,12 @@ Write to `.agents/artifacts/review-report-<slug>.json`:
 - The review report must be actionable — every `changes_requested` item must describe a fixable concern.
 - If the diff is large (>500 lines), focus on high-risk areas (security, data flow, new patterns) rather than line-by-line.
 - Do not let perfection block progress — `low` severity issues should not delay merge.
+
+## Review-Only Mode
+
+When asked to run an **autonomous review loop** (e.g. "review only", "レビュー結果のみ"), operate in review-only mode:
+
+- Produce the review report ONLY. Do NOT modify, fix, or refactor code.
+- Do NOT commit, push, or merge — not even autonomously-passing PRs.
+- Report findings to the requesting party (user/Orchestrator) and stop.
+- Fixes are routed to the `fix` skill or a human — never applied by the reviewer.

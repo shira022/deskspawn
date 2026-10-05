@@ -26,6 +26,8 @@ deskspawn/
 │       ├── src-tauri/             # Rust backend (storage, sidecar mgmt, IPC)
 │       └── sidecar/               # Node/Bun AI engine (local preview + AI proxy)
 ├── packages/
+│   ├── shared/                    # ⭐ Shared app code (ADR-014)
+│   │   └── src/                   # engine/ hooks/ lib/ store/ components/ locales/ types/
 │   ├── ui/                        # Shared UI primitives
 │   ├── ai-core/                   # Shared types & service interfaces
 │   └── config/                    # Shared tsconfig
@@ -36,9 +38,10 @@ deskspawn/
 
 - **Shell**: Tauri v2 (Rust)
 - **Frontend**: Vite + React 18 + TypeScript
-- **Shared UI**: the desktop imports the web app's components directly via a
-  `@/*` alias → `apps/web/src/*` (true code sharing; only platform-specific
-  parts are branched via `isDesktopEnv()`)
+- **Shared code (ADR-014)**: the desktop and web apps both import shared UI,
+  chat, AI engine, storage, i18n, and types from `packages/shared/src` via
+  the `@deskspawn/shared` alias (only platform-specific parts are branched
+  via `isDesktopEnv()`); `apps/desktop/src` is a thin wrapper
 - **AI engine**: a local **sidecar** (bundled with Bun, ADR-011) runs the
   multi-agent pipeline and proxies AI API calls (CORS fix, ADR-003)
 - **Storage**: real files on disk + SQLite (ADR-007/008/009)
@@ -60,18 +63,20 @@ deskspawn/
 ```
 ~/deskspawn/
 ├── apps/                 # generated apps — real files on disk
-│   └── <app-id>/
-│       ├── src/          # editable source
-│       └── .deskspawn/
-│           └── chat.db   # per-app chat history (SQLite, Rust-managed)
-├── apps.json             # app registry (JSON)
+│   ├── <app-id>/
+│   │   ├── src/          # editable source
+│   │   └── .deskspawn/
+│   │       └── chat.db   # per-app chat history (SQLite, Rust-managed)
+│   └── apps.json         # app registry (JSON)
 ├── config/               # settings, AI provider config (keys → OS keychain)
 ├── templates/            # bundled app templates
 └── tools/                # sidecar tooling (bun, etc.)
 ```
 
-- **Hybrid management data** (ADR-009): app list/settings in JSON,
-  per-app chat history in SQLite (`chat_messages.app_id`, `app_id TEXT`).
+- **Hybrid management data** (ADR-009): app list/settings in JSON; per-app
+  chat history in SQLite with schema v2 (ADR-013): `chat_messages`
+  (`client_id TEXT UNIQUE` + `payload TEXT` holding the full message JSON),
+  saved atomically via `save_chat_messages` (whole-table replace).
 - **API keys**: OS keychain (Windows Credential Manager) via Rust IPC.
 - **Web version**: IndexedDB/OPFS for apps + API keys (evaluation only).
 
@@ -113,13 +118,29 @@ branches only the platform-specific bits (badge, open-in-browser).
 
 ## 5. AI Pipeline
 
-Multi-agent pipeline (triage → planner → coder → verifier → visual QA) with:
+Multi-agent pipeline. Triage classifies the request (level 1–5), and
+`PIPELINE_TIERS` in `engine/orchestrator.ts` maps each level to a distinct
+agent composition:
+
+| Level | Display name | Phases | Fix rounds | Dummy-data regen | Intent |
+|---|---|---|---|---|---|
+| L1 | Minimal | coder | 0 | no | single-shot completion |
+| L2 | Basic | coder, verifier | 0 | no | verification only (no planner) |
+| L3 | Standard | planner, coder, verifier | 0 | no | plan + implement + verify |
+| L4 | Thorough | planner, coder, verifier, visual_qa | 1 | yes | adds visual QA |
+| L5 | Maximum | planner, coder, verifier, visual_qa | 2 | yes | full + max 2 fix loops |
 
 - **Multi-provider**: OpenAI, Anthropic, Gemini, Bedrock, Azure, Vertex,
   Ollama, any OpenAI-compatible endpoint
+- **Manual tier override**: a compact control near the chat input offers
+  `Auto` + `Minimal`–`Maximum` (default `Auto`); the UI shows only the
+  friendly display names. Selecting a tier skips the triage LLM call and runs
+  that composition directly. The inline status is `Auto: <name>` /
+  `Manual: <name>`, and the agent composition for the hovered/focused tier is
+  revealed in a tooltip.
 - **Desktop proxy**: custom/self-hosted endpoints go through the sidecar
   (`/v1` proxy with `x-upstream` header) to avoid CORS failures (ADR-003)
-- **Quality loop** (ADR-012): generated apps ship with tests; the coder agent
+- **Quality loop** (ADR-012, ADR-016): generated apps ship with tests; the coder agent
   runs them and fixes until green
 - **Step limits & retries**: rate-limit detection with exponential backoff
 
@@ -143,13 +164,3 @@ Multi-agent pipeline (triage → planner → coder → verifier → visual QA) w
 `scripts/check-versions.mjs` verifies consistency; `scripts/set-version.py`
 bumps every location. 4-part versions are not allowed (Tauri updater
 compatibility).
-
----
-
-## 🇯🇵 日本語
-
-DeskSpawn は**デスクトップアプリをメイン**とした AI アプリ開発プラットフォーム。
-チャットでアプリを記述すると、マルチエージェントパイプラインが設計・実装・検証し、
-ローカルプレビューで即確認できる。生成物は `~/deskspawn/apps/` の**実ファイル**
-として保存され、APIキーは OS キーチェーンに保管される。Web版は体験用デモ
-（IndexedDB 保存・評価目的のみ）。詳細な決定履歴は [docs/adr/](./adr/) を参照。

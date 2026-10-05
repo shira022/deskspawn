@@ -122,15 +122,58 @@ pub fn create_app(name: String) -> Result<AppMeta, String> {
 #[tauri::command]
 pub fn delete_app(app_id: String) -> Result<(), String> {
     validate_app_id(&app_id)?;
+
+    // 監査指摘対応 (2026-08-27): 『レジストリ書き込み → ディレクトリ削除』を
+    // 『ディレクトリ削除 → 成功時のみレジストリ更新』に変更した。
+    // 旧順序ではレジストリだけ先に消えてディレクトリ削除が失敗すると孤児ディレクトリ
+    // （apps.json に存在しない app-*/ が残る）になった。削除失敗時はレジストリを
+    // 変更せずエラーを返す（レジストリとディスクの整合性維持）。
+    //
+    // Windows ではプレビュー停止後やウイルススキャン（Defender 等）の
+    // リアルタイムチェックでファイルハンドル解放に数十秒かかることがあり、
+    // remove_dir_all が "os error 32（別のプロセスが使用中）" で失敗する。
+    // 指数バックオフ（1+2+4+8+16 = 最大31秒待ち）で再試行する
+    // （実績 2026-08-15・E2E で検出: 単発・固定待ちでは再現頻度が高い）。
+    let dir = workspace::app_dir(&app_id)?;
+    if dir.exists() {
+        let mut last_err: Option<String> = None;
+        for attempt in 0..6 {
+            match fs::remove_dir_all(&dir) {
+                Ok(()) => {
+                    last_err = None;
+                    break;
+                }
+                Err(e) => {
+                    last_err = Some(format!("Failed to remove app dir: {}", e));
+                    if attempt < 5 {
+                        std::thread::sleep(std::time::Duration::from_secs(1 << attempt));
+                    }
+                }
+            }
+        }
+        if let Some(e) = last_err {
+            return Err(e);
+        }
+    }
+
+    // ディレクトリ削除が成功した場合のみ、レジストリから除去する。
     let mut apps = read_registry()?;
     apps.retain(|p| p.id != app_id);
     write_registry(&apps)?;
 
-    // Remove the on-disk directory (recursive, guarded to app root only).
-    let dir = workspace::app_dir(&app_id)?;
-    if dir.exists() {
-        fs::remove_dir_all(&dir).map_err(|e| format!("Failed to remove app dir: {}", e))?;
+    // 削除したアプリが current_app（config.json の開いているアプリ）だった場合、
+    // 幽霊参照を残さないようクリアする（実績 2026-08-21: UI の削除ガード
+    // では起きないが、直接 IPC 削除では current_app が空参照のまま残った）。
+    if crate::commands::ai_config::read_existing_config()
+        .map(|c| c.current_app.as_deref() == Some(app_id.as_str()))
+        .unwrap_or(false)
+    {
+        if let Some(mut cfg) = crate::commands::ai_config::read_existing_config() {
+            cfg.current_app = None;
+            crate::commands::ai_config::write_config(&cfg)?;
+        }
     }
+
     Ok(())
 }
 
@@ -184,6 +227,26 @@ pub fn read_app_file(app_id: String, path: String) -> Result<String, String> {
         return Err("File too large to read (max 10MB)".to_string());
     }
     fs::read_to_string(&target).map_err(|e| format!("Failed to read file: {}", e))
+}
+
+/// Delete a file from an app directory (path-traversal safe).
+///
+/// C1 fix (web-storage audit 2026-08-12): the frontend's desktop `deleteAppFile`
+/// used to write an empty string instead of deleting, which left "deleted"
+/// files as 0-byte files. Idempotent: missing file is not an error.
+#[tauri::command]
+pub fn delete_app_file(app_id: String, path: String) -> Result<(), String> {
+    validate_app_id(&app_id)?;
+    let dir = workspace::app_dir(&app_id)?;
+    let target = dir.join(&path);
+    if !security::is_path_safe(&dir, &target) {
+        return Err("Path traversal detected".to_string());
+    }
+    if !target.is_file() {
+        return Ok(());
+    }
+    fs::remove_file(&target).map_err(|e| format!("Failed to delete file: {}", e))?;
+    Ok(())
 }
 
 /// Write a file into an app directory (path-traversal safe, creates parents).
@@ -243,7 +306,7 @@ pub fn write_app_files(
     Ok(written)
 }
 
-/// Load chat history for an app from its SQLite DB (ADR-009).
+/// Load chat history for an app from its SQLite DB (ADR-009 / ADR-013).
 #[tauri::command]
 pub async fn get_chat_history(app_id: String) -> Result<Vec<ChatMessage>, String> {
     validate_app_id(&app_id)?;
@@ -251,38 +314,67 @@ pub async fn get_chat_history(app_id: String) -> Result<Vec<ChatMessage>, String
     let rows = crate::engine::storage::load_messages(&pool, &app_id).await?;
     let msgs = rows
         .into_iter()
-        .map(|(id, role, content, created_at)| ChatMessage {
-            id,
-            role,
-            content,
-            created_at,
+        .map(|r| ChatMessage {
+            client_id: r.client_id,
+            role: r.role,
+            content: r.content,
+            payload: r.payload,
+            created_at: r.created_at,
         })
         .collect();
     crate::engine::storage::close(pool).await;
     Ok(msgs)
 }
 
-/// Append a chat message to the app's SQLite DB (ADR-009).
+/// Replace-all save of an app's complete chat history (atomic, ADR-013).
+///
+/// The frontend passes every message it currently holds; Rust deletes and
+/// re-inserts within a single transaction. `payload` carries the full
+/// frontend message object (stepLogs / phaseOutputs / usage / checkpointId /
+/// timestamp) as JSON so a reload restores the chat exactly as rendered.
 #[tauri::command]
-pub async fn append_chat_message(
+pub async fn save_chat_messages(
     app_id: String,
-    role: String,
-    content: String,
-) -> Result<i64, String> {
+    messages: Vec<ChatMessageInput>,
+) -> Result<(), String> {
     validate_app_id(&app_id)?;
+    let rows: Vec<crate::engine::storage::ChatMessageRow> = messages
+        .into_iter()
+        .map(|m| crate::engine::storage::ChatMessageRow {
+            client_id: Some(m.client_id),
+            role: m.role,
+            content: m.content,
+            payload: m.payload,
+            created_at: m.created_at,
+        })
+        .collect();
     let pool = crate::engine::storage::open_chat_db(&app_id).await?;
-    let id = crate::engine::storage::append_message(&pool, &app_id, &role, &content).await?;
+    crate::engine::storage::save_messages(&pool, &app_id, &rows).await?;
     crate::engine::storage::close(pool).await;
-    Ok(id)
+    Ok(())
 }
 
-/// Chat message shape returned to the frontend.
+/// Chat message shape returned to the frontend (v2: includes client_id + payload).
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ChatMessage {
-    pub id: i64,
+    /// Frontend message id (`msg-…`); backfilled `legacy-<id>` for v1 rows.
+    pub client_id: Option<String>,
     pub role: String,
     pub content: String,
-    pub created_at: String,
+    /// Full frontend message object as JSON (stepLogs / phaseOutputs / usage / …).
+    pub payload: Option<String>,
+    /// DB timestamp; None for new rows written by the frontend (payload has the real timestamp).
+    pub created_at: Option<String>,
+}
+
+/// Input shape for `save_chat_messages`.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct ChatMessageInput {
+    pub client_id: String,
+    pub role: String,
+    pub content: String,
+    pub payload: Option<String>,
+    pub created_at: Option<String>,
 }
 
 fn ensure_dir_exists(dir: &Path) -> Result<(), String> {
@@ -639,6 +731,39 @@ mod tests {
     }
 
     #[test]
+    fn delete_app_clears_current_app_reference() {
+        with_temp_root(|| {
+            let meta = create_app("CurrentRef".to_string()).unwrap();
+            // このアプリを current_app として保存
+            crate::commands::ai_config::save_current_app(Some(meta.id.clone())).unwrap();
+            assert_eq!(
+                crate::commands::ai_config::load_current_app().unwrap().as_deref(),
+                Some(meta.id.as_str())
+            );
+
+            // 削除すると current_app がクリアされる（幽霊参照防止・2026-08-21）
+            delete_app(meta.id.clone()).unwrap();
+            assert_eq!(crate::commands::ai_config::load_current_app().unwrap(), None);
+        });
+    }
+
+    #[test]
+    fn delete_app_keeps_current_app_when_other_app_deleted() {
+        with_temp_root(|| {
+            let keep = create_app("Keep".to_string()).unwrap();
+            let del = create_app("Delete".to_string()).unwrap();
+            crate::commands::ai_config::save_current_app(Some(keep.id.clone())).unwrap();
+
+            // 別アプリを削除しても current_app は維持される
+            delete_app(del.id.clone()).unwrap();
+            assert_eq!(
+                crate::commands::ai_config::load_current_app().unwrap().as_deref(),
+                Some(keep.id.as_str())
+            );
+        });
+    }
+
+    #[test]
     fn list_app_files_excludes_node_modules() {
         with_temp_root(|| {
             let meta = create_app("ListFiles".to_string()).unwrap();
@@ -796,4 +921,64 @@ mod tests {
 fn get_chat_history_sync(app_id: &str) -> Result<Vec<ChatMessage>, String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     rt.block_on(get_chat_history(app_id.to_string()))
+}
+
+#[cfg(test)]
+mod chat_save_tests {
+    use super::*;
+
+    #[test]
+    fn save_and_load_chat_messages_roundtrip() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = std::env::temp_dir().join(format!("deskspawn-chatcmd-test-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        std::env::set_var("DESKSPAWN_ROOT", &tmp);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+
+        let meta = create_app("Chat".to_string()).unwrap();
+        let msgs = vec![
+            ChatMessageInput {
+                client_id: "msg-a".into(),
+                role: "user".into(),
+                content: "hello".into(),
+                payload: Some(r#"{"id":"msg-a","role":"user","content":"hello","timestamp":1}"#.into()),
+                created_at: None,
+            },
+            ChatMessageInput {
+                client_id: "msg-b".into(),
+                role: "assistant".into(),
+                content: "hi".into(),
+                payload: Some(
+                    r#"{"id":"msg-b","role":"assistant","content":"hi","stepLogs":[{"step":1,"toolName":"read_file","status":"success"}]}"#
+                        .into(),
+                ),
+                created_at: None,
+            },
+        ];
+        rt.block_on(save_chat_messages(meta.id.clone(), msgs)).unwrap();
+
+        let loaded = get_chat_history_sync(&meta.id).unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].client_id.as_deref(), Some("msg-a"));
+        assert!(loaded[1].payload.as_deref().unwrap().contains("stepLogs"));
+
+        // Replace-all: saving one message drops the previous two.
+        rt.block_on(save_chat_messages(
+            meta.id.clone(),
+            vec![ChatMessageInput {
+                client_id: "msg-c".into(),
+                role: "user".into(),
+                content: "only".into(),
+                payload: Some(r#"{"id":"msg-c","role":"user","content":"only"}"#.into()),
+                created_at: None,
+            }],
+        ))
+        .unwrap();
+        let after = get_chat_history_sync(&meta.id).unwrap();
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].client_id.as_deref(), Some("msg-c"));
+
+        std::env::remove_var("DESKSPAWN_ROOT");
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

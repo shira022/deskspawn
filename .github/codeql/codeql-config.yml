@@ -1,0 +1,16 @@
+name: "CodeQL configuration"
+
+# js/request-forgery (SSRF) をこのリポジトリでは除外する理由:
+# - /v1 プロキシは「ユーザーが設定したカスタムAIエンドポイントへの転送」という
+#   製品機能そのものであり、ソース→sink の taint フローは構造上必ず存在する。
+# - ただし転送先は Critical-2 対策として多層検証済み:
+#     1) validateUpstreamUrl（https必須・localhost/private/metadata 拒否・設定時+転送直前）
+#     2) 転送パスは OpenAI 互換 API の既知パスの許可リストのみ
+#     3) fetch 直前に URL 再パース + https + ホスト検証 + パス許可リスト再確認
+#     4) fetchUpstreamVerified 最終ゲート（https + 非ローカルホスト）
+# - 実機再攻撃（2026-08-28）で localhost / プライベートIP / 不正パスへの転送が
+#   400 でブロックされることを確認済み。CodeQL のデータフロー判定では
+#   検証の存在を認識できないため、このクエリのみ除外する（他クエリはすべて有効）。
+query-filters:
+  - exclude:
+      id: js/request-forgery

@@ -1,0 +1,243 @@
+# DeskSpawn — Release workflow
+#
+# Tag -> assets flow:
+#   Pushing a tag matching `v*` builds the desktop installers and attaches them
+#   to the GitHub Release for that tag. If no release exists yet it is created
+#   with generated notes. Assets uploaded: Windows MSI + NSIS setup.exe, Linux
+#   .deb / .AppImage (and .rpm when produced), plus updater archives and `.sig`
+#   files when updater signing is enabled.
+#
+# Main-branch guard:
+#   Tags are often created by hand, so a tagged commit can point at a feature
+#   branch. Every build is gated behind the `guard` job, which verifies the tag
+#   commit is an ancestor of `origin/main` and fails the whole run otherwise
+#   (a clear red run instead of a silent skip).
+#
+# Manual rebuild:
+#   `workflow_dispatch` can rebuild assets for an existing release without
+#   re-tagging. Leave `tag` empty to use the latest release.
+#
+# macOS:
+#   macOS publishing is intentionally paused until a code-signing certificate
+#   exists (unsigned builds trip Gatekeeper). The matrix entries are kept
+#   commented out below to document the intent; re-enable them together with
+#   the commented macOS steps once signing is available.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing git tag (e.g. v0.4.2) to rebuild assets for; empty = latest release
+        required: false
+        type: string
+
+concurrency:
+  group: release-${{ github.event_name == 'workflow_dispatch' && (inputs.tag || 'latest') || github.ref_name }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  # Resolves and verifies the tag, checks it matches the app version, and
+  # creates the GitHub Release once. Fails fast otherwise. Doing all of this in
+  # a single pre-matrix job avoids the parallel build jobs racing to create the
+  # release (see the "Ensure the release exists" step).
+  guard:
+    name: Verify tag is on main
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.verify.outputs.tag }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Full history so `merge-base --is-ancestor` can compare against origin/main.
+          fetch-depth: 0
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+      - id: verify
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pass the input through the environment instead of interpolating it
+          # directly into the shell, to avoid injection via the tag string.
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ] && [ -n "${INPUT_TAG}" ]; then
+            TAG="${INPUT_TAG}"
+          elif [ "${GITHUB_EVENT_NAME}" = "workflow_dispatch" ]; then
+            # Manual run without a tag input: fall back to the latest release.
+            TAG="$(gh release view --json tagName -q .tagName 2>/dev/null || true)"
+          else
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          if [ -z "$TAG" ]; then
+            echo "::error::Could not resolve a tag for this run."
+            exit 1
+          fi
+          git fetch --tags --force origin
+          git fetch --no-tags origin main
+          if ! git rev-parse --verify --quiet "refs/tags/${TAG}^{commit}" >/dev/null; then
+            echo "::error::Tag '${TAG}' does not exist in this repository."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "${TAG}^{commit}" origin/main; then
+            echo "::error::Tag '${TAG}' is not contained in origin/main. Refusing to release: merge the commit into main, then re-tag."
+            exit 1
+          fi
+          echo "Tag ${TAG} is contained in origin/main."
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+      - name: Verify tag matches the app version
+        shell: bash
+        env:
+          TAG: ${{ steps.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Manually created tags can point at an unrelated version, so make
+          # sure the tag (without the leading "v") is exactly the version
+          # recorded in apps/desktop/src-tauri/tauri.conf.json. Otherwise we
+          # would publish artifacts whose manifests say a different version.
+          # `version-consistency` in ci.yml only runs on PRs/pushes, never on a
+          # tag-triggered release, so this must be checked here.
+          conf_version="$(git show "${TAG}:apps/desktop/src-tauri/tauri.conf.json" \
+            | node -e 'let s=""; process.stdin.on("data", (d) => (s += d)); process.stdin.on("end", () => console.log(JSON.parse(s).version));')"
+          if [ "${TAG#v}" != "${conf_version}" ]; then
+            echo "::error::Tag '${TAG}' does not match the app version '${conf_version}' in tauri.conf.json. Refusing to release."
+            exit 1
+          fi
+          echo "Tag ${TAG} matches app version ${conf_version}."
+      - name: Ensure the release exists
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # Create the release exactly once, in the single `guard` job. The
+          # matrix build jobs run in parallel and previously created it
+          # themselves; on a tag with no release yet both jobs raced on
+          # `gh release create`, the loser got HTTP 422 already_exists and,
+          # under `set -euo pipefail`, aborted before uploading its assets —
+          # the exact "missing assets" failure this workflow exists to fix.
+          # Build jobs now only run `gh release upload --clobber`.
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists; leaving it as-is."
+          else
+            echo "Release $TAG not found; creating it with generated notes."
+            gh release create "$TAG" --title "$TAG" --generate-notes
+          fi
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: guard
+    # Guard every build on a verified tag (empty output means the guard failed).
+    if: needs.guard.outputs.tag != ''
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: windows-latest
+            target: windows-x86_64
+          - runner: ubuntu-latest
+            target: linux-x86_64
+          # macOS distribution is paused until a code-signing certificate exists:
+          # unsigned .dmg/.app builds trip Gatekeeper, so we do not publish them.
+          # - runner: macos-14
+          #   target: darwin-x86_64
+          # - runner: macos-14
+          #   target: darwin-aarch64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ needs.guard.outputs.tag }}
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - name: Install workspace dependencies
+        run: corepack enable && pnpm install --frozen-lockfile
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable (branch ref, pinned 2026-08-28)
+      - uses: swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          # latest is not reproducible; pin the version used across the repo.
+          bun-version: 1.3.14
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
+            libappindicator3-dev librsvg2-dev patchelf \
+            libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+      # tauri-build's build script requires the frontendDist directory to exist,
+      # so the frontend dist must be produced before the Rust build.
+      - name: Build frontend dist
+        run: pnpm --filter desktop build
+      # externalBin (binaries/deskspawn-sidecar-<triple>) is required by build.rs
+      # and is not committed, so compile it before invoking the Tauri CLI.
+      - name: Build sidecar (externalBin)
+        run: cd apps/desktop && bun scripts/build-sidecar.mjs
+      - name: Build Tauri bundles
+        shell: bash
+        # This runner has Node+pnpm, which is required here: the Tauri config's
+        # build.beforeBuildCommand invokes `pnpm --filter desktop build`, so any
+        # machine performing this build (including this runner) must have Node
+        # and pnpm on PATH. `pnpm --filter desktop tauri build` is therefore
+        # correct on GitHub runners; hosts without pnpm need the bootstrap
+        # fallback (`cargo tauri build` with a beforeBuildCommand override).
+        # Updater signing is optional: with bundle.createUpdaterArtifacts unset
+        # (false) Tauri does not produce updater artifacts and needs no key, so
+        # empty secrets must not break the build. Unset empty env vars so a future
+        # `createUpdaterArtifacts: true` still fails loudly only when truly needed.
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY is not set; building without updater signing."
+            unset TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD
+          fi
+          # Run the Tauri CLI from the `desktop` workspace so it resolves
+          # apps/desktop/src-tauri/tauri.conf.json. `--config` is a JSON merge
+          # patch, not a path to the main config, so it is intentionally not used.
+          pnpm --filter desktop tauri build
+      - name: Upload release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ needs.guard.outputs.tag }}"
+          BUNDLE="apps/desktop/src-tauri/target/release/bundle"
+
+          # The release itself is created by the `guard` job before any matrix
+          # job starts (see the comment there), so the parallel build jobs only
+          # ever upload. `--clobber` makes re-runs idempotent.
+
+          # Installers (Windows MSI + NSIS setup, Linux deb/rpm/AppImage) plus
+          # updater archives and their signatures when present.
+          files=()
+          while IFS= read -r -d '' f; do
+            files+=("$f")
+          done < <(find "$BUNDLE" -type f \( \
+            -name '*.msi' -o -name '*-setup.exe' -o -name '*.deb' -o -name '*.rpm' \
+            -o -name '*.AppImage' -o -name '*.AppImage.tar.gz' -o -name '*.app.tar.gz' \
+            -o -name '*.nsis.zip' -o -name '*.sig' \) -print0 2>/dev/null || true)
+
+          if [ "${#files[@]}" -eq 0 ]; then
+            echo "::error::No bundle artifacts found under $BUNDLE"
+            find apps/desktop/src-tauri/target/release/bundle -type f 2>/dev/null || true
+            exit 1
+          fi
+
+          printf 'Uploading %d asset(s) to release %s:\n' "${#files[@]}" "$TAG"
+          printf '  %s\n' "${files[@]}"
+          gh release upload "$TAG" "${files[@]}" --clobber

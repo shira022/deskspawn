@@ -4,9 +4,6 @@
   "windows": ["main"],
   "permissions": [
     "core:default",
-    "core:window:default",
-    "core:window:allow-close",
-    "core:window:allow-set-title",
     "shell:default",
     {
       "identifier": "shell:allow-spawn",
@@ -25,33 +22,6 @@
           "sidecar": true
         }
       ]
-    },
-    "dialog:default",
-    "dialog:allow-open",
-    "dialog:allow-save",
-    "dialog:allow-message",
-    "dialog:allow-ask",
-    {
-      "identifier": "fs:scope",
-      "allow": [
-        { "path": "$APPDATA/**" },
-        { "path": "$RESOURCE/**" },
-        { "path": "$HOME/deskspawn/**" },
-        { "path": "$HOME/DeskSpawn/**" }
-      ]
-    },
-    "fs:allow-read",
-    "fs:allow-write",
-    "fs:allow-exists",
-    "fs:allow-mkdir",
-    "fs:allow-remove",
-    "fs:allow-rename",
-    "fs:allow-copy-file",
-    "store:default",
-    "updater:default",
-    "updater:allow-check",
-    "updater:allow-download",
-    "updater:allow-install",
-    "updater:allow-download-and-install"
+    }
   ]
 }

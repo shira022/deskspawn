@@ -5,6 +5,44 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## Unreleased
+
+**Agent composition tiers (ADR-016):**
+
+- 🧩 Agent composition is now a true 5-level scale, centralized in the
+  `PIPELINE_TIERS` table (L1 coder / L2 coder+verifier / L3 +planner /
+  L4 +visual QA / L5 full + 2 fix rounds). Fix rounds are level-dependent
+  instead of a hardcoded `MAX_FIX_ROUNDS = 2`.
+- 🗑️ Removed the user-selected app difficulty (`simple` / `medium` /
+  `complex`). Its default `medium` overrode the triage decision, which
+  effectively disabled automatic routing.
+- 🎛️ Added a compact tier selector near the chat input (default `Auto`).
+  The UI shows only friendly display names (`Auto` / `Minimal` / `Basic` /
+  `Standard` / `Thorough` / `Maximum`); the underlying agent composition is
+  revealed in a hover/focus tooltip. Manual selection skips the triage LLM
+  call.
+- 📊 Inline status display (`Auto: <name>` / `Manual: <name>`) backed by the
+  new `lastTriage` store state.
+
+**Error reporting:**
+
+- 🛠️ WebKit's `TypeError: Load failed` is now classified as a network
+  error. This message appears when a provider returns an error response
+  without CORS headers (e.g. OpenAI's `401`), and the WebView cannot read
+  the body. Phase-failure details replace the bare `Load failed` with the
+  localized network-error text; stream errors keep the raw message in the
+  generic error line but now append the localized network hint (the
+  Ollama connection hint when the Ollama provider is selected).
+
+**Dependency updates:**
+
+- ⬆️ `undici` override 7.29.0 → 7.29.1 (GHSA-rfgv-xxqx-mfg5 — DoS via
+  unrequested WebSocket subprotocol, CVE-2026-19534; GHSA-w293-vg96-wgc3 —
+  TLS certificate validation bypass, CVE-2026-84961; both high severity).
+  Keeps the CI `npm-audit` gate green.
+
+---
+
 ## v0.4.2 (Security Hardening & Desktop-First Renewal) — 2026-08-06
 
 **Highlights:**

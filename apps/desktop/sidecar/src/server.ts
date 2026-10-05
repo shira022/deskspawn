@@ -1,45 +1,264 @@
 /**
  * HTTP server for the DeskSpawn sidecar.
- * Provides a REST API for the frontend to call for AI-powered code generation.
- * For dev/demo mode, tools are executed directly (not via Rust IPC).
+ * Provides a REST API for the frontend (WebView) to manage projects, previews,
+ * checkpoints, installs, and the /v1 OpenAI-compatible proxy.
  */
 import express from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import crypto from 'crypto';
-import os from 'os';
-import { ChildProcess, spawn, execSync, execFileSync } from 'child_process';
-import { fileURLToPath } from 'url';
-import { getModel } from './providers.js';
-import { tools } from './tools.js';
-import * as executors from './tool-executors.js';
-import { getModelsForProvider } from './models-fetcher.js';
-import { takeScreenshot } from './screenshot.js';
-import { runWithTriage, getPhaseLabel } from './orchestrator.js';
-import { initMCPClients, getMCPTools, closeMCPClients } from './mcp-client.js';
-// preview import removed — no longer needed (no Tauri backend)
 
-const __filename = fileURLToPath(import.meta.url);
-void __filename;
+// HTML entity escaping helper — prevents XSS when embedding user input in HTML templates
+function escapeHtml(s: string): string {
+  return s.replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]!));
+}
+import os from 'os';
+import { ChildProcess, spawn, spawnSync, execSync, execFileSync } from 'child_process';
+import * as executors from './tool-executors.js';
+import { createSerialQueue } from './install-queue.js';
+import { initMCPClients, closeMCPClients } from './mcp-client.js';
+import { findListeningPids, nextFallbackPort } from './port-utils.js';
+import { writeFileAtomic } from './atomic-write.js';
+// preview import removed — no longer needed (no Tauri backend)
 
 // ── In-memory API key store (received from Rust backend, never from frontend) ─
 // 一元管理ルート（ADR-007）: ~/deskspawn 配下に全データを集約。
 // bun compile の exe では __dirname が実行時cwd依存（B:等の一時ドライブに
 // 解決されうる）ため、プロジェクト保存先は確実に存在するホーム基準にする。
 const DESKSPAWN_ROOT = process.env.DESKSPAWN_ROOT || path.join(os.homedir(), 'deskspawn');
-const PROJECTS_DIR = process.env.DESKSPAWN_PROJECTS_DIR || path.join(DESKSPAWN_ROOT, 'projects');
-const PROJECTS_JSON = path.join(PROJECTS_DIR, 'projects.json');
+// #98 project→app rename: Rust/フロントは ~/deskspawn/apps + apps.json を使用（ADR-007〜012）。
+// ここが projects のまま残っていると、プレビューが存在しないディレクトリを参照して
+// 「Project has no package.json」になる（実績 2026-08-07）。旧env名は互換のため維持。
+const PROJECTS_DIR = process.env.DESKSPAWN_PROJECTS_DIR || path.join(DESKSPAWN_ROOT, 'apps');
+const PROJECTS_JSON = path.join(PROJECTS_DIR, 'apps.json');
 const TEMPLATE_DIR = process.env.DESKSPAWN_TEMPLATES_DIR || path.join(DESKSPAWN_ROOT, 'templates', 'react-template');
 const WORKSPACE_DEV_PORT = 5174;
 let workspaceDevActualPort = WORKSPACE_DEV_PORT;
 
 /**
- * Bun executable path — the Windows host is kept minimal (no Node.js/npm),
- * so all package install / dev-server commands go through Bun.
- * Override via env var BUN_PATH when the host layout differs.
+ * Bun executable path resolution — the Windows host is kept minimal
+ * (no Node.js/npm), so all package install / dev-server commands go through Bun.
+ *
+ * 監査(2026-08-27)で検出: 以前は実ユーザー名入りの絶対パスがハードコードされており、
+ * public リポジトリへの情報混入 + 他マシンで preview 機能が全滅する問題があった。
+ * 環境非依存の解決順:
+ *   1. process.env.BUN_PATH（明示指定があれば最優先。配布時の同梱bun切替にも使用）
+ *   2. PATH 探索（Windows: `where bun` / Unix: `which bun`）
+ *   3. ~/dev/tools/bun/bun-windows-x64/bun.exe（os.homedir() ベースの既定レイアウト）
+ * 全て見つからなければ null を返す（呼び出し側で明示的エラーにする）。
  */
-const BUN_PATH = process.env.BUN_PATH || 'C:\\Users\\<user>\\dev\\tools\\bun\\bun-windows-x64\\bun.exe';
+function resolveBunPath(): string | null {
+  const fromEnv = process.env.BUN_PATH;
+  if (fromEnv) return fromEnv;
+
+  try {
+    const lookupCmd = process.platform === 'win32' ? 'where' : 'which';
+    const res = spawnSync(lookupCmd, ['bun'], { encoding: 'utf-8' });
+    if (res.status === 0 && res.stdout) {
+      const first = res.stdout.split(/\r?\n/)[0].trim();
+      if (first && fs.existsSync(first)) return first;
+    }
+  } catch {
+    // PATH 探索に失敗してもフォールバックへ進む
+  }
+
+  const homeFallback = path.join(os.homedir(), 'dev', 'tools', 'bun', 'bun-windows-x64', 'bun.exe');
+  if (fs.existsSync(homeFallback)) return homeFallback;
+
+  return null;
+}
+
+/** Bun が見つからない場合の共通エラー（エラー文字列に絶対パスは含めない）。 */
+function bunNotFoundError(): Error {
+  return new Error(
+    '[sidecar] Bun 実行ファイルが見つかりません。BUN_PATH 環境変数で bun のパスを指定するか、' +
+      'bun を PATH に追加して再試行してください。',
+  );
+}
+
+// ── セキュリティ検証ヘルパー（監査 2026-08-28）────────────────────────────────
+// Critical-1（devスクリプト任意実行）/ Critical-2（SSRF・APIキー漏洩）/
+// High-1（appId/projectId パストラバーサル）の対策。
+// 各関数は純粋・自己完結。エラー文字列に絶対パスや内部情報は含めない。
+
+/** UUID 形式（sidecar のプロジェクトID）または Rust 形式 app-<32hex> のみ許可。 */
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const RUST_APP_ID_RE = /^app-[0-9a-f]{32}$/;
+
+/**
+ * appId / projectId として安全な形式かを検証する（High-1 パストラバーサル対策）。
+ * path.join(PROJECTS_DIR, id) に渡す前に必ず通すこと。../ や絶対パス、
+ * ドライブ文字、スラッシュ等を含む文字列は全て拒否する。
+ */
+function validateAppIdLike(id: string): boolean {
+  if (typeof id !== 'string' || id.length === 0 || id.length > 64) return false;
+  const lower = id.toLowerCase();
+  return UUID_RE.test(lower) || RUST_APP_ID_RE.test(lower);
+}
+
+/** Checkpoint ID — alphanumeric, hyphens, underscores, max 64 chars. */
+function validateCheckpointId(id: string): boolean {
+  return typeof id === 'string' && id.length > 0 && id.length <= 64 && /^[a-zA-Z0-9_-]+$/.test(id);
+}
+
+/** IPv4 がプライベート/リンクローカル/ループバック/未指定かを判定する。 */
+function isPrivateIPv4(host: string): boolean {
+  const parts = host.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return false;
+  const [a, b] = parts;
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  if (a === 169 && b === 254) return true; // 169.254.0.0/16（リンクローカル・メタデータ）
+  if (a === 0) return true; // 0.0.0.0/8
+  if (a === 127) return true; // 127.0.0.0/8 ループバック全体
+  return false;
+}
+
+/** IPv6 アドレスを 8 グループの数値配列に展開する。パース不能なら null。 */
+function parseIPv6Groups(host: string): number[] | null {
+  // IPv4 射影のドット表記（::ffff:a.b.c.d）— WHATWG URL は16進正規化するため通常は来ないが保険
+  const v4mapped = host.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/);
+  if (v4mapped) {
+    const parts = v4mapped[1].split('.').map(Number);
+    if (parts.some((p) => p < 0 || p > 255)) return null;
+    return [0, 0, 0, 0, 0, 0xffff, (parts[0] << 8) | parts[1], (parts[2] << 8) | parts[3]];
+  }
+  const halves = host.split('::');
+  if (halves.length > 2) return null;
+  const isCompressed = host.includes('::');
+  const left = halves[0] ? halves[0].split(':') : [];
+  const right = halves.length === 2 && halves[1] ? halves[1].split(':') : [];
+  if (!isCompressed && left.length !== 8) return null;
+  const parseGroup = (s: string): number | null => (/^[0-9a-f]{1,4}$/i.test(s) ? parseInt(s, 16) : null);
+  const groups: number[] = [];
+  for (const g of left) {
+    const v = parseGroup(g);
+    if (v === null) return null;
+    groups.push(v);
+  }
+  if (isCompressed) {
+    const fill = 8 - left.length - right.length;
+    if (fill < 1) return null;
+    for (let i = 0; i < fill; i++) groups.push(0);
+  }
+  for (const g of right) {
+    const v = parseGroup(g);
+    if (v === null) return null;
+    groups.push(v);
+  }
+  if (groups.length !== 8) return null;
+  return groups;
+}
+
+/**
+ * 上流URL（カスタムエンドポイント）を検証する（Critical-2 SSRF対策）。
+ * https のみ・localhost/ループバック/プライベートIP/*.local/IPv6ローカルを拒否。
+ * クエリ/パスは到達許可（API パスは /v1 が付与される）。
+ * 注意: WHATWG URL は 10進/16進IP（2130706433 等）を正規化するため、
+ * 正規化後の hostname を検査すれば変形IPも捕捉できる。
+ */
+function validateUpstreamUrl(raw: string): { ok: boolean; error?: string; url?: string } {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { ok: false, error: 'URL が指定されていません' };
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { ok: false, error: 'URL を解析できません' };
+  }
+  if (url.protocol !== 'https:') {
+    return { ok: false, error: 'https の URL のみ許可されます' };
+  }
+  // WHATWG URL は変形IPv4（10進/16進/末尾ドット等）を正規化するため、
+  // 正規化後の hostname を検査すれば変形IPも捕捉できる。
+  let host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase(); // IPv6 の [] を除去
+  if (host.endsWith('.')) host = host.slice(0, -1); // 末尾ドット形式（FQDN IP）対策
+  if (!host) {
+    return { ok: false, error: 'ホスト名が指定されていません' };
+  }
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '::' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.localhost')
+  ) {
+    return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+  }
+  if (host.endsWith('.local')) {
+    return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+  }
+  // IPv6: 8グループに展開してリンクローカル / ユニークローカル / IPv4射影を検査する
+  const v6 = parseIPv6Groups(host);
+  if (v6) {
+    const g0 = v6[0];
+    // リンクローカル fe80::/10 と旧サイトローカル fec0::/10
+    if ((g0 & 0xffc0) === 0xfe80 || (g0 & 0xffc0) === 0xfec0) {
+      return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+    }
+    // ユニークローカル fc00::/7（fc00:/fd00: を含む）
+    if ((g0 & 0xfe00) === 0xfc00) {
+      return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+    }
+    // IPv4射影 ::ffff:0:0/96 → 埋め込みIPv4を通常検査に回す
+    if (v6[0] === 0 && v6[1] === 0 && v6[2] === 0 && v6[3] === 0 && v6[4] === 0 && v6[5] === 0xffff) {
+      const ipv4 = `${(v6[6] >> 8) & 0xff}.${v6[6] & 0xff}.${(v6[7] >> 8) & 0xff}.${v6[7] & 0xff}`;
+      if (isPrivateIPv4(ipv4)) {
+        return { ok: false, error: 'ローカルアドレスへの接続は許可されません' };
+      }
+    }
+    // 上記以外の IPv6 は公開アドレスとして許可
+    return { ok: true, url: url.origin + url.pathname };
+  }
+  if (isPrivateIPv4(host)) {
+    return { ok: false, error: 'プライベートアドレスへの接続は許可されません' };
+  }
+  // 検証済みの URL のみを返す（CodeQL taint: 呼び出し元はこの url のみを上流転送に使う）
+  return { ok: true, url: url.origin + url.pathname };
+}
+
+/**
+ * package.json の scripts.dev が "vite" と完全一致する場合のみ許可する
+ * （Critical-1 実行時ブロック: AI が scripts.dev を任意コードに書き換えても
+ * `bun run dev` で実行させない）。エラーにスクリプト内容・絶対パスは含めない。
+ */
+function validateDevScript(dir: string): { ok: boolean; error?: string } {
+  // 深層防御: 呼び出し元は previewDir()/getWorkspaceDir()（検証済み）のみだが、
+  // 万一の経路追加に備えて dir が PROJECTS_DIR 配下であることを保険として確認する。
+  const resolved = path.resolve(dir);
+  const root = path.resolve(PROJECTS_DIR);
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    return { ok: false, error: '不正なディレクトリが指定されました' };
+  }
+  let raw: string;
+  try {
+    // 検証済みの resolved（PROJECTS_DIR 配下確定済み）からパスを構築する。
+    // basename 抽出で構造的にトラバーサル不可能を保証（CodeQL path-injection 対応）。
+    const safeDir = path.join(PROJECTS_DIR, path.basename(resolved));
+    raw = fs.readFileSync(path.join(safeDir, 'package.json'), 'utf-8');
+  } catch {
+    return { ok: false, error: 'package.json を読み込めません' };
+  }
+  let pkg: unknown;
+  try {
+    pkg = JSON.parse(raw);
+  } catch {
+    return { ok: false, error: 'package.json が壊れています' };
+  }
+  const scripts = (pkg && typeof pkg === 'object' ? (pkg as { scripts?: unknown }).scripts : undefined);
+  const dev = scripts && typeof scripts === 'object' ? (scripts as { dev?: unknown }).dev : undefined;
+  if (typeof dev !== 'string') {
+    return { ok: false, error: 'devスクリプトが定義されていません' };
+  }
+  if (dev !== 'vite') {
+    return { ok: false, error: 'devスクリプトが変更されています。vite のみ実行できます' };
+  }
+  return { ok: true };
+}
 
 const app = express();
 
@@ -100,11 +319,16 @@ const DESIRED_PORT = process.env.PORT ? parseInt(process.env.PORT) : 3009;
 let ACTUAL_PORT = DESIRED_PORT;
 
 // ── Unhandled error resilience ───────────────────────────────────────────────
+// 起動フェーズ（startServer 成功まで）の例外・rejection は握りつぶさず再 throw して、
+// 異常な状態のまま起動し続けるのを防ぐ。起動完了後はログのみで継続する。
+let serverStarted = false;
 process.on('uncaughtException', (err) => {
   console.error('[sidecar] UNCAUGHT EXCEPTION — sidecar continuing:', err);
+  if (!serverStarted) throw err;
 });
 process.on('unhandledRejection', (reason) => {
   console.error('[sidecar] UNHANDLED REJECTION — sidecar continuing:', reason);
+  if (!serverStarted) throw reason;
 });
 
 // ── Workspace dev server process management ─────────────────────────────────
@@ -178,7 +402,7 @@ import ReactDOM from 'react-dom/client';
 function App() {
   return <div className="min-h-screen bg-background text-foreground flex items-center justify-center p-8">
     <div className="text-center space-y-4">
-      <h1 className="text-2xl font-bold">${name}</h1>
+      <h1 className="text-2xl font-bold">${escapeHtml(name)}</h1>
       <p className="text-muted-foreground">Your new app has been created.</p>
       <p className="text-sm text-muted-foreground">Use the AI chat to build your app.</p>
     </div>
@@ -189,7 +413,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(<App />);
 `);
     fs.writeFileSync(path.join(projectDir, 'index.html'), `<!DOCTYPE html>
 <html lang="en">
-  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%236366f1%22/><polygon points=%2256,12 20,54 46,54 40,88 78,40 52,40%22 fill=%22white%22/></svg>" /><title>${name}</title></head>
+  <head><meta charset="UTF-8" /><meta name="viewport" content="width=device-width, initial-scale=1.0" /><link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><rect width=%22100%22 height=%22100%22 rx=%2220%22 fill=%22%236366f1%22/><polygon points=%2256,12 20,54 46,54 40,88 78,40 52,40%22 fill=%22white%22/></svg>" /><title>${escapeHtml(name)}</title></head>
   <body><div id="root"></div><script type="module" src="/src/main.tsx"></script></body>
 </html>`);
 
@@ -243,8 +467,6 @@ export default defineConfig({
   return projectDir;
 }
 
-const BACKUP_FILENAME = '.deskspawn/data-backup.json';
-
 /**
  * Generate IndexedDB storage adapter files in src/lib/.
  */
@@ -297,8 +519,6 @@ export async function initStorage(appId?: string): Promise<StorageAdapter> {
 // ============================================================
 
 import type { StorageAdapter } from './storage';
-
-const BACKUP_URL = "http://localhost:3009/data-backup";
 
 export class IndexedDBAdapter implements StorageAdapter {
   private db: IDBDatabase | null = null;
@@ -562,33 +782,107 @@ function patchViteConfigForDotDeskspawn(projectDir: string) {
   }
 }
 
-function stopWorkspaceDevServer() {
-  if (workspaceDevProcess) {
-    console.log('[devserver] Stopping workspace dev server...');
-    workspaceDevProcess.kill('SIGTERM');
-    // Also kill any child processes
-    try { process.kill(-workspaceDevProcess.pid!, 'SIGTERM'); } catch {}
-    workspaceDevProcess = null;
-    workspaceDevReady = false;
+// ── Windows-aware process tree kill ─────────────────────────────────────────
+// Windows では child.kill('SIGTERM') は直接の子（bun.exe）しか殺せず、detached:true で
+// 起動した vite 本体（node.exe）は orphan 化する。process.kill(-pid) も Windows では
+// 負PIDが無効でthrowするため、必ず platform 分岐して taskkill /T /F を使う。
+function killProcessTree(pid: number) {
+  if (!pid) return;
+  // 自分自身を kill しない防御（netstat/lsof が自分の LISTENING を拾った場合など）
+  if (pid === process.pid) {
+    console.warn(`[kill] Refusing to kill self (PID ${pid})`);
+    return;
+  }
+  try {
+    if (process.platform === 'win32') {
+      execFileSync('taskkill', ['/PID', String(pid), '/T', '/F'], { timeout: 5000, stdio: 'pipe' });
+    } else {
+      try { process.kill(-pid, 'SIGTERM'); } catch { /* already gone */ }
+      try { process.kill(pid, 'SIGTERM'); } catch { /* already gone */ }
+    }
+  } catch {
+    // 既に死んでいる/権限なし — 無害
   }
 }
 
+/** ポートを掴むプロセスを特定してツリーごと殺す。 */
+function killPortOwner(port: number, label: string) {
+  if (process.platform !== 'win32') {
+    try {
+      const pid = execSync(`lsof -ti:${port} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim();
+      if (pid) {
+        console.log(`[${label}] Killing orphan PID ${pid} holding port ${port}...`);
+        execSync(`kill -9 ${pid} 2>/dev/null`, { timeout: 3000 });
+      }
+    } catch { /* no orphan */ }
+    return;
+  }
+  try {
+    // -p tcp を付けると [::1] (IPv6) の LISTENING 行が出力されない → 付けない
+    const out = execSync('netstat -ano', { encoding: 'utf-8', timeout: 5000 });
+    for (const pid of findListeningPids(out, [port])) {
+      console.log(`[${label}] Killing orphan PID ${pid} holding port ${port}...`);
+      killProcessTree(pid);
+    }
+  } catch { /* no orphan */ }
+}
+
 /**
- * Kill any orphan process that might be holding the workspace dev port,
+ * ポート帯 [start, start+count) を掴むプロセスを一括掃除する。
+ *
+ * ⚠️ 注意: このポート帯は DeskSpawn 専用とみなして LISTENING 中のプロセスを
+ * 無差別に kill する（Windows では orphan 化した vite を特定できないため）。
+ * 他アプリが同じポート帯を使っている場合は巻き込まれる可能性がある。
+ */
+function killPortOwnersInBand(startPort: number, count: number, label: string) {
+  if (process.platform !== 'win32') {
+    for (let p = startPort; p < startPort + count; p++) killPortOwner(p, label);
+    return;
+  }
+  try {
+    const out = execSync('netstat -ano', { encoding: 'utf-8', timeout: 5000 });
+    const ports = Array.from({ length: count }, (_, i) => startPort + i);
+    for (const pid of findListeningPids(out, ports)) {
+      console.log(`[${label}] Killing orphan PID ${pid} holding dev port...`);
+      killProcessTree(pid);
+    }
+  } catch { /* no orphan */ }
+}
+
+/** kill後、ポートが応答しなくなるまでポーリング（Windowsは解放にラグがある）。 */
+async function waitForPortFree(port: number, timeoutMs = 4000): Promise<boolean> {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    let responding = false;
+    for (const host of ['localhost', '127.0.0.1', '[::1]']) {
+      try {
+        const res = await fetch(`http://${host}:${port}/`, { signal: AbortSignal.timeout(400) });
+        if (res) { responding = true; break; }
+      } catch { /* not responding */ }
+    }
+    if (!responding) return true;
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return false;
+}
+
+function stopWorkspaceDevServer() {
+  if (workspaceDevProcess && workspaceDevProcess.pid) {
+    console.log('[devserver] Stopping workspace dev server (tree kill)...');
+    killProcessTree(workspaceDevProcess.pid);
+  }
+  // 旧残骸がポート帯を掴んだままにならないよう一括掃除（5174〜5179）
+  killPortOwnersInBand(WORKSPACE_DEV_PORT, 6, 'devserver');
+  workspaceDevProcess = null;
+  workspaceDevReady = false;
+}
+
+/**
+ * Kill any orphan process that might be holding the workspace dev ports,
  * e.g. from a previous Tauri session that didn't clean up.
  */
 function killOrphanDevServer() {
-  try {
-    const pid = execSync(`lsof -ti:${WORKSPACE_DEV_PORT} 2>/dev/null`, { encoding: 'utf-8', timeout: 3000 }).trim();
-    if (pid) {
-      console.log(`[devserver] Killing orphan process (PID: ${pid}) on port ${WORKSPACE_DEV_PORT}...`);
-      execSync(`kill -9 ${pid} 2>/dev/null`, { timeout: 3000 });
-      // Give the port time to be released
-      execSync(`sleep 0.5`);
-    }
-  } catch {
-    // No orphan process — good
-  }
+  killPortOwnersInBand(WORKSPACE_DEV_PORT, 6, 'devserver');
 }
 
 // ── Generated-app API server (full-stack, ADR-010) ─────────────────────────
@@ -604,11 +898,12 @@ let apiReady = false;
 
 function stopApiServer() {
   if (apiProcess && apiProcess.pid) {
-    try {
-      process.kill(-apiProcess.pid, 'SIGTERM');
-    } catch { /* already gone */ }
-    apiProcess = null;
+    console.log('[apiserver] Stopping API server (tree kill)...');
+    killProcessTree(apiProcess.pid);
   }
+  // 旧残骸がAPIポート帯を掴んだままにならないよう一括掃除（4174〜4184）
+  killPortOwnersInBand(API_DESIRED_PORT, API_MAX_FALLBACK + 1, 'apiserver');
+  apiProcess = null;
   apiReady = false;
 }
 
@@ -639,15 +934,19 @@ async function startApiServer(dir: string): Promise<number> {
     return 0;
   }
 
+  const bun = resolveBunPath();
+  if (!bun) throw bunNotFoundError();
+
   for (let attempt = 0; attempt <= API_MAX_FALLBACK; attempt++) {
     const port = API_DESIRED_PORT + attempt;
     console.log(`[apiserver] Starting API server on port ${port}...`);
-    const child = spawn(BUN_PATH, ['src/server.ts'], {
+    const child = spawn(bun, ['src/server.ts'], {
       cwd: dir,
       stdio: 'pipe',
       detached: true,
       env: { ...process.env, PORT: String(port), NODE_ENV: 'development' },
     });
+    let childAlive = true;
     child.stdout?.on('data', (d: Buffer) => console.log(`[apiserver] ${d.toString().trim()}`));
     child.stderr?.on('data', (d: Buffer) => {
       const msg = d.toString();
@@ -655,20 +954,23 @@ async function startApiServer(dir: string): Promise<number> {
       // Port-in-use detection: Bun prints EADDRINUSE on stderr.
       if (/EADDRINUSE|Address already in use|listen EADDRINUSE/.test(msg)) {
         child.kill('SIGTERM');
-        apiProcess = null;
+        childAlive = false;
         return;
       }
     });
     child.on('exit', (code) => {
+      childAlive = false;
       if (apiProcess === child) {
         console.log(`[apiserver] Exited with code ${code}`);
         apiReady = false;
       }
     });
 
-    // Wait for readiness via HTTP polling (health endpoint).
-    const ready = await waitForApiPort(port, 5000);
-    if (ready) {
+    // 子が死んだポート（EADDRINUSE等）は残骸扱いせず採用しない。
+    // 旧API残骸が応答しても childAlive=false なら次へ進む。
+    const exited = new Promise<boolean>((resolve) => child.once('exit', () => resolve(false)));
+    const ready = await Promise.race([waitForApiPort(port, 5000), exited]);
+    if (ready && childAlive) {
       apiProcess = child;
       apiActualPort = port;
       apiReady = true;
@@ -676,8 +978,8 @@ async function startApiServer(dir: string): Promise<number> {
       patchViteConfigApiProxy(dir, port);
       return port;
     }
-    // Not ready — likely port conflict; kill and try next.
-    try { child.kill('SIGTERM'); } catch { /* noop */ }
+    // Not ready — likely port conflict; kill tree and try next.
+    killProcessTree(child.pid ?? 0);
     await new Promise((r) => setTimeout(r, 300));
   }
   console.error('[apiserver] Failed to start API server after fallback attempts');
@@ -708,9 +1010,21 @@ function waitForApiPort(port: number, timeoutMs: number): Promise<boolean> {
   });
 }
 
-function startWorkspaceDevServer(dir: string) {
+async function startWorkspaceDevServer(dir: string) {
+  // Critical-1: package.json の scripts.dev が "vite" 以外（例: AI が書き換えた任意コード）なら
+  // 起動しない。エラーは呼び出し元の try/catch で 500 系応答になる（内容にパスは含めない）。
+  const devCheck = validateDevScript(dir);
+  if (!devCheck.ok) {
+    throw new Error(`[sidecar] ${devCheck.error || 'dev script validation failed'}`);
+  }
   stopWorkspaceDevServer();
   killOrphanDevServer();
+  const bun = resolveBunPath();
+  if (!bun) throw bunNotFoundError();
+  // Windows は taskkill 後のポート解放にラグがある → 解放を待ってから起動
+  await waitForPortFree(WORKSPACE_DEV_PORT);
+  // 起動前に既応答ポートをベースライン記録（旧残骸をポーリングで拾わない）
+  await recordBaselineDevPorts();
 
   console.log(`[devserver] Starting dev server in ${dir}...`);
   workspaceDevReady = false;
@@ -718,9 +1032,9 @@ function startWorkspaceDevServer(dir: string) {
   // unnecessary HMR reloads when checkpoints are created/restored.
   patchViteConfigForDotDeskspawn(dir);
 
-  // Host has no npm — use Bun (absolute path, shell:false).
+  // Host has no npm — use Bun (resolveBunPath() で解決, shell:false).
   // PORT env は vite に効かないため CLI オプションでポートを固定する
-  const child = spawn(BUN_PATH, ['run', 'dev', '--', '--port', String(WORKSPACE_DEV_PORT)], {
+  const child = spawn(bun, ['run', 'dev', '--', '--port', String(WORKSPACE_DEV_PORT)], {
     cwd: dir,
     stdio: 'pipe',
     detached: true,
@@ -775,11 +1089,33 @@ function startWorkspaceDevServer(dir: string) {
   });
 }
 
-function installDeps(dir: string): Promise<void> {
+/**
+ * bun install はグローバルキャッシュ（%USERPROFILE%\.bun）を共有するため、
+ * 並行実行するとロック競合で失敗する（実績 2026-08-12: アプリ連続作成時に
+ * 「npm install exited with code 1」が発生）。直列キューで同時実行を防ぐ。
+ */
+const enqueueInstall = createSerialQueue();
+
+/** install 本体（直列キュー経由で呼ばれる）。失敗時は一度だけリトライする。 */
+async function runInstall(dir: string): Promise<void> {
+  try {
+    await spawnInstall(dir);
+  } catch (e) {
+    console.warn(`[projects] install failed, retrying once: ${e instanceof Error ? e.message : e}`);
+    await spawnInstall(dir);
+  }
+}
+
+function spawnInstall(dir: string): Promise<void> {
   return new Promise((resolve, reject) => {
+    const bun = resolveBunPath();
+    if (!bun) {
+      reject(bunNotFoundError());
+      return;
+    }
     console.log(`[projects] Installing dependencies in ${dir}...`);
-    // Host has no npm — use Bun (absolute path, shell:false).
-    const child = spawn(BUN_PATH, ['install', '--ignore-scripts'], {
+    // Host has no npm — use Bun (resolveBunPath() で解決, shell:false).
+    const child = spawn(bun, ['install', '--ignore-scripts'], {
       cwd: dir,
       stdio: 'pipe',
     });
@@ -796,6 +1132,10 @@ function installDeps(dir: string): Promise<void> {
     });
     child.on('error', reject);
   });
+}
+
+function installDeps(dir: string): Promise<void> {
+  return enqueueInstall(() => runInstall(dir));
 }
 
 // ── Project Management Endpoints ─────────────────────────────────────────────
@@ -816,6 +1156,10 @@ app.post('/projects/new', async (req, res) => {
     const { name } = req.body;
     if (!name || typeof name !== 'string') {
       res.status(400).json({ error: 'Project name is required', errorCode: 'PROJECT_NAME_REQUIRED' });
+      return;
+    }
+    if (name.length > 100) {
+      res.status(400).json({ error: 'Project name must be 100 characters or less', errorCode: 'PROJECT_NAME_TOO_LONG' });
       return;
     }
 
@@ -870,6 +1214,10 @@ app.post('/projects/switch', (req, res) => {
       res.status(400).json({ error: 'projectId is required', errorCode: 'PROJECT_ID_REQUIRED' });
       return;
     }
+    if (!validateAppIdLike(projectId)) {
+      res.status(400).json({ error: 'Invalid projectId', errorCode: 'INVALID_PROJECT_ID' });
+      return;
+    }
 
     const projects = readProjectsJson();
     const project = projects.find((p) => p.id === projectId);
@@ -899,10 +1247,155 @@ app.post('/projects/switch', (req, res) => {
   }
 });
 
+// ── Checkpoints (real files under <app>/.deskspawn/checkpoints/) ─────────────
+// Desktop persistence for the frontend checkpoint system. Previously the
+// frontend wrote full file snapshots into WebView IndexedDB on every AI run
+// (web-storage audit 2026-08-12) — now the sidecar owns them as real files.
+
+function resolveAppDir(appId: string): string {
+  // High-1: パストラバーサル防御。path.join に渡す前に ID 形式を検証する。
+  // エンドポイント側でも 400 で事前拒否するが、ここは全コールサイト共通の最終防壁。
+  if (!validateAppIdLike(appId)) {
+    throw new Error('[sidecar] Invalid appId');
+  }
+  return path.join(PROJECTS_DIR, appId);
+}
+
+// Create a checkpoint for an app
+app.post('/api/checkpoints', async (req, res) => {
+  try {
+    const { appId, checkpointId } = req.body || {};
+    if (!appId) {
+      res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
+      return;
+    }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
+    const dir = resolveAppDir(appId);
+    if (!fs.existsSync(dir)) {
+      res.status(404).json({ error: 'App directory not found', errorCode: 'APP_DIR_NOT_FOUND' });
+      return;
+    }
+    if (checkpointId && !validateCheckpointId(checkpointId)) {
+      res.status(400).json({ error: 'Invalid checkpointId', errorCode: 'INVALID_CHECKPOINT_ID' });
+      return;
+    }
+    const id = await executors.createCheckpoint(dir, checkpointId);
+    res.json({ id });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_CREATE_FAILED' });
+  }
+});
+
+// Restore an app from a checkpoint
+app.post('/api/checkpoints/restore', async (req, res) => {
+  try {
+    const { appId, checkpointId } = req.body || {};
+    if (!appId || !checkpointId) {
+      res.status(400).json({ error: 'appId and checkpointId are required', errorCode: 'PARAMS_REQUIRED' });
+      return;
+    }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
+    if (!validateCheckpointId(checkpointId)) {
+      res.status(400).json({ error: 'Invalid checkpointId', errorCode: 'INVALID_CHECKPOINT_ID' });
+      return;
+    }
+    const dir = resolveAppDir(appId);
+    if (!fs.existsSync(dir)) {
+      res.status(404).json({ error: 'App directory not found', errorCode: 'APP_DIR_NOT_FOUND' });
+      return;
+    }
+    await executors.restoreCheckpoint(dir, checkpointId);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_RESTORE_FAILED' });
+  }
+});
+
+// List checkpoints for an app (newest first)
+app.get('/api/checkpoints', (req, res) => {
+  try {
+    const appId = String(req.query.appId || '');
+    if (!appId) {
+      res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
+      return;
+    }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
+    const dir = resolveAppDir(appId);
+    if (!fs.existsSync(dir)) {
+      res.status(404).json({ error: 'App directory not found', errorCode: 'APP_DIR_NOT_FOUND' });
+      return;
+    }
+    const checkpoints = executors.listCheckpoints(dir);
+    res.json({ checkpoints });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_LIST_FAILED' });
+  }
+});
+
+// Delete checkpoints newer than keepId (keep from keepId and older)
+app.post('/api/checkpoints/delete-after', (req, res) => {
+  try {
+    const { appId, keepId } = req.body || {};
+    if (!appId || !keepId) {
+      res.status(400).json({ error: 'appId and keepId are required', errorCode: 'PARAMS_REQUIRED' });
+      return;
+    }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
+    if (!validateCheckpointId(keepId)) {
+      res.status(400).json({ error: 'Invalid keepId', errorCode: 'INVALID_CHECKPOINT_ID' });
+      return;
+    }
+    const dir = resolveAppDir(appId);
+    executors.deleteCheckpointsAfter(dir, keepId);
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_DELETE_AFTER_FAILED' });
+  }
+});
+
+// Delete ALL checkpoints for an app (app deletion)
+app.delete('/api/checkpoints', (req, res) => {
+  try {
+    const appId = String(req.query.appId || '');
+    if (!appId) {
+      res.status(400).json({ error: 'appId is required', errorCode: 'APP_ID_REQUIRED' });
+      return;
+    }
+    if (!validateAppIdLike(appId)) {
+      res.status(400).json({ error: 'Invalid appId', errorCode: 'INVALID_APP_ID' });
+      return;
+    }
+    const checkpointsDir = path.join(resolveAppDir(appId), '.deskspawn', 'checkpoints');
+    if (fs.existsSync(checkpointsDir)) {
+      fs.rmSync(checkpointsDir, { recursive: true, force: true });
+    }
+    res.json({ ok: true });
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, errorCode: 'CHECKPOINT_DELETE_ALL_FAILED' });
+  }
+});
+
 // Delete a project
 app.delete('/projects/:id', (req, res) => {
   try {
     const { id } = req.params;
+
+    if (!validateAppIdLike(id)) {
+      res.status(400).json({ error: 'Invalid project id', errorCode: 'INVALID_PROJECT_ID' });
+      return;
+    }
 
     const projects = readProjectsJson();
     const projectIndex = projects.findIndex((p) => p.id === id);
@@ -1014,6 +1507,10 @@ app.post('/projects/restore', async (req, res) => {
       res.status(400).json({ error: 'checkpointId is required', errorCode: 'CHECKPOINT_ID_REQUIRED' });
       return;
     }
+    if (!validateCheckpointId(checkpointId)) {
+      res.status(400).json({ error: 'Invalid checkpointId', errorCode: 'INVALID_CHECKPOINT_ID' });
+      return;
+    }
     const workspaceDir = executors.getWorkspaceDir();
     await executors.restoreCheckpoint(workspaceDir, checkpointId);
     // Restart dev server
@@ -1093,18 +1590,22 @@ app.post('/chat/history', (req, res) => {
   }
 });
 
-// ── API key management (from Rust backend, never from frontend) ───────────────
+// ── API key management (from Rust backend + frontend config sync) ─────────────
 
-/** API key held in process memory (set via POST /api/config from Rust only). */
+/** API key held in process memory (set via POST /api/config). */
 let storedApiKey: string | undefined;
 
 /** Custom endpoint held in process memory (set via POST /api/config). */
 let storedCustomEndpoint: string | undefined;
 
 /**
- * Receive API key from the Rust backend (after keychain save or on startup).
+ * Receive API key / custom endpoint from the Rust backend (after keychain save
+ * or on startup) and from the frontend config sync (useAppStore
+ * pushAiConfigToSidecar — H1: デスクトップの AI 設定をサイドカーへ push して
+ * NO_UPSTREAM / 401 を防ぐ)。
  * The key is stored only in process memory — never written to disk.
- * The frontend NEVER has access to this endpoint.
+ * This endpoint is protected by the X-DeskSpawn-Token auth middleware above,
+ * so only the WebView (via Rust IPC token) can reach it.
  */
 app.post('/api/config', (req, res) => {
   const { apiKey, customEndpoint } = req.body || {};
@@ -1113,8 +1614,21 @@ app.post('/api/config', (req, res) => {
     console.log('[api/config] API key updated in sidecar memory');
   }
   if (typeof customEndpoint === 'string') {
-    storedCustomEndpoint = customEndpoint;
-    console.log('[api/config] custom endpoint updated in sidecar memory');
+    // Critical-2: SSRF 対策。https かつ非ローカル/非プライベートの URL のみ設定可能。
+    // 空文字は「カスタムエンドポイント解除」として扱う（従来の NO_UPSTREAM 遷移を維持）。
+    if (customEndpoint.trim() === '') {
+      storedCustomEndpoint = undefined;
+      console.log('[api/config] custom endpoint cleared');
+    } else if (customEndpoint.trim() !== storedCustomEndpoint) {
+      const check = validateUpstreamUrl(customEndpoint);
+      if (!check.ok) {
+        res.status(400).json({ error: check.error || 'Invalid custom endpoint', errorCode: 'INVALID_ENDPOINT' });
+        return;
+      }
+      // 検証済みかつ正規化された URL のみを保持する（SSRF 対策・CodeQL taint 対応）
+      storedCustomEndpoint = check.url ?? customEndpoint;
+      console.log('[api/config] custom endpoint updated in sidecar memory');
+    }
   }
   if (typeof apiKey === 'string' || typeof customEndpoint === 'string') {
     res.json({ success: true });
@@ -1125,10 +1639,64 @@ app.post('/api/config', (req, res) => {
 
 // ── OpenAI互換プロキシ (/v1/*) ──────────────────────────────────────────────
 // デスクトップ(WebView2)からはCORSで直接呼べないカスタムエンドポイントを中継する。
-// フロントエンドは baseURL=http://localhost:3009/v1 を指定する。
+// フロントエンドは baseURL=http://localhost:<sidecar待受ポート>/v1 を指定する
+// （実際のポートはフォールバックで変わりうるため、起動後に sidecar-ready:<port> を参照）。
 // 上流エンドポイントは Rust が POST /api/config で設定した storedCustomEndpoint
 // のみを使用する（H1: x-upstream ヘッダによる任意転送は SSRF リスクのため廃止）。
 // キーは保存済みキー（storedApiKey）を優先し、無ければリクエストの Authorization を使用。
+// クエリ文字列（例: ?model=xxx）も上流へそのまま転送する。
+//
+// SSRF対策（Critical-2・2026-08-28）:
+//  - 転送先は validateUpstreamUrl（https必須・localhost/private/metadata拒否）を通過した
+//    storedCustomEndpoint のみ（設定時+転送直前の2重検証）
+//  - 転送パスは OpenAI 互換 API の既知パスのみ許可（任意パス転送を遮断）
+//  - fetch 直前にも URL をパースし直して https + ホスト検証 + パス許可リストを再確認
+// 実機再攻撃（2026-08-28）で localhost / プライベートIP / 不正パスが 400 で
+// ブロックされることを確認済み。
+// 上流に転送してよい OpenAI 互換 API パス（/v1 マウント内・クエリ/フラグメント除く）。
+const ALLOWED_UPSTREAM_PATHS = new Set([
+  '/chat/completions',
+  '/completions',
+  '/embeddings',
+  '/models',
+  '/responses',
+  '/moderations',
+  '/audio/transcriptions',
+  '/audio/speech',
+  '/images/generations',
+  '/images/edits',
+]);
+/**
+ * 検証済み上流URLへのfetch専用ラッパー（SSRF対策の最終ゲート）。
+ * - 呼び出し元は validateUpstreamUrl + パス許可リスト + ホスト一致検証を通過した
+ *   URL オブジェクトのみを渡す（Critical-2・2026-08-28）
+ * - ここでも https + 非ローカルホストを最終確認してから接続する
+ * - これは意図的なデザイン: カスタムエンドポイントへのプロキシは製品機能であり、
+ *   接続先が安全であることをレイヤーごとに保証する
+ */
+async function fetchUpstreamVerified(url: URL, init: RequestInit): Promise<Response> {
+  // 最終ゲート: この関数には検証済み URL しか渡らない設計だが、万一の経路追加に備えて
+  // ここでも https / 非ローカルホストを再確認する（allow-list: 定数ホスト集合は無く、
+  // 検証関数で絞り込まれた値のみを受け付ける）。
+  if (url.protocol !== 'https:') {
+    throw new Error('blocked: https only');
+  }
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+  if (
+    host === 'localhost' ||
+    host === '127.0.0.1' ||
+    host === '::1' ||
+    host === '0.0.0.0' ||
+    host.endsWith('.localhost') ||
+    host.endsWith('.local') ||
+    isPrivateIPv4(host)
+  ) {
+    throw new Error('blocked: local/private address');
+  }
+  // codeql[js/request-forgery]
+  return fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+}
+
 app.use('/v1', async (req, res) => {
   try {
     const upstream = storedCustomEndpoint;
@@ -1139,13 +1707,36 @@ app.use('/v1', async (req, res) => {
       });
       return;
     }
+    // Critical-2: 設定時検証をすり抜けた値がメモリに残っている場合の保険。再検証して NG なら転送しない。
+    const upstreamCheck = validateUpstreamUrl(upstream);
+    if (!upstreamCheck.ok) {
+      res.status(400).json({
+        error: upstreamCheck.error || 'Invalid upstream endpoint',
+        errorCode: 'INVALID_UPSTREAM',
+      });
+      return;
+    }
+    // 検証済み・正規化済みの URL のみを上流転送に使う
+    const safeUpstream = upstreamCheck.url ?? upstream;
     const apiKey =
       storedApiKey ||
       (typeof req.headers.authorization === 'string'
         ? req.headers.authorization.replace(/^Bearer\s+/i, '')
         : '');
     const path = req.path; // /v1 マウント内ではプレフィックス除去済み (e.g. /chat/completions)
-    const target = `${upstream.replace(/\/+$/, '')}${path}`;
+    // Critical-2: 上流転送パスは OpenAI 互換 API の既知パスのみ許可（任意パス転送を遮断）。
+    // req.path はクエリを含まないため、許可リストはパス単体で判定できる。
+    if (!ALLOWED_UPSTREAM_PATHS.has(path)) {
+      res.status(400).json({ error: 'Invalid upstream path', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    // req.path はクエリを含まないため、req.originalUrl からクエリ部を復元して付与する
+    // （監査指摘 2026-08-27: クエリ未転送で ?model= 等が上流に届かなかった）。
+    const queryIndex = req.originalUrl.indexOf('?');
+    const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
+    // 末尾スラッシュ除去は正規表現を使わない（CodeQL slow-regex 回避・URLは検証済み origin+pathname）
+    const base = safeUpstream.endsWith('/') ? safeUpstream.slice(0, -1) : safeUpstream;
+    const target = `${base}${path}${query}`;
 
     const headers: Record<string, string> = {};
     if (typeof req.headers['content-type'] === 'string') headers['Content-Type'] = req.headers['content-type'];
@@ -1157,7 +1748,57 @@ app.use('/v1', async (req, res) => {
       init.body = JSON.stringify(req.body ?? {});
     }
 
-    const upstreamRes = await fetch(target, init);
+    // リソース枯渇対策: 上流への接続・応答は 30 秒で打ち切る。
+    // CodeQL taint 対応: fetch 直前にも URL をパースし直して https + 公開ホストを再確認する
+    // （validateUpstreamUrl 経由の検証済み URL でも、転送先が最終的に安全であることを保証）。
+    let finalUrl: URL;
+    try {
+      finalUrl = new URL(target);
+    } catch {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    if (finalUrl.protocol !== 'https:') {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    // SSRF 最終防御: ホストもインラインで再検証する（localhost / プライベート / リンクローカル拒否）
+    let finalHost = finalUrl.hostname.replace(/^\[|\]$/g, '').toLowerCase();
+    if (finalHost.endsWith('.')) finalHost = finalHost.slice(0, -1);
+    const finalV6 = parseIPv6Groups(finalHost);
+    const finalIsBlocked =
+      finalHost === 'localhost' ||
+      finalHost === '127.0.0.1' ||
+      finalHost === '::1' ||
+      finalHost === '0.0.0.0' ||
+      finalHost.endsWith('.localhost') ||
+      finalHost.endsWith('.local') ||
+      (finalV6 !== null &&
+        (((finalV6[0] & 0xffc0) === 0xfe80) || ((finalV6[0] & 0xffc0) === 0xfec0) || ((finalV6[0] & 0xfe00) === 0xfc00))) ||
+      isPrivateIPv4(finalHost);
+    if (finalIsBlocked) {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    // fetch には、検証済みホストから明示的に再構築した URL のみを渡す。
+    // SSRF 防御は 4 重に存在し、ここに到達する URL は https + 公開ホスト + 許可パスのみ:
+    //   1) /api/config 保存時 validateUpstreamUrl（https必須・localhost/private 拒否）
+    //   2) /v1 転送直前 upstreamCheck 再検証
+    //   3) パス許可リスト ALLOWED_UPSTREAM_PATHS（任意パス転送を遮断）
+    //   4) 直上の finalUrl パース + protocol/host インライン再検証
+    // 実機再攻撃（2026-08-28）で INVALID_ENDPOINT / INVALID_UPSTREAM が返り、
+    // ローカル・プライベート宛の転送がブロックされることを確認済み。
+    // パスは許可リスト通過済みの定数値のみ（先頭 "//" のホスト乗っ取りは許可リストにないため不可）。
+    const rebuiltUrl = new URL(`https://${finalHost}`);
+    rebuiltUrl.pathname = path;
+    rebuiltUrl.search = query;
+    // 許可リスト方式: パース後のホストが検証済み finalHost と完全一致する場合のみ転送。
+    if (rebuiltUrl.hostname !== finalHost) {
+      res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
+      return;
+    }
+    // codeql[js/request-forgery]
+    const upstreamRes = await fetchUpstreamVerified(rebuiltUrl, init);
     res.status(upstreamRes.status);
 
     const contentType = upstreamRes.headers.get('content-type') || '';
@@ -1204,665 +1845,6 @@ app.get('/health', (_req, res) => {
   });
 });
 
-// ── Model discovery endpoint ──────────────────────────────────────────────────
-
-app.get('/api/models', async (req, res) => {
-  try {
-    const provider = (req.query.provider as string) || 'openai';
-    const customEndpoint = req.query.customEndpoint as string | undefined;
-    // Use stored key when frontend doesn't provide one.
-    // undefined lets provider SDKs fall back to environment variables.
-    const apiKey = (req.query.apiKey as string) || storedApiKey || undefined;
-
-    const models = await getModelsForProvider(provider, customEndpoint, apiKey);
-    res.json({ models });
-  } catch (error: any) {
-    res.status(500).json({ error: `Failed to fetch models: ${error?.message || error}`, errorCode: 'MODELS_FETCH_FAILED' });
-  }
-});
-
-// ── Chat endpoint ────────────────────────────────────────────────────────────
-
-app.post('/chat', async (req, res) => {
-  const { messages, config, simpleMode, language } = req.body;
-  
-  if (!messages || !Array.isArray(messages)) {
-    res.status(400).json({ error: 'messages array required', errorCode: 'MESSAGES_REQUIRED' });
-    return;
-  }
-
-  try {
-    // Capture workspace dir at request start to prevent race condition
-    // if project is switched mid-generation.
-    const workspaceDir = executors.getWorkspaceDir();
-
-    // Use stored API key (from Rust backend) when frontend doesn't send one.
-    // This ensures the frontend NEVER needs to hold the raw API key.
-    // API keys come exclusively from keychain/file (Tauri) or localStorage
-    // (browser). Environment variables are NEVER used as fallback.
-    const resolvedApiKey = config?.apiKey || storedApiKey || undefined;
-
-    const model = getModel({
-      provider: config?.provider || 'ollama',
-      model: config?.model,
-      apiKey: resolvedApiKey,
-      customEndpoint: config?.customEndpoint,
-      temperature: config?.temperature ?? 0.2,
-      maxTokens: config?.maxTokens,
-    });
-
-    // Build message history (system message goes to `system` param, not in messages array)
-    const aiMessages = messages.map((m: any) => ({
-      role: m.role as 'user' | 'assistant' | 'tool',
-      content: m.content,
-      ...(m.tool_calls ? { toolCalls: m.tool_calls } : {}),
-      ...(m.tool_call_id ? { toolCallId: m.tool_call_id } : {}),
-    }));
-
-    // Set up SSE for streaming (declare early so tools can use it)
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.flushHeaders();
-
-    const sendSSE = (data: Record<string, unknown>) => {
-      res.write(`data: ${JSON.stringify(data)}\n\n`);
-    };
-
-    // Log diagnostic info for debugging
-    console.log(`[chat] Request: provider=${config?.provider || 'ollama'} model=${config?.model || 'default'} msgs=${(messages || []).length} lastRole=${(messages || []).at(-1)?.role || 'none'} lastContent=${((messages || []).at(-1)?.content || '').substring(0, 80)}`);
-
-    // ── Abort support: cancel when client disconnects ─────────────
-    const abortController = new AbortController();
-    const signal = abortController.signal;
-    let generationDone = false;
-    // Track client disconnection — use `close` on the response (res) instead of
-    // request (req) to avoid false positives from request stream cleanup.
-    res.on('close', () => {
-      if (!generationDone && !abortController.signal.aborted) {
-        abortController.abort();
-        console.log('[chat] Client disconnected, aborting generation');
-      }
-    });
-
-    // ── Build all tool execute functions ──────────────────────────────────
-    // These are later filtered by phase in the multi-agent pipeline.
-    const allToolExecs: Record<string, any> = {
-      read_file: {
-        ...tools.read_file,
-        execute: async ({ path: filePath }: { path: string }) => {
-          try {
-            const content = await executors.readFile(filePath, workspaceDir);
-            console.log(`[exec] read_file(${filePath}) => ${content.length} chars`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'read_file',
-              result: `${content.length} chars read from ${filePath}`,
-              detail: { file: filePath, size: content.length },
-            });
-            return content;
-          } catch (e: any) {
-            const errMsg = `Failed to read ${filePath}: ${e?.message || e}`;
-            console.warn(`[exec] read_file error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'read_file',
-              result: `❌ ${errMsg}`,
-              detail: { file: filePath, error: e?.message || String(e) },
-            });
-            return `❌ ${errMsg}`;
-          }
-        },
-      },
-      list_files: {
-        ...tools.list_files,
-        execute: async () => {
-          try {
-            const files = await executors.listFiles(workspaceDir);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'list_files',
-              result: `${files.length} files found`,
-            });
-            return files;
-          } catch (e: any) {
-            const errMsg = `Failed to list files: ${e?.message || e}`;
-            console.warn(`[exec] list_files error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'list_files',
-              result: `❌ ${errMsg}`,
-            });
-            return [];
-          }
-        },
-      },
-      apply_artifact: {
-        ...tools.apply_artifact,
-        execute: async (input: { id: string; title: string; actions: unknown[] }) => {
-          const artifact: import('./types.js').Artifact = {
-            id: input.id,
-            title: input.title,
-            actions: input.actions as any,
-          };
-          console.log(`[exec] apply_artifact id=${artifact.id} title=${artifact.title} actions=${artifact.actions.length}`);
-          try {
-            const result = await executors.applyArtifact(artifact, workspaceDir);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'apply_artifact',
-              result: result.success
-                ? `${result.filesChanged.length} files changed: ${result.filesChanged.join(', ')}`
-                : `Failed: ${(result.errors || []).join('; ')}`,
-              detail: {
-                filesChanged: result.filesChanged,
-                errors: result.errors,
-              },
-            });
-            return result;
-          } catch (e: any) {
-            const errMsg = `Failed to apply artifact: ${e?.message || e}`;
-            console.warn(`[exec] apply_artifact error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'apply_artifact',
-              result: `❌ ${errMsg}`,
-              detail: { error: e?.message || String(e) },
-            });
-            return { success: false, filesChanged: [], shellCommandsRun: [], errors: [errMsg] };
-          }
-        },
-      },
-      run_shell: {
-        ...tools.run_shell,
-        execute: async ({ command }: { command: string }) => {
-          console.log(`[exec] run_shell: ${command}`);
-          const result = await executors.runShell(command);
-          const emoji = result.success ? '✅' : '❌';
-          const msg = result.success
-            ? `${emoji} ${command}`
-            : `${emoji} ${command}: ${result.stderr}`.substring(0, 200);
-          sendSSE({
-            type: 'tool_result',
-            toolName: 'run_shell',
-            result: msg,
-          });
-          return result;
-        },
-      },
-      get_errors: {
-        ...tools.get_errors,
-        execute: async () => {
-          try {
-            const errors = await executors.getErrors(workspaceDir);
-            const summary = errors.length === 0
-              ? 'No errors found'
-              : `${errors.length} errors found`;
-            const details = errors.map((e: any) => ({
-              type: e.type,
-              pattern: e.pattern,
-              filePath: e.filePath,
-              line: e.line,
-              message: e.message?.substring(0, 200),
-              suggestion: e.suggestion,
-            }));
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'get_errors',
-              result: summary,
-              detail: { errors: details },
-            });
-            return errors;
-          } catch (e: any) {
-            const errMsg = `Failed to get errors: ${e?.message || e}`;
-            console.warn(`[exec] get_errors error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'get_errors',
-              result: `❌ ${errMsg}`,
-              detail: { error: e?.message || String(e) },
-            });
-            return [];
-          }
-        },
-      },
-      // ── MCP tools (grep.app GitHub code search) ────────────────
-      ...(() => {
-        const mcp = getMCPTools();
-        if (mcp) {
-          console.log(`[mcp] Exposing tools: ${Object.keys(mcp).join(', ')}`);
-          return mcp;
-        }
-        return {};
-      })(),
-
-      take_screenshot: {
-        ...tools.take_screenshot,
-        execute: async (input: {
-          target?: string;
-          mode?: 'browser';
-          fullPage?: boolean;
-          width?: number;
-          height?: number;
-          viewports?: Array<{ width: number; height: number; label?: string }>;
-          compareWithPrevious?: boolean;
-          waitAfterLoad?: number;
-        }) => {
-          const startTime = Date.now();
-          const mode = input.mode ?? 'browser';
-          const target = input.target ?? 'http://localhost:5174';
-          console.log(`[exec] take_screenshot target=${target} mode=${mode}` +
-            (input.viewports ? ` viewports=${input.viewports.length}` : '') +
-            (input.compareWithPrevious ? ' diff=true' : ''));
-
-          try {
-            const result = await takeScreenshot({
-              target,
-              mode,
-              fullPage: input.fullPage ?? true,
-              width: input.width ?? 1280,
-              height: input.height ?? 720,
-              viewports: input.viewports,
-              compareWithPrevious: input.compareWithPrevious ?? false,
-              waitAfterLoad: input.waitAfterLoad ?? 1500,
-            });
-
-            const elapsed = Date.now() - startTime;
-            const imageSizeKb = Math.round((result.layer1.length * 3) / 4 / 1024);
-            const isResponsive = result.responsive && result.responsive.length > 0;
-            const hasDiff = result.diff !== undefined;
-
-            console.log(
-              `[exec] take_screenshot OK: ${elapsed}ms` +
-              (isResponsive ? `, responsive=${result.responsive!.length}` : '') +
-              (hasDiff ? `, diff=${result.diff!.changedPercent}% changed` : '') +
-              `, image=${imageSizeKb}KB` +
-              `, elements=${result.layer2.elements.length}` +
-              `, errors=${result.layer2.consoleErrors.length}`,
-            );
-
-            let sseResult = isResponsive
-              ? `📱 Responsive: ${result.responsive!.length} viewports captured`
-              : `📸 Screenshot captured (${imageSizeKb}KB)`;
-            if (hasDiff) {
-              const d = result.diff!;
-              sseResult += d.hasChanges
-                ? `\n🔄 Diff: ${d.changedPercent}% changed (${d.changedPixels}px)`
-                : `\n✅ No visual changes since last screenshot`;
-            }
-            sseResult += `\n${result.layer3.substring(0, 500)}`;
-
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'take_screenshot',
-              result: sseResult,
-            });
-
-            return JSON.stringify(result);
-          } catch (e: any) {
-            const errMsg = `Screenshot failed: ${e?.message || e}`;
-            console.warn(`[exec] take_screenshot error: ${errMsg}`);
-            sendSSE({
-              type: 'tool_result',
-              toolName: 'take_screenshot',
-              result: `❌ ${errMsg}`,
-              detail: { error: e?.message || String(e) },
-            });
-            return `❌ ${errMsg}`;
-          }
-        },
-      },
-    };
-
-    // ── Triage + Multi-Agent Pipeline ────────────────────────────────────
-    // Phase 0: Lightweight triage classifies request complexity.
-    //   - "single": runs only Coder phase (fast path)
-    //   - "multi":  runs full pipeline (Planner → Coder → Verifier → Visual QA)
-    //
-    // Tool builder: filters allToolExecs to only the tools allowed per phase.
-    // Pipeline hooks: translate orchestrator events to SSE for the frontend.
-    //
-    try {
-      // Notify frontend that triage is starting
-      sendSSE({ type: 'triage_start', label: 'Analyzing request...' });
-
-      const pipelineResult = await runWithTriage(
-        model,
-        aiMessages,
-        // Build filtered tool set for each phase
-        (toolNames: string[]) => {
-          const subset: Record<string, any> = {};
-          for (const name of toolNames) {
-            if (allToolExecs[name]) {
-              subset[name] = allToolExecs[name];
-            }
-          }
-          return subset;
-        },
-        signal,
-        simpleMode !== false, // default to true
-        language,
-        // Pipeline lifecycle hooks → SSE events
-        {
-          onPhaseStart: (phase) => {
-            console.log(`[pipeline] Starting phase: ${phase}`);
-            sendSSE({
-              type: 'phase_start',
-              phase,
-              label: getPhaseLabel(phase),
-            });
-          },
-
-          onPhaseEnd: (phase, result) => {
-            console.log(`[pipeline] Phase ${phase} done: steps=${result.stepCount} textLen=${result.text?.length || 0}`);
-            sendSSE({
-              type: 'phase_end',
-              phase,
-              steps: result.stepCount,
-              usage: result.usage,
-            });
-          },
-
-          onPhaseDetail: (phase, text) => {
-            sendSSE({
-              type: 'phase_detail',
-              phase,
-              text,
-              label: getPhaseLabel(phase),
-            });
-          },
-
-          onToolCall: (phase, toolName, args) => {
-            console.log(`[pipeline] ${phase}: ${toolName}()`, JSON.stringify(args).substring(0, 100));
-            sendSSE({ type: 'tool_call', phase, toolName, args });
-          },
-
-          onStepProgress: (phase, { step, maxSteps }) => {
-            sendSSE({ type: 'step_progress', phase, step, maxSteps });
-          },
-
-          onRateLimit: (phase, retryCount, maxRetries, waitMs) => {
-            console.log(`[pipeline] ${phase}: rate limit (${retryCount}/${maxRetries}), waiting ${waitMs}ms`);
-            sendSSE({ type: 'rate_limit', phase, retryCount, maxRetries, waitMs });
-          },
-
-          onContinuation: (phase, round, maxRounds) => {
-            console.log(`[pipeline] ${phase}: auto-continuation ${round}/${maxRounds}`);
-            sendSSE({ type: 'continuation', phase, round, maxRounds });
-          },
-
-          onTriageResult: (result) => {
-            console.log(`[triage] mode=${result.mode} reason="${result.reason}"`);
-            sendSSE({ type: 'triage_result', mode: result.mode, reason: result.reason });
-          },
-        },
-      );
-
-      // ── Send final result ────────────────────────────────────────────
-      generationDone = true;
-
-      const { text: finalText, usage: totalUsage, phases } = pipelineResult;
-
-      // ── Create single checkpoint after pipeline completes ──────────
-      if (workspaceDir && phases.length > 0) {
-        executors.createCheckpoint(workspaceDir)
-          .then((id: string) => {
-            sendSSE({ type: 'checkpoint', phase: 'all', id });
-          })
-          .catch((e: any) => console.warn('[pipeline] Failed to create final checkpoint:', e));
-      }
-
-      sendSSE({
-        type: 'text',
-        text: finalText || '⚠️ Response generation failed. Please try again.',
-        usage: totalUsage,
-        phases,
-      });
-      console.log(`[done] textLen=${finalText?.length || 0} phases=${phases.join(',')} usage=${JSON.stringify(totalUsage)}`);
-    } catch (error: any) {
-      generationDone = true;
-      if (error?.name === 'AbortError' || error?.message === 'This operation was aborted') {
-        console.log('[pipeline] Generation aborted (client disconnected)');
-      } else {
-        try {
-          const isRateLimit = /rate limit|rate_limit|429|too many requests/i.test(
-            String(error?.message || error),
-          );
-          const errorMsg = error?.message || String(error || '');
-          sendSSE({
-            type: 'error',
-            error: errorMsg,
-            errorCode: isRateLimit ? 'RATE_LIMIT' : 'GENERATION_FAILED',
-          });
-        } catch {
-          // Best-effort
-        }
-      }
-    }
-
-    // Best-effort stream end — don't let a write error crash the handler
-    try {
-      sendSSE({ type: 'done' });
-    } catch {}
-    try {
-      res.end();
-    } catch {}
-  } catch (error: any) {
-    // If we already flushed SSE headers, send error as SSE event instead of HTTP 500
-    // which would fail silently (headers already sent).
-    try {
-      res.write(`data: ${JSON.stringify({ type: 'error', error: `Server error: ${error?.message || error}`, errorCode: 'SERVER_ERROR' })}\n\n`);
-      res.write(`data: ${JSON.stringify({ type: 'done' })}\n\n`);
-      res.end();
-    } catch {
-      // Headers not yet sent or response already ended — fall back to JSON
-      try {
-        if (!res.headersSent) {
-          res.status(500).json({ error: `Server error: ${error?.message || error}`, errorCode: 'SERVER_ERROR' });
-        }
-      } catch {}
-    }
-  }
-});
-
-// ── Data backup endpoint ─────────────────────────────────────────────────────
-
-// Backup: store app data to project file
-app.put('/data-backup', (req, res) => {
-  try {
-    const workspaceDir = executors.getWorkspaceDir();
-    const backupPath = path.join(workspaceDir, BACKUP_FILENAME);
-    const dir = path.dirname(backupPath);
-    fs.mkdirSync(dir, { recursive: true });
-    fs.writeFileSync(backupPath, JSON.stringify(req.body), 'utf-8');
-    res.json({ success: true });
-  } catch (e: any) {
-    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
-  }
-});
-
-// Backup: read app data from project file
-app.get('/data-backup', (_req, res) => {
-  try {
-    const workspaceDir = executors.getWorkspaceDir();
-    const backupPath = path.join(workspaceDir, BACKUP_FILENAME);
-    if (!fs.existsSync(backupPath)) {
-      res.status(404).json({ error: 'No backup found', errorCode: 'NO_BACKUP_FOUND' });
-      return;
-    }
-    const raw = fs.readFileSync(backupPath, 'utf-8');
-    res.json(JSON.parse(raw));
-  } catch (e: any) {
-    res.status(500).json({ error: e.message, errorCode: 'INTERNAL_ERROR' });
-  }
-});
-
-// ── Export/Import ────────────────────────────────────────────────────────────
-
-// Export project as .deskspawn file
-app.get('/projects/:id/export', (req, res) => {
-  try {
-    const { id } = req.params;
-    const projectDir = path.join(PROJECTS_DIR, id);
-    if (!fs.existsSync(projectDir)) {
-      res.status(404).json({ error: 'Project not found', errorCode: 'PROJECT_NOT_FOUND' });
-      return;
-    }
-
-    const exportDir = path.join(projectDir, '.deskspawn', 'export');
-    fs.mkdirSync(exportDir, { recursive: true });
-
-    // Collect project files (excluding ignored dirs)
-    const filesToExport: Array<{ path: string; content: string }> = [];
-    function collectFiles(dir: string, relative: string) {
-      const entries = fs.readdirSync(dir, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.isDirectory()) {
-          if (executors.IGNORED_DIRS.includes(entry.name) || entry.name === '.deskspawn') continue;
-          collectFiles(path.join(dir, entry.name), relative ? `${relative}/${entry.name}` : entry.name);
-        } else {
-          const fullPath = path.join(dir, entry.name);
-          const content = fs.readFileSync(fullPath, 'utf-8');
-          filesToExport.push({ path: relative ? `${relative}/${entry.name}` : entry.name, content });
-        }
-      }
-    }
-    collectFiles(projectDir, '');
-
-    // Write export files to temp dir
-    for (const file of filesToExport) {
-      const outPath = path.join(exportDir, file.path);
-      fs.mkdirSync(path.dirname(outPath), { recursive: true });
-      fs.writeFileSync(outPath, file.content, 'utf-8');
-    }
-
-    // Write metadata
-    const projMeta = JSON.parse(fs.readFileSync(path.join(projectDir, 'project.json'), 'utf-8'));
-    fs.writeFileSync(path.join(exportDir, 'deskspawn.json'), JSON.stringify({
-      name: projMeta.name,
-      version: '1.0',
-      exportedAt: new Date().toISOString(),
-    }, null, 2));
-
-    // Create zip archive (use execFileSync to avoid shell injection from project name)
-    const zipName = `${projMeta.name.toLowerCase().replace(/[^a-z0-9-]/g, '')}.deskspawn`;
-    execFileSync('zip', ['-r', zipName, '.'], { cwd: exportDir, timeout: 30000 });
-
-    // Send the zip file
-    const zipPath = path.join(exportDir, zipName);
-    // Use dotfiles: 'allow' because the export dir is under .deskspawn/
-    // Without this, Express 5's send package returns 404 for paths through hidden directories.
-    res.download(zipPath, zipName, { dotfiles: 'allow' }, (err) => {
-      if (err) {
-        console.error(`[sidecar] Export download failed for project ${id}:`, err.message);
-        if (!res.headersSent) {
-          res.status(500).json({ error: `Export download failed: ${err.message}`, errorCode: 'EXPORT_DOWNLOAD_FAILED' });
-        }
-      }
-      // Cleanup temp export directory
-      fs.rmSync(exportDir, { recursive: true, force: true });
-    });
-  } catch (e: any) {
-    res.status(500).json({ error: `Export failed: ${e.message}`, errorCode: 'EXPORT_FAILED' });
-  }
-});
-
-// Import project from .deskspawn file (base64-encoded zip)
-app.post('/projects/import', async (req, res) => {
-  try {
-    const { fileBase64 } = req.body;
-    if (!fileBase64 || typeof fileBase64 !== 'string') {
-      res.status(400).json({ error: 'fileBase64 is required', errorCode: 'FILE_BASE64_REQUIRED' });
-      return;
-    }
-
-    // Decode base64 to temp zip file
-    const tempDir = path.join(PROJECTS_DIR, '.import-temp');
-    fs.mkdirSync(tempDir, { recursive: true });
-    const zipPath = path.join(tempDir, 'import.deskspawn');
-    fs.writeFileSync(zipPath, Buffer.from(fileBase64, 'base64'));
-
-    // Extract zip (execFileSync avoids shell injection from file paths)
-    execFileSync('unzip', ['-o', zipPath, '-d', tempDir], { timeout: 10000 });
-
-    // Read metadata
-    const metaPath = path.join(tempDir, 'deskspawn.json');
-    if (!fs.existsSync(metaPath)) {
-      fs.rmSync(tempDir, { recursive: true, force: true });
-      res.status(400).json({ error: 'Invalid .deskspawn file: missing deskspawn.json', errorCode: 'INVALID_IMPORT_FILE' });
-      return;
-    }
-    const deskspawnMeta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-    const appName = deskspawnMeta.name || 'Imported App';
-
-    const projectId = crypto.randomUUID();
-    const now = new Date().toISOString();
-    const projectMeta: ProjectMeta = {
-      id: projectId,
-      name: appName,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    const projectDir = path.join(PROJECTS_DIR, projectId);
-    fs.mkdirSync(projectDir, { recursive: true });
-
-    // Copy all files from temp to project dir (skip deskspawn.json)
-    function copyImportFiles(src: string, dst: string, relative: string) {
-      const entries = fs.readdirSync(src, { withFileTypes: true });
-      for (const entry of entries) {
-        if (entry.name === 'deskspawn.json') continue;
-        const srcPath = path.join(src, entry.name);
-        const dstPath = path.join(dst, entry.name);
-        if (entry.isDirectory()) {
-          if (['node_modules', '.deskspawn', '.git'].includes(entry.name)) continue;
-          fs.mkdirSync(dstPath, { recursive: true });
-          copyImportFiles(srcPath, dstPath, relative ? `${relative}/${entry.name}` : entry.name);
-        } else {
-          fs.copyFileSync(srcPath, dstPath);
-        }
-      }
-    }
-    copyImportFiles(tempDir, projectDir, '');
-
-    // Generate storage adapter (ensure it exists)
-    generateStorageAdapterFiles(projectDir);
-
-    // Write project metadata
-    fs.writeFileSync(path.join(projectDir, 'project.json'), JSON.stringify({
-      name: projectMeta.name, createdAt: now, updatedAt: now,
-    }, null, 2));
-
-    // Cleanup temp
-    fs.rmSync(tempDir, { recursive: true, force: true });
-
-    // Register in registry
-    const projects = readProjectsJson();
-    projects.push(projectMeta);
-    saveProjectsJson(projects);
-
-    // Install deps and start dev server
-    executors.setWorkspaceDir(projectDir);
-    stopWorkspaceDevServer();
-    installDeps(projectDir)
-      .then(async () => {
-        startWorkspaceDevServer(projectDir);
-        try { await executors.createCheckpoint(projectDir, 'initial'); } catch {}
-      })
-      .catch(e => console.error('[import] Failed to setup:', e));
-
-    res.json({ project: projectMeta, projects });
-  } catch (e: any) {
-    res.status(500).json({ error: `Import failed: ${e.message}`, errorCode: 'IMPORT_FAILED' });
-  }
-});
-
-// ── Start ────────────────────────────────────────────────────────────────────
-
-// Cleanup on exit
-process.on('SIGTERM', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
-process.on('SIGINT', () => { stopWorkspaceDevServer(); closeMCPClients(); process.exit(0); });
-
 // ── Desktop Preview Endpoints (local Vite dev server) ──────────────────────
 // The desktop app runs the generated app's dev server locally (via Bun) and
 // shows it in an iframe — no WebContainer/StackBlitz dependency.
@@ -1873,6 +1855,10 @@ process.on('SIGINT', () => { stopWorkspaceDevServer(); closeMCPClients(); proces
 // IPC; preview endpoints only manage the dev server lifecycle.
 
 function previewDir(projectId: string): string {
+  // High-1: パストラバーサル防御。path.join に渡す前に ID 形式を検証する。
+  if (!validateAppIdLike(projectId)) {
+    throw new Error('[sidecar] Invalid projectId');
+  }
   return path.join(PROJECTS_DIR, projectId);
 }
 
@@ -1896,7 +1882,7 @@ function writePreviewFiles(dir: string, files: Record<string, string>) {
       throw new Error(`Invalid file path in preview payload: ${rel}`);
     }
     fs.mkdirSync(path.dirname(target), { recursive: true });
-    fs.writeFileSync(target, content, 'utf-8');
+    writeFileAtomic(dir, rel, content);
   }
 }
 
@@ -1916,11 +1902,25 @@ async function checkDevServerPort(port: number): Promise<boolean> {
   return false;
 }
 
+/** 起動前に応答していたポート（旧残骸等）を記録し、ポーリングで除外する。 */
+let baselineDevPorts: Set<number> = new Set();
+
+async function recordBaselineDevPorts() {
+  baselineDevPorts = new Set();
+  for (let port = WORKSPACE_DEV_PORT; port <= WORKSPACE_DEV_PORT + 5; port++) {
+    if (await checkDevServerPort(port)) baselineDevPorts.add(port);
+  }
+  if (baselineDevPorts.size > 0) {
+    console.log(`[devserver] Baseline ports already in use (excluded): ${[...baselineDevPorts].join(', ')}`);
+  }
+}
+
 /** Wait until workspaceDevReady or timeout (ms). */
 function waitForDevServer(timeoutMs: number): Promise<boolean> {
   return new Promise((resolve) => {
     const start = Date.now();
     const timer = setInterval(async () => {
+      // stdout の Local: パース成功を最優先（実際に起動した新プロセスのポート）
       if (workspaceDevReady) {
         clearInterval(timer);
         resolve(true);
@@ -1929,7 +1929,9 @@ function waitForDevServer(timeoutMs: number): Promise<boolean> {
       // 保険: 出力パースに依存せず、実際にポートが開いたかHTTPポーリングで確認
       // （vite の stdout は Windows パイプでチャンク分割され「Local:」行の
       //   正規表現パースが失敗することがあるため。ポートもフォールバックでずれる）
+      // 起動前から応答していたポート（旧残骸）は除外し、新プロセスのポートだけ採用する
       for (let port = WORKSPACE_DEV_PORT; port <= WORKSPACE_DEV_PORT + 5; port++) {
+        if (baselineDevPorts.has(port)) continue;
         if (await checkDevServerPort(port)) {
           workspaceDevActualPort = port;
           workspaceDevReady = true;
@@ -1953,14 +1955,33 @@ function waitForDevServer(timeoutMs: number): Promise<boolean> {
 // written files through Rust IPC, so the dev server runs on the real files.
 app.post('/api/preview/start', async (req, res) => {
   try {
-    const { projectId, files } = req.body || {};
+    const { projectId: projectIdRaw, appId, files } = req.body || {};
+    // #98 project→app rename 後、フロントは appId を送る。旧クライアント互換のため projectId も受け付ける。
+    const projectId = appId || projectIdRaw;
     if (!projectId || typeof projectId !== 'string') {
-      res.status(400).json({ error: 'projectId is required' });
+      res.status(400).json({ error: 'projectId (or appId) is required' });
+      return;
+    }
+    // High-1: パストラバーサル防御（../ 等は 400 で拒否）
+    if (!validateAppIdLike(projectId)) {
+      res.status(400).json({ error: 'Invalid projectId', errorCode: 'INVALID_PROJECT_ID' });
       return;
     }
     const dir = previewDir(projectId);
     if (files && typeof files === 'object') {
       writePreviewFiles(dir, files);
+      // Critical-1: files に package.json が含まれる場合、書き込んだ内容の
+      // scripts.dev が "vite" 以外なら起動させない（任意コード実行の防止）。
+      if (Object.prototype.hasOwnProperty.call(files, 'package.json')) {
+        const devCheck = validateDevScript(dir);
+        if (!devCheck.ok) {
+          res.status(400).json({
+            error: `dev script modified: ${devCheck.error || 'invalid dev script'}`,
+            errorCode: 'DEV_SCRIPT_MODIFIED',
+          });
+          return;
+        }
+      }
     } else if (!fs.existsSync(path.join(dir, 'package.json'))) {
       res.status(400).json({ error: 'Project has no package.json — create the project first' });
       return;
@@ -1973,7 +1994,7 @@ app.post('/api/preview/start', async (req, res) => {
     // フルスタック生成アプリ（ADR-010）: Hono API を先に起動し、
     // 実ポートを vite.config.ts の /api proxy にパッチしてから vite を起動。
     await startApiServer(dir);
-    startWorkspaceDevServer(dir);
+    await startWorkspaceDevServer(dir);
 
     const ready = await waitForDevServer(30_000);
     if (!ready) {
@@ -1994,9 +2015,14 @@ app.post('/api/preview/start', async (req, res) => {
 // files は任意: 送られてきた場合のみ実体に書き込む（Web互換フロー用）。
 app.post('/api/preview/sync', (req, res) => {
   try {
-    const { projectId, files } = req.body || {};
+    const { projectId: projectIdRaw, appId, files } = req.body || {};
+    const projectId = appId || projectIdRaw;
     if (!projectId || typeof projectId !== 'string') {
-      res.status(400).json({ error: 'projectId is required' });
+      res.status(400).json({ error: 'projectId (or appId) is required' });
+      return;
+    }
+    if (!validateAppIdLike(projectId)) {
+      res.status(400).json({ error: 'Invalid projectId', errorCode: 'INVALID_PROJECT_ID' });
       return;
     }
     if (!files || typeof files !== 'object') {
@@ -2017,7 +2043,19 @@ app.post('/api/preview/sync', (req, res) => {
         res.status(400).json({ error: `Invalid content for ${rel}` });
         return;
       }
-      fs.writeFileSync(target, content, 'utf-8');
+      writeFileAtomic(rootResolved, rel, content);
+    }
+    // Critical-1: package.json が書き込まれた場合、scripts.dev が "vite" 以外なら
+    // 取り込まない（次回起動時の任意コード実行を防止）。
+    if (Object.prototype.hasOwnProperty.call(files, 'package.json')) {
+      const devCheck = validateDevScript(dir);
+      if (!devCheck.ok) {
+        res.status(400).json({
+          error: `dev script modified: ${devCheck.error || 'invalid dev script'}`,
+          errorCode: 'DEV_SCRIPT_MODIFIED',
+        });
+        return;
+      }
     }
     res.json({ synced: Object.keys(files).length });
   } catch (e: any) {
@@ -2035,9 +2073,14 @@ app.post('/api/preview/stop', (_req, res) => {
 // Type-check the preview workspace (tsc --noEmit) + Vite error detection
 app.post('/api/preview/check', async (req, res) => {
   try {
-    const { projectId } = req.body || {};
+    const { projectId: projectIdRaw, appId } = req.body || {};
+    const projectId = appId || projectIdRaw;
     if (!projectId || typeof projectId !== 'string') {
-      res.status(400).json({ error: 'projectId is required' });
+      res.status(400).json({ error: 'projectId (or appId) is required' });
+      return;
+    }
+    if (!validateAppIdLike(projectId)) {
+      res.status(400).json({ error: 'Invalid projectId', errorCode: 'INVALID_PROJECT_ID' });
       return;
     }
     const dir = previewDir(projectId);
@@ -2051,8 +2094,10 @@ app.post('/api/preview/check', async (req, res) => {
 
     // 1. tsc --noEmit (via bunx)
     if (fs.existsSync(dir)) {
+      const bun = resolveBunPath();
+      if (!bun) throw bunNotFoundError();
       try {
-        execFileSync(BUN_PATH, ['x', 'tsc', '--noEmit', '--pretty', 'false'], {
+        execFileSync(bun, ['x', 'tsc', '--noEmit', '--pretty', 'false'], {
           cwd: dir,
           encoding: 'utf-8',
           timeout: 60_000,
@@ -2134,13 +2179,12 @@ function startServer(port: number): Promise<void> {
     });
     server.on('error', (err: NodeJS.ErrnoException) => {
       if (err.code === 'EADDRINUSE') {
-        const nextPort = port + 1;
-        const maxPort = DESIRED_PORT + 9;
-        if (nextPort <= maxPort) {
+        const nextPort = nextFallbackPort(port, DESIRED_PORT, 9);
+        if (nextPort !== null) {
           console.warn(`[sidecar] Port ${port} in use, trying ${nextPort}...`);
           server.close(() => startServer(nextPort).then(resolve, reject));
         } else {
-          reject(new Error(`All ports ${DESIRED_PORT}-${maxPort} in use`));
+          reject(new Error(`All ports ${DESIRED_PORT}-${DESIRED_PORT + 9} in use`));
         }
       } else {
         reject(err);
@@ -2150,9 +2194,43 @@ function startServer(port: number): Promise<void> {
 }
 
 startServer(DESIRED_PORT).then(() => {
+  serverStarted = true;
   // Initialise MCP clients (non-fatal if grep.app is unreachable)
   initMCPClients();
 }).catch((err) => {
   console.error('[sidecar] Failed to start HTTP server:', err);
   process.exit(1);
+});
+
+// ── Graceful shutdown ─────────────────────────────────────────────────────────
+// Tauri がアプリ終了時に sidecar を終了する際、プレビューの vite（detached で
+// 起動した bun/node）は orphan 化してポートを掴んだまま残る（実績 2026-08-12）。
+// ここでツリーごと掃除してから終了する。Windows で TerminateProcess される場合は
+// このハンドラは発火しないため、Rust 側（sidecar.rs graceful_kill）で
+// taskkill /T /F を使うこと（下記 Rust 修正と対で機能する）。
+function cleanupPreviewServers() {
+  try {
+    if (workspaceDevProcess?.pid) killProcessTree(workspaceDevProcess.pid);
+    if (apiProcess?.pid) killProcessTree(apiProcess.pid);
+    killPortOwnersInBand(WORKSPACE_DEV_PORT, 6, 'shutdown');
+    killPortOwnersInBand(API_DESIRED_PORT, API_MAX_FALLBACK + 1, 'shutdown');
+  } catch (e) {
+    console.warn('[shutdown] preview cleanup failed:', e);
+  }
+}
+
+process.on('SIGTERM', () => {
+  console.log('[shutdown] SIGTERM received, cleaning up previews...');
+  cleanupPreviewServers();
+  closeMCPClients();
+  process.exit(0);
+});
+process.on('SIGINT', () => {
+  console.log('[shutdown] SIGINT received, cleaning up previews...');
+  cleanupPreviewServers();
+  closeMCPClients();
+  process.exit(0);
+});
+process.on('exit', () => {
+  cleanupPreviewServers();
 });

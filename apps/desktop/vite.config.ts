@@ -4,8 +4,6 @@ import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
-const webSrc = path.resolve(__dirname, "../../apps/web/src");
-const SETTINGS_KEY = "deskspawn_settings";
 
 export default defineConfig({
   plugins: [
@@ -14,11 +12,15 @@ export default defineConfig({
     {
       name: "inject-theme-script",
       transformIndexHtml() {
+        // Low-3（監査 2026-08-28）: インライン script は本番 CSP
+        // （script-src 'self' 'wasm-unsafe-eval'、unsafe-inline 無し）で
+        // ブロックされるため、public/theme-init.js を外部スクリプトとして
+        // 注入する（'self' で読み込めるので CSP 準拠）。
         return [
           {
             tag: "script",
+            attrs: { src: "/theme-init.js" },
             injectTo: "head",
-            children: `(function(){try{var s=JSON.parse(localStorage.getItem('${SETTINGS_KEY}'));if(s&&s.theme==='dark'){document.documentElement.classList.add('dark')}else if(!s||s.theme==='system'){if(window.matchMedia('(prefers-color-scheme:dark)').matches){document.documentElement.classList.add('dark')}}}catch(e){}})()`,
           },
         ];
       },
@@ -26,7 +28,7 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      "@": webSrc,
+      "@deskspawn/shared": path.resolve(__dirname, "../../packages/shared/src"),
     },
   },
   clearScreen: false,

@@ -7,9 +7,9 @@
 
 @import "tailwindcss";
 /* Tailwind v4 の自動ソース検出はビルドルート(apps/desktop)内のみ。
-   共有コンポーネント(apps/web/src)のユーティリティクラスを生成するため
+   共有コンポーネント(packages/shared)のユーティリティクラスを生成するため
    明示的に @source でスキャン対象を追加する。 */
-@source "../../web/src";
+@source "../../../packages/shared/src";
 @import "flag-icons/css/flag-icons.min.css";
 
 @custom-variant dark (&:is(.dark *));

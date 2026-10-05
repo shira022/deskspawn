@@ -8,7 +8,11 @@ Thank you for your interest in contributing to DeskSpawn!
 
 - **Node.js** 20+
 - **pnpm** (`corepack enable` or `npm install -g pnpm`)
+- **Bun** — builds the sidecar binary (`externalBin`) and runs the preview dev server
 - **Rust** (MSVC toolchain) + **VS Build Tools** — only needed for the desktop app (Tauri)
+
+> 💡 Or skip all of this: `scripts/bootstrap.ps1` (Windows) /
+> `scripts/bootstrap.sh` (Linux/macOS) detect and install the toolchain for you.
 
 ### Setup
 
@@ -19,6 +23,9 @@ cd deskspawn
 
 # Install dependencies
 pnpm install
+
+# Desktop app only: build the sidecar binary (externalBin) before the Rust build
+cd apps/desktop && bun scripts/build-sidecar.mjs && cd ../..
 ```
 
 ### Development Workflow
@@ -34,7 +41,7 @@ pnpm --filter desktop tauri dev
 pnpm --filter web exec tsc -b --noEmit
 
 # TypeScript type check (desktop)
-pnpm --filter desktop exec tsc --noEmit
+pnpm --filter desktop exec tsc -b --noEmit
 
 # Run unit tests
 pnpm --filter web test
@@ -54,6 +61,102 @@ pnpm --filter web build
 # End-to-end tests
 pnpm test:e2e
 ```
+
+#### Building the desktop app
+
+Building Tauri requires the **sidecar binary** and the **frontend dist** to exist
+first — the Rust build script fails without them:
+
+1. `pnpm --filter desktop build` — emits `apps/desktop/dist` (required by `frontendDist`)
+2. `cd apps/desktop && bun scripts/build-sidecar.mjs` — emits
+   `src-tauri/binaries/deskspawn-sidecar-<target-triple>` (required by `externalBin`)
+3. `pnpm --filter desktop tauri build` — Rust build + installers
+   (add `--no-bundle` for a faster build that only produces the executable)
+
+> ⚠️ The Tauri config's `build.beforeBuildCommand` runs
+> `pnpm --filter desktop build`, so the machine performing the build needs
+> Node + pnpm. On a host without pnpm (e.g. a minimal Windows dev machine with only
+> the Rust toolchain), build the frontend separately and pass a config override that
+> blanks the command: `cargo tauri build --no-bundle --config <file containing
+> {"build":{"beforeBuildCommand":""}}>` from `apps/desktop/src-tauri`.
+
+> 💡 `scripts/bootstrap.ps1` / `scripts/bootstrap.sh` automate all of the above,
+> including choosing between the pnpm and the cargo-override path.
+
+#### E2E modes (e2e/desktop.spec.ts)
+
+> ⚠️ **WARNING: `pnpm test:e2e` deletes real data.** The suite runs the Rust
+> command `reset_app_data` in `beforeAll`/`afterAll`, which wipes the app
+> registry (`apps/apps.json`), generated app dirs (`apps/app-*` incl. chat
+> DBs/checkpoints), and UI settings (language/theme/…) on the machine where
+> the app under test stores its data. API keys (OS keychain) and AI provider
+> config are **kept**.
+>
+> **Dev environment only.** The command refuses to run unless the environment
+> variable `DESKSPAWN_TEST_RESET=1` is set (anti-footgun). Never run the
+> desktop E2E on a machine whose real DeskSpawn data matters to you. See
+> `docs/user-flow-spec.md` ("Development-only reset") for details.
+>
+> ⚠️ **Keychain isolation.** E2E `beforeAll` refuses to run unless the app was
+> launched with `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e`. This makes
+> test 02's dummy-key save land in a **separate** OS keychain service instead
+> of the production `com.deskspawn` — so your real API keys are never
+> overwritten. Launch the app under test with:
+> ```powershell
+> $env:DESKSPAWN_KEYCHAIN_SERVICE="com.deskspawn.e2e"; $env:DESKSPAWN_TEST_RESET="1"
+> & "C:\path\to\deskspawn-desktop.exe"
+> ```
+
+The desktop E2E suite runs in two modes — both default to safe values, so you can run it without any API key:
+
+| Mode | When | What it verifies |
+|------|------|------------------|
+| **Dummy** (default) | No env vars set | AI config flow (save → toolbar reflects model) using a fake endpoint/key. Model list fetch fails → manual-input path is exercised. |
+| **Real API** | `DESKSPAWN_E2E_REAL=1` + `DESKSPAWN_API_KEY` | Real provider connection: model list from `/models`, real chat response. |
+
+All settings are injected via environment variables (no provider/model is hardcoded):
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `DESKSPAWN_E2E_PROVIDER` | `custom` | Provider ID (`custom`, `openai`, `anthropic`, `ollama`, `azure-openai`, `amazon-bedrock`, …) |
+| `DESKSPAWN_E2E_ENDPOINT` | `http://127.0.0.1:9/v1` | Endpoint URL (custom/anthropic/azure/ollama) — discard port, intentionally unreachable |
+| `DESKSPAWN_E2E_MODEL` | `e2e-model` | Model ID to save |
+| `DESKSPAWN_E2E_REGION` | `us-east-1` | AWS region (amazon-bedrock only) |
+| `DESKSPAWN_API_KEY` | *(none)* | Real API key (real-API mode only) |
+| `DESKSPAWN_E2E_REAL` | *(unset)* | Set to `1` to enable real-API verification |
+| `CDP_URL` | `http://172.28.208.1:9222` | WebView2 CDP endpoint |
+
+Real-API example:
+
+```bash
+DESKSPAWN_E2E_PROVIDER=custom \
+DESKSPAWN_E2E_ENDPOINT=https://api.example.com/v1 \
+DESKSPAWN_E2E_MODEL=my-model \
+DESKSPAWN_API_KEY=sk-... \
+DESKSPAWN_E2E_REAL=1 \
+pnpm test:e2e
+```
+
+> **Never hardcode API keys in test files.** Keys are read from the environment only.
+
+> ⚠️ **Real-API E2E is the developer's own responsibility.** It uses a real
+> API key, incurs real cost, and stores the key in the **OS keychain** (same
+> path as production). The developer is responsible for saving **and deleting**
+> the key. Recommended guardrails:
+> - Use a **rate-limited / low-quota key**, never a production key. Cap cost
+>   (small model, max tokens, one generation only).
+> - Keep the key out of shell history: use the gitignored `.env` file
+>   (`cp .env.example .env`, then `set -a; source .env; set +a`).
+> - **CI must never run real-API E2E** — dummy mode only (`DESKSPAWN_E2E_REAL` unset).
+>
+> **Leak-mitigation is automatic:** `playwright.config.ts` disables trace when
+> `DESKSPAWN_E2E_REAL=1`, and `pnpm test:e2e:real` cleans `test-results/` and
+> `playwright-report/` afterwards. credentials.json (file fallback) only ever
+> lives under the user profile.
+>
+> Prefer `pnpm test:e2e:real` (desktop-only + cleanup) over the raw command
+> above, since `pnpm test:e2e` also targets the web suite which needs a live
+> CDP server.
 
 ## Branch Strategy
 
@@ -104,7 +207,7 @@ Examples:
 3. Ensure all checks pass locally:
    ```bash
    pnpm --filter web exec tsc -b --noEmit
-   pnpm --filter desktop exec tsc --noEmit
+   pnpm --filter desktop exec tsc -b --noEmit
    pnpm --filter web test
    pnpm --filter web test:ui
    pnpm --filter web build
@@ -117,14 +220,18 @@ Examples:
 
 ### TypeScript / React
 
-- Follow existing patterns in `apps/web/src/`
+- Follow existing patterns in `packages/shared/src/` — shared UI, chat, AI
+  provider, storage, i18n, and types live there (ADR-014)
 - Use TypeScript strict mode (no `any` unless necessary)
 - Components use functional style with hooks
 - UI components follow shadcn/ui conventions (Tailwind CSS v4)
-- Use the `@/` path alias for imports from `apps/web/src/`
-- **UI sharing rule**: the desktop app imports web components via the `@`
-  alias. Do NOT duplicate components — branch only platform-specific parts
-  (via `isDesktopEnv()` and per-platform i18n keys).
+- Import shared code via the `@deskspawn/shared` alias (points at
+  `packages/shared/src`); use relative imports *inside* `packages/shared/src`
+- **UI sharing rule (ADR-014)**: both apps (web and desktop) import shared
+  components from `packages/shared/src` via the `@deskspawn/shared` alias.
+  Do NOT duplicate components — branch only platform-specific parts (via
+  `isDesktopEnv()` and per-platform i18n keys). `apps/web/src` and
+  `apps/desktop/src` hold platform entry & glue code only.
 
 ### Rust
 

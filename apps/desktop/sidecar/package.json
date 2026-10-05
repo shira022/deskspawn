@@ -1,12 +1,13 @@
 {
   "name": "deskspawn-sidecar",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx src/index.ts",
+    "dev": "tsx src/server.ts",
     "server": "tsx src/server.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "vitest run"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.81",
@@ -19,8 +20,8 @@
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "pixelmatch": "^7.2.0",
-    "puppeteer-core": "^24.0.0",
-    "sharp": "^0.34.5",
+    "puppeteer-core": "^25.5.0",
+    "sharp": "^0.35.4",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -28,6 +29,7 @@
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.1",
     "tsx": "^4.22.4",
-    "typescript": "~5.6.3"
+    "typescript": "~5.6.3",
+    "vitest": "^4.1.9"
   }
 }

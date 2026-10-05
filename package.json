@@ -1,21 +1,37 @@
 {
   "name": "deskspawn-monorepo",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "description": "AI-powered app development platform — desktop-first, with a browser demo",
   "private": true,
   "scripts": {
     "dev": "pnpm --filter web dev",
     "build": "pnpm --filter web build",
     "test": "pnpm --filter web test",
+    "test:sidecar": "pnpm --filter deskspawn-sidecar test",
     "lint": "pnpm --filter web lint",
     "preview": "pnpm --filter web preview",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:e2e:real": "playwright test e2e/desktop.spec.ts && node scripts/clean-test-results.mjs",
+    "test:scripts": "node --test \"scripts/**/*.test.mjs\""
   },
   "engines": {
     "node": ">=20"
   },
   "devDependencies": {
-    "@playwright/test": "^1.62.1"
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.62.1",
+    "eslint": "^10.8.0",
+    "eslint-plugin-react-hooks": "^7.1.1",
+    "eslint-plugin-react-refresh": "^0.5.3",
+    "typescript-eslint": "^8.61.1"
   },
-  "packageManager": "pnpm@10.4.1"
+  "packageManager": "pnpm@10.4.1",
+  "pnpm": {
+    "overrides": {
+     "brace-expansion": "^5.0.8",
+     "undici": "7.29.1",
+     "postcss": "8.5.26",
+     "qs": "^6.14.0"
+    }
+   }
 }

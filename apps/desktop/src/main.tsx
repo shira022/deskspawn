@@ -14,14 +14,13 @@ import { getSidecarPort } from "./lib/ipc";
 // Import CSS (desktop entry imports web app's styles via local index.css)
 import "./index.css";
 
-// Register desktop services before anything renders
-registerDesktopServices();
-
-// デスクトップ環境フラグ — 共有エンジンがサイドカープロキシ経由でAIを呼ぶための判定
+// デスクトップ環境フラグ — 共有エンジンがサイドカープロキシ経由でAIを呼ぶための判定。
+// registerDesktopServices() より先に設定し、共有コード側の isDesktopEnv() ガード
+// （C7: desktop では WebStorageService を登録しない）が正しく評価されるようにする。
 (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ = true;
 
-// Force desktop to always land in app mode
-localStorage.setItem("deskspawn_route", "/app");
+// Register desktop services before anything renders
+registerDesktopServices();
 
 /**
  * サイドカーの実ポートをRustから取得してからレンダーする。

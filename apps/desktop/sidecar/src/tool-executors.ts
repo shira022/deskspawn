@@ -7,8 +7,8 @@ import type { Artifact, Action, TemplateAction } from './types.js';
 
 // bun --compile exe では __dirname/import.meta.url が実行時cwdに解決されるため、
 // データディレクトリを __dirname から導出すると存在しないパス（例: B:\workspace）になる。
-// ワークスペースの既定値も os.homedir() 基準で固定する（server.ts の PROJECTS_DIR と同じ方針）。
-const DEFAULT_WORKSPACE = path.join(os.homedir(), 'deskspawn', 'workspace');
+// ワークスペースの既定値も server.ts の PROJECTS_DIR（~/deskspawn/apps, ADR-007〜012）に統一する。
+const DEFAULT_WORKSPACE = path.join(os.homedir(), 'deskspawn', 'apps');
 
 // Security server (Rust) endpoint for all file/shell operations
 const SECURITY_SERVER_PORT = process.env.DESKSPAWN_SECURITY_PORT;

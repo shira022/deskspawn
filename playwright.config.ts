@@ -10,7 +10,12 @@ import { defineConfig } from '@playwright/test';
  *    172.28.208.0/20 限定)
  *
  * 実行: pnpm exec playwright test
+ *
+ * 漏洩対策: 実APIモード (DESKSPAWN_E2E_REAL=1) ではキー/プロンプトが
+ * trace.zip に残らないよう trace を無効化する (ダミーモードのみ retain-on-failure)。
  */
+const isRealApi = process.env.DESKSPAWN_E2E_REAL === '1';
+
 export default defineConfig({
   testDir: './e2e',
   timeout: 120_000,
@@ -19,7 +24,8 @@ export default defineConfig({
   fullyParallel: false,
   reporter: [['list']],
   use: {
-    trace: 'retain-on-failure',
+    // 実APIモードでは trace をオフ (キー/プロンプト漏洩防止)。ダミーモードは失敗時のみ。
+    trace: isRealApi ? 'off' : 'retain-on-failure',
     actionTimeout: 15_000,
   },
 });

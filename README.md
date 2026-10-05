@@ -91,16 +91,62 @@ without installing anything, then install the desktop app for real work.
 
 ## 🚀 Quick Start
 
-### Desktop App (recommended)
+There are three ways to get DeskSpawn. Pick the one that matches your situation.
 
-1. Download the installer from **[GitHub Releases](https://github.com/shira022/deskspawn/releases)**.
+### 1. Installer (recommended for users)
+
+1. Download the installer from **[GitHub Releases](https://github.com/shira022/deskspawn/releases)**
+   (`.msi` or the NSIS `-setup.exe` on Windows, `.deb` / `.AppImage` on Linux).
 2. Run the installer (Windows 10/11, WebView2 preinstalled).
 3. On first launch, select your language and enter an AI provider API key
    (stored in the OS keychain — never sent to any server beyond your provider).
 4. Click **+ New App**, describe what you want to build, and watch it appear
    in the local preview.
 
-### Web Demo (evaluation)
+> ⚠️ Installers are currently **unsigned**. Windows SmartScreen may warn you on
+> first run; macOS builds are not published because distribution there requires a
+> paid code-signing certificate (use the bootstrap script below instead).
+
+### 2. Bootstrap script (build from source, one command)
+
+If you prefer to build from source — or you are on macOS, where we do not publish
+installers — use the bootstrap script. It detects the required toolchain, tells you
+what it will install, clones or updates the repository, and builds the app.
+
+**Windows (PowerShell):**
+
+```powershell
+git clone https://github.com/shira022/deskspawn.git
+cd deskspawn
+powershell -ExecutionPolicy Bypass -File scripts/bootstrap.ps1
+```
+
+**Linux / macOS:**
+
+```bash
+git clone https://github.com/shira022/deskspawn.git
+cd deskspawn
+scripts/bootstrap.sh
+```
+
+Both scripts are idempotent — re-running them only does the missing work. The
+flag spelling differs by shell: `bootstrap.sh` uses POSIX `--ref`/`--dir`/…,
+while `bootstrap.ps1` uses PowerShell's single-dash `-Ref`/`-Dir`/… (PowerShell
+does **not** understand `--ref`). Run with `--help` (POSIX) or `-Help`
+(PowerShell) for the full list.
+
+| POSIX (`bootstrap.sh`) | PowerShell (`bootstrap.ps1`) | Meaning |
+|---|---|---|
+| `--ref <branch\|tag>` | `-Ref <branch\|tag>` | Git ref to check out (default `main`) |
+| `--dir <path>` | `-Dir <path>` | Clone target when run outside a checkout |
+| `--no-bundle` | `-NoBundle` | Skip installers for a faster build |
+| `--dev` | `-Dev` | Prepare everything and print the `tauri dev` command |
+| `--skip-deps` | `-SkipDeps` | Do not install or check prerequisites |
+
+They never touch your app data (`~/deskspawn/` on Linux/macOS,
+`%USERPROFILE%\deskspawn` on Windows) — only the source checkout.
+
+### 3. Web Demo (evaluation)
 
 Visit **[deskspawn.pages.dev](https://deskspawn.pages.dev)**, configure a
 provider, and try generating an app in your browser.
@@ -113,7 +159,12 @@ provider, and try generating an app in your browser.
 
 - [Node.js](https://nodejs.org/) 20+
 - [pnpm](https://pnpm.io/) (`corepack enable` or `npm install -g pnpm`)
-- For the desktop app: [Rust](https://rustup.rs/) (MSVC toolchain) + VS Build Tools on Windows
+- [Bun](https://bun.sh) — builds the sidecar binary and runs the preview dev server
+- [Rust](https://rustup.rs/) (MSVC toolchain on Windows) + VS Build Tools — desktop app only
+
+> 💡 Shortcut: `scripts/bootstrap.ps1` (Windows) / `scripts/bootstrap.sh`
+> (Linux/macOS) detect and install everything above for you. See
+> [Quick Start](#2-bootstrap-script-build-from-source-one-command).
 
 ### Setup
 
@@ -121,6 +172,9 @@ provider, and try generating an app in your browser.
 git clone https://github.com/shira022/deskspawn.git
 cd deskspawn
 pnpm install
+
+# The desktop app needs the sidecar binary (externalBin) before it will build:
+cd apps/desktop && bun scripts/build-sidecar.mjs && cd ../..
 ```
 
 ### Commands
@@ -134,33 +188,47 @@ pnpm install
 | `pnpm --filter web lint` | ESLint |
 | `pnpm --filter desktop tauri dev` | Desktop app (dev mode) |
 | `pnpm --filter desktop build` | Frontend build for the desktop app |
-| `pnpm test:e2e` | Playwright end-to-end tests |
+| `pnpm test:e2e` | Playwright end-to-end tests — ⚠️ **deletes real app data** (dev-environment only; see CONTRIBUTING "E2E modes") |
+| `pnpm test:e2e:real` | Real-API E2E (needs `DESKSPAWN_API_KEY` + `DESKSPAWN_E2E_REAL=1` in `.env`). ⚠️ **Developer's own responsibility** — real key + cost + OS keychain save, key delete is on you. Auto-disables trace & cleans test-results. See docs/user-flow-spec.md "Real-API E2E". |
 
 ### Project Structure
 
 ```
 deskspawn/                          # pnpm workspace root
 ├── apps/
-│   ├── web/                        # Web demo (Vite + React, Cloudflare Pages)
-│   │   ├── src/                    # Main app — shared with desktop via @ alias
-│   │   │   ├── engine/             # Multi-agent AI pipeline
-│   │   │   ├── lib/                # Utilities, storage, preview, i18n
-│   │   │   ├── store/              # Zustand state
-│   │   │   ├── components/         # UI components
-│   │   │   └── routes/             # Landing page + app routing
+│   ├── web/                        # Web demo (Cloudflare Pages) — thin entry over packages/shared
+│   │   ├── src/                    # Web-only entry: main.tsx, App.tsx, index.css, routes/, test/
 │   │   ├── public/                 # Static assets + _headers
-│   │   └── locales/                # i18n translations (ja/en)
-│   └── desktop/                    # Tauri v2 desktop app
-│       ├── src/                    # Thin entry + platform services
+│   └── desktop/                    # Tauri v2 desktop app — thin wrapper over packages/shared
+│       ├── src/                    # Entry point + platform services only (6 files)
 │       ├── src-tauri/              # Rust backend (storage, sidecar, IPC)
-│       └── sidecar/                # Bun-bundled AI engine (preview + AI proxy)
+│       └── sidecar/                # Bun-bundled Node server (AI proxy, preview, MCP)
 ├── packages/
+│   ├── shared/                     # ⭐ Shared app code (see "Who uses what" below)
+│   │   └── src/                    # engine/ hooks/ lib/ store/ components/ locales/ types/
 │   ├── ui/                         # Shared UI primitives
 │   ├── ai-core/                    # Shared AI pipeline types
 │   └── config/                     # Shared TS config
 ├── docs/                           # Documentation + ADRs
 └── pnpm-workspace.yaml
 ```
+
+#### Who uses what (read this before editing)
+
+| Concern | Where it lives | Notes |
+|---|---|---|
+| **UI & AI chat flow** | `packages/shared/src/**` | The single source of truth. Both `apps/web` and `apps/desktop` import it directly via the `@deskspawn/shared` alias. Do NOT edit code under `apps/web/src` (except `main.tsx`/`App.tsx`/`routes/`) to fix shared UI/AI logic — edit `packages/shared/src`. |
+| Web entry + routing | `apps/web/src/` | Only `main.tsx`, `App.tsx`, `index.css`, `routes/`, `test/`. Everything else lives in `packages/shared`. |
+| Desktop entry + IPC | `apps/desktop/src/` | Only 6 files: `main.tsx` (sets `__DESKSPAWN_DESKTOP__` flag), `App.tsx`, `vite-env.d.ts`, `index.css`, `lib/ipc.ts` (Tauri bridge — `getSidecarPort` is the only live wrapper), `lib/services.ts`. |
+| Rust backend | `apps/desktop/src-tauri/` | Storage, sidecar lifecycle, security server. |
+| Standalone AI server | `apps/desktop/sidecar/` | Bun-bundled Node server: OpenAI-compatible `/v1` proxy (CORS workaround), preview server, checkpoint & chat-history storage. The AI chat engine itself lives in `packages/shared` (legacy sidecar engine was removed in the 2026-08 audit). |
+| Model resolution (OpenAI/Anthropic/etc.) | `packages/shared/src/engine/providers.ts` | **The single source of truth** for which API each provider uses. |
+| Shared primitives | `packages/ui`, `packages/ai-core` | True shared packages (not aliased). |
+
+> 💡 **Rule of thumb:** if it's UI, chat, or AI provider logic, it lives in
+> `packages/shared/src` and is imported by both apps via the `@deskspawn/shared`
+> alias. `apps/web/src` and `apps/desktop/src` only contain platform entry &
+> glue code.
 
 ---
 
@@ -207,16 +275,3 @@ This project follows a [Code of Conduct](CODE_OF_CONDUCT.md).
 ## 📄 License
 
 [MIT](LICENSE) © DeskSpawn
-
----
-
-## 🇯🇵 日本語
-
-**DeskSpawn** は AI によるアプリ開発プラットフォームです。チャットで作りたいアプリを
-伝えると、AI がコードを生成し、実ファイルとして `~/deskspawn/apps/` に保存して、
-ローカルプレビューで即確認できます。**デスクトップアプリが本編**で、Web版は体験用
-デモです。APIキーは OS キーチェーンに保存され、データはあなたの PC から出ません。
-
-- 📥 ダウンロード: [GitHub Releases](https://github.com/shira022/deskspawn/releases)
-- 🌐 ブラウザで試す: [deskspawn.pages.dev](https://deskspawn.pages.dev)
-- 📖 ドキュメント: [Getting Started](docs/getting-started.md) / [Installation](docs/installation.md) / [Spec](docs/spec.md)

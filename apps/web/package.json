@@ -1,6 +1,6 @@
 {
   "name": "web",
-  "version": "0.4.2",
+  "version": "0.5.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -43,6 +43,7 @@
     "zod": "^4.4.3",
     "zustand": "^5.0.14",
     "@deskspawn/ai-core": "workspace:*",
+    "@deskspawn/shared": "workspace:*",
     "@deskspawn/ui": "workspace:*"
   },
   "devDependencies": {
