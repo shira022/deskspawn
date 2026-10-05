@@ -42,7 +42,12 @@ import { AiConfigDialog } from "../settings/AiConfigDialog";
 import { isDesktopEnv } from "../../lib/platform";
 import type { ProviderKind, ThemeMode } from "../../types";
 import type { LanguageCode } from "../../lib/languages";
-import { providerLabels } from "../../lib/constants";
+import {
+  providerLabels,
+  providerGroups,
+  isProviderKind,
+  providerNeedsApiKey,
+} from "../../lib/constants";
 import { loadProviderConfig } from "../../lib/storage";
 import { LanguageSelectScreen } from "../onboarding/LanguageSelectScreen";
 import { useModels } from "../../hooks/useModels";
@@ -57,10 +62,11 @@ const providerIcons: Record<ProviderKind, React.ReactNode> = {
   anthropic: <Cloud className="h-3.5 w-3.5" />,
   google: <Globe className="h-3.5 w-3.5" />,
   ollama: <Cpu className="h-3.5 w-3.5" />,
-  custom: <Server className="h-3.5 w-3.5" />,
-  "amazon-bedrock": <HardDrive className="h-3.5 w-3.5" />,
-  "azure-openai": <Container className="h-3.5 w-3.5" />,
-  "google-vertex": <Zap className="h-3.5 w-3.5" />,
+  "lm-studio": <Cpu className="h-3.5 w-3.5" />,
+  "openai-compatible": <Server className="h-3.5 w-3.5" />,
+  "aws-bedrock": <HardDrive className="h-3.5 w-3.5" />,
+  "azure-foundry": <Container className="h-3.5 w-3.5" />,
+  "gcp-vertexai": <Zap className="h-3.5 w-3.5" />,
 };
 
 export function MainLayout() {
@@ -85,10 +91,11 @@ export function MainLayout() {
     anthropic: "Claude",
     google: "Gemini",
     ollama: t('ai.providerOllamaDesc'),
-    custom: t('ai.providerCustomDesc'),
-    "amazon-bedrock": t('ai.providerAmazonBedrockDesc'),
-    "azure-openai": t('ai.providerAzureOpenAIDesc'),
-    "google-vertex": t('ai.providerGcpVertexAIDesc'),
+    "lm-studio": t('ai.providerLmStudioDesc'),
+    "openai-compatible": t('ai.providerCustomDesc'),
+    "aws-bedrock": t('ai.providerAmazonBedrockDesc'),
+    "azure-foundry": t('ai.providerAzureOpenAIDesc'),
+    "gcp-vertexai": t('ai.providerGcpVertexAIDesc'),
   };
 
   const layoutLabels: Record<string, string> = {
@@ -110,10 +117,17 @@ export function MainLayout() {
   const updateSettings = useAppStore((s) => s.updateSettings);
   const setAppLoading = useAppStore((s) => s.setAppLoading);
 
-  const currentProvider: ProviderKind = (aiConfig?.provider as ProviderKind) ?? "ollama";
+  // 保存済み ID が既知の 9 種に無い場合（旧ID・壊れた値）は AiConfigDialog
+  // と同じく openai へ落とす（保存データの移行はしない — ユーザー決定）。
+  const currentProvider: ProviderKind =
+    aiConfig == null
+      ? "ollama"
+      : isProviderKind(aiConfig.provider)
+        ? aiConfig.provider
+        : "openai";
   const currentModel = aiConfig?.model ?? null;
   const hasConfig = aiConfig !== null;
-  const needsApiKey = currentProvider !== "ollama";
+  const needsApiKey = providerNeedsApiKey(currentProvider);
   const isConfigReady = hasConfig && (!needsApiKey || aiConfig?.apiKeyConfigured === true);
 
   // Model discovery for toolbar popover
@@ -151,8 +165,7 @@ export function MainLayout() {
   const handleProviderChange = useCallback(
     async (e: React.ChangeEvent<HTMLSelectElement>) => {
       const provider = e.target.value as ProviderKind;
-      // google-vertex / azure-openai は未実装のため選択不可
-      if (provider === "google-vertex" || provider === "azure-openai") return;
+      if (!isProviderKind(provider)) return;
       // Load saved config for the target provider to preserve model/endpoint/region
       const savedCfg = await loadProviderConfig(provider);
       setAiConfig({
@@ -340,10 +353,14 @@ export function MainLayout() {
                             onChange={handleProviderChange}
                             className="h-8 text-xs"
                           >
-                            {Object.entries(providerLabels).map(([id, label]) => (
-                              <option key={id} value={id} disabled={id === "google-vertex" || id === "azure-openai"}>
-                                {label} - {providerRepModel[id as ProviderKind]}
-                              </option>
+                            {providerGroups.map((group) => (
+                              <optgroup key={group.category} label={group.label}>
+                                {group.providers.map((id) => (
+                                  <option key={id} value={id}>
+                                    {providerLabels[id]} - {providerRepModel[id]}
+                                  </option>
+                                ))}
+                              </optgroup>
                             ))}
                           </Select>
                         </div>
