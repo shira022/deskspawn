@@ -24,6 +24,8 @@ vi.mock("../lib/i18n", () => ({
 import { useModels } from "./useModels";
 import { getModelsForProvider } from "../lib/models-fetcher";
 import { setModelCostCache, clearModelCostCache } from "../lib/cost";
+import { providerCategories } from "../lib/constants";
+import type { ProviderKind } from "../types";
 
 // ── Helpers ──────────────────────────────────────────────────────────────────────
 
@@ -173,5 +175,58 @@ describe("useModels", () => {
   it("does not call getModelsForProvider unless fetchModels is called", () => {
     renderHook(() => useModels({ provider: "openai" }));
     expect(getModelsForProvider).not.toHaveBeenCalled();
+  });
+
+  // ── All providers ──────────────────────────────────────────────────────────
+
+  it("passes provider, customEndpoint and apiKey for every ProviderKind", async () => {
+    vi.mocked(getModelsForProvider).mockResolvedValue(mockModels);
+    const allProviders = Object.keys(providerCategories) as ProviderKind[];
+    expect(allProviders).toHaveLength(9);
+
+    for (const provider of allProviders) {
+      vi.mocked(getModelsForProvider).mockClear();
+
+      const { result } = renderHook(() =>
+        useModels({
+          provider,
+          customEndpoint: `https://${provider}.example.com/v1`,
+          apiKey: `key-${provider}`,
+        }),
+      );
+
+      await act(async () => {
+        await result.current.fetchModels();
+      });
+
+      expect(getModelsForProvider, provider).toHaveBeenCalledWith(
+        provider,
+        `https://${provider}.example.com/v1`,
+        `key-${provider}`,
+      );
+      expect(result.current.error, provider).toBe("");
+      expect(result.current.models).toEqual(mockModels);
+    }
+  });
+
+  it("passes undefined endpoint/key for every ProviderKind when none are set", async () => {
+    vi.mocked(getModelsForProvider).mockResolvedValue(mockModels);
+    const allProviders = Object.keys(providerCategories) as ProviderKind[];
+
+    for (const provider of allProviders) {
+      vi.mocked(getModelsForProvider).mockClear();
+
+      const { result } = renderHook(() => useModels({ provider }));
+
+      await act(async () => {
+        await result.current.fetchModels();
+      });
+
+      expect(getModelsForProvider, provider).toHaveBeenCalledWith(
+        provider,
+        undefined,
+        undefined,
+      );
+    }
   });
 });

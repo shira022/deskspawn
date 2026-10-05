@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
-import type { ChatMessage, FileNode, AppMeta } from "../types";
+import type { ChatMessage, FileNode, AppMeta, ProviderKind } from "../types";
 
 // ── Mocks (hoisted by vitest) ────────────────────────────────────────────────────
 
@@ -88,6 +88,17 @@ beforeAll(async () => {
   useAppStore = mod.useAppStore;
   // Snapshot initial state for reset between tests
   initialState = JSON.parse(JSON.stringify(useAppStore.getState()));
+});
+
+// constants はこのファイルでモックしているため、9 プロバイダーの単一情報源は
+// 実物から取りに行く（将来の追加漏れを検出できるようにするため）。
+let ALL_PROVIDERS: ProviderKind[] = [];
+
+beforeAll(async () => {
+  const constants = await vi.importActual<typeof import("../lib/constants")>(
+    "../lib/constants",
+  );
+  ALL_PROVIDERS = Object.keys(constants.providerCategories) as ProviderKind[];
 });
 
 beforeEach(() => {
@@ -653,6 +664,59 @@ describe("useAppStore — initialize()", () => {
     expect(useAppStore.getState().settings.language).toBe("en");
     expect(mockStorageFns.saveSettingsDesktop).toHaveBeenCalledWith(
       expect.objectContaining({ language: "en" }),
+    );
+  });
+});
+
+describe("useAppStore — setAiConfig for every provider", () => {
+  it("persists lastProvider and the per-provider config for all 9 providers", async () => {
+    expect(ALL_PROVIDERS).toHaveLength(9);
+
+    for (const provider of ALL_PROVIDERS) {
+      mockStorageFns.saveProviderConfig.mockClear();
+      mockStorageFns.saveLastProvider.mockClear();
+      mockStorageFns.saveApiKey.mockClear();
+
+      const config = {
+        provider,
+        model: `model-${provider}`,
+        apiKey: `key-${provider}`,
+        customEndpoint: `https://${provider}.example.com`,
+        region: "us-east-1",
+      };
+
+      await useAppStore.getState().setAiConfig(config);
+
+      // provider_config_{provider} へ保存される（キー生成は storage 側の責務）
+      expect(mockStorageFns.saveProviderConfig, provider).toHaveBeenCalledWith(provider, {
+        model: `model-${provider}`,
+        customEndpoint: `https://${provider}.example.com`,
+        region: "us-east-1",
+        maxSteps: undefined,
+      });
+      // lastProvider も同じプロバイダーで上書きされる
+      expect(mockStorageFns.saveLastProvider, provider).toHaveBeenCalledWith(provider);
+      // APIキーはプロバイダー単位で保存される
+      expect(mockStorageFns.saveApiKey, provider).toHaveBeenCalledWith(
+        provider,
+        `key-${provider}`,
+      );
+
+      const state = useAppStore.getState();
+      expect(state.aiConfig.provider, provider).toBe(provider);
+      expect(state.aiConfig.model, provider).toBe(`model-${provider}`);
+      // 保存後はキー本体をステートに残さない
+      expect(state.aiConfig.apiKey, provider).toBe("");
+    }
+  });
+
+  it("keeps the provider list and the store in sync (9 kinds)", async () => {
+    for (const provider of ALL_PROVIDERS) {
+      await useAppStore.getState().setAiConfig({ provider, model: "m", apiKey: "k" });
+      expect(useAppStore.getState().aiConfig.provider, provider).toBe(provider);
+    }
+    expect(useAppStore.getState().aiConfig.provider).toBe(
+      ALL_PROVIDERS[ALL_PROVIDERS.length - 1],
     );
   });
 });

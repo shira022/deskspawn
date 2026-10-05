@@ -46,8 +46,10 @@ export interface UseChatStreamReturn {
 /**
  * Check for provider-specific missing configuration before calling getModel().
  * Returns a localized detail message, or null if config looks complete.
+ *
+ * exported as a test seam (logic unchanged) — see useChatStream.provider-config.test.ts
  */
-function getProviderConfigIssue(cfg: NonNullable<ReturnType<typeof useAppStore.getState>['aiConfig']>, providerLabel: string): string | null {
+export function getProviderConfigIssue(cfg: NonNullable<ReturnType<typeof useAppStore.getState>['aiConfig']>, providerLabel: string): string | null {
   switch (cfg.provider) {
     case 'openai-compatible':
       if (!cfg.customEndpoint) {

@@ -1,4 +1,15 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { providerCategories } from "./constants";
+import type { ProviderKind } from "../types";
+
+/** models.dev カタログから一覧を取るプロバイダー（実装の switch と対応）。 */
+const MODELS_DEV_PROVIDERS = [
+  "openai",
+  "anthropic",
+  "google",
+  "aws-bedrock",
+  "gcp-vertexai",
+] as const;
 
 // ─── Sample catalog data matching models.dev schema ──────────────────────────
 
@@ -37,6 +48,49 @@ const SAMPLE_CATALOG = {
         limit: { context: 8191, output: 1 },
         status: "available",
         modalities: { input: ["text"], output: ["text"] },
+      },
+    },
+  },
+  anthropic: {
+    name: "Anthropic",
+    models: {
+      "claude-sonnet-4-5": {
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 200000, output: 64000 },
+        cost: { input: 3, output: 15 },
+        status: "available",
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+      "claude-3-5-haiku-latest": {
+        id: "claude-3-5-haiku-latest",
+        name: "Claude 3.5 Haiku",
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 200000, output: 8192 },
+        cost: { input: 0.8, output: 4 },
+        status: "available",
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+    },
+  },
+  google: {
+    name: "Google",
+    models: {
+      "gemini-2.5-pro": {
+        id: "gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 1048576, output: 65536 },
+        cost: { input: 1.25, output: 10 },
+        status: "available",
+        modalities: { input: ["text", "image"], output: ["text"] },
       },
     },
   },
@@ -281,6 +335,148 @@ describe("getModelsForProvider", () => {
     expect(models2.length).toBeGreaterThan(0);
     // Still only 1 fetch call
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Full provider coverage ────────────────────────────────────────────────
+
+  const ALL_PROVIDERS = Object.keys(providerCategories) as ProviderKind[];
+
+  /** URL ごとに応答を切り替える（models.dev / ollama / OpenAI互換）。 */
+  function routeFetch(url: unknown): Promise<unknown> {
+    const u = String(url);
+    if (u.includes("models.dev")) {
+      return Promise.resolve(createJsonResponse(SAMPLE_CATALOG));
+    }
+    if (u.endsWith("/api/tags")) {
+      return Promise.resolve(createJsonResponse(OLLAMA_RESPONSE));
+    }
+    return Promise.resolve(createJsonResponse(CUSTOM_RESPONSE));
+  }
+
+  it("returns an array for every supported provider (never 'Unknown provider')", async () => {
+    expect(ALL_PROVIDERS).toHaveLength(9);
+
+    for (const provider of ALL_PROVIDERS) {
+      mockFetch.mockReset();
+      mockFetch.mockImplementation((url: unknown) => routeFetch(url));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider(
+        provider,
+        provider === "openai-compatible" ? "https://example.com/v1" : undefined,
+        "sk-test",
+      );
+
+      expect(Array.isArray(models), provider).toBe(true);
+      if (provider === "azure-foundry") {
+        // Azure Foundry にはモデル一覧 API がなく、UI は手動入力に切り替える
+        expect(models, provider).toEqual([]);
+      } else {
+        expect(models.length, provider).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("returns models for anthropic via the models.dev catalog", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("anthropic");
+
+    expect(models.some((m) => m.id === "claude-sonnet-4-5")).toBe(true);
+    expect(models.some((m) => m.id === "claude-3-5-haiku-latest")).toBe(true);
+    expect(models.every((m) => m.contextLimit > 0)).toBe(true);
+  });
+
+  it("returns models for google via the models.dev catalog", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("google");
+
+    expect(models.some((m) => m.id === "gemini-2.5-pro")).toBe(true);
+    expect(models[0].cost?.input).toBe(1.25);
+    expect(models[0].cost?.output).toBe(10);
+  });
+
+  it.each(MODELS_DEV_PROVIDERS)(
+    "carries models.dev pricing for %s",
+    async (provider) => {
+      mockFetch.mockResolvedValue(createJsonResponse(SAMPLE_CATALOG));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider(provider);
+
+      expect(models.length, provider).toBeGreaterThan(0);
+      for (const m of models) {
+        expect(m.cost, `${provider}/${m.id}`).toBeDefined();
+        expect(m.cost?.input, `${provider}/${m.id}`).toBeGreaterThan(0);
+        expect(m.cost?.output, `${provider}/${m.id}`).toBeGreaterThan(0);
+      }
+    },
+  );
+
+  // ── Failure paths ─────────────────────────────────────────────────────────
+
+  it("rejects when models.dev responds with a non-OK status", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("openai")).rejects.toThrow(
+      "models.dev fetch failed: 500",
+    );
+  });
+
+  it("propagates a network error from models.dev", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("network down"));
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("anthropic")).rejects.toThrow("network down");
+  });
+
+  it("propagates an abort from models.dev", async () => {
+    const abortError = Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+    });
+    mockFetch.mockRejectedValueOnce(abortError);
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("google")).rejects.toThrow(
+      "The operation was aborted",
+    );
+  });
+
+  it("rejects when Ollama /api/tags is not OK", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("ollama")).rejects.toThrow(
+      "Ollama /api/tags failed: 503",
+    );
+  });
+
+  it("rejects when the openai-compatible /models endpoint is not OK", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(
+      getModelsForProvider("openai-compatible", "https://broken.example.com/v1"),
+    ).rejects.toThrow("Custom /models fetch failed: 500");
+  });
+
+  it("rejects when the lm-studio /models endpoint is not OK", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 });
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("lm-studio")).rejects.toThrow(
+      "Custom /models fetch failed: 502",
+    );
   });
 });
 
