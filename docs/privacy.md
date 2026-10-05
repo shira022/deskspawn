@@ -26,7 +26,7 @@ DeskSpawn は以下の目的でのみ外部へ通信します。
 - **AI プロバイダーへの送信は、ユーザー自身が設定したアカウント・契約のもとで行われます。**
   どのプロバイダーにどこまで送信されるかは、各プロバイダーのプライバシーポリシーの適用範囲です。
 - 生成されたアプリが外部と通信する場合、それは生成物側の挙動であり、DeskSpawn 本体のデータ収集とは別です。
-- 上記以外への送信は行っていません。各送信先はいずれも DeskSpawn の機能（AI 生成・依存パッケージのインストール・更新確認・Web 版ランタイムの起動）のために必要なものです。
+- 上記以外への送信は行っていません。各送信先はいずれも DeskSpawn の機能（AI 推論・モデル一覧/価格情報の取得・依存パッケージのインストール・更新確認・Web 版ランタイムの起動）のために必要なものです。
 
 ## 2. ローカルに保存されるデータ
 
@@ -90,8 +90,8 @@ DeskSpawn communicates externally only for the following purposes:
 - If a generated app communicates with the outside, that is behavior of the generated artifact,
   separate from DeskSpawn's own data collection.
 - No other transmissions are made. Each destination listed above is required for
-  DeskSpawn's functionality (AI generation, dependency installation, update checks,
-  and the web runtime).
+  DeskSpawn's functionality (AI inference, model list and pricing lookup, dependency
+  installation, update checks, and the web runtime).
 
 ## 2. Data stored locally
 
