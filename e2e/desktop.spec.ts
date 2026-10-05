@@ -11,11 +11,11 @@
  *    モデル一覧取得とAI応答まで検証する。APIキーが必要。
  *
  * ── 環境変数 (すべて省略可) ─────────────────────────────────────────
- *   DESKSPAWN_E2E_PROVIDER  プロバイダーID (default: custom)
- *   DESKSPAWN_E2E_ENDPOINT  エンドポイントURL (custom/ollama/azure/anthropic)
+ *   DESKSPAWN_E2E_PROVIDER  プロバイダーID (default: openai-compatible)
+ *   DESKSPAWN_E2E_ENDPOINT  エンドポイントURL (openai-compatible/ollama/lm-studio/azure/anthropic)
  *                           (default: http://127.0.0.1:9/v1 — 破棄ポートで意図的に繋がらない)
  *   DESKSPAWN_E2E_MODEL     モデルID (default: e2e-model)
- *   DESKSPAWN_E2E_REGION    AWSリージョン (amazon-bedrock のみ, default: us-east-1)
+ *   DESKSPAWN_E2E_REGION    リージョン (aws-bedrock/gcp-vertexai, default: us-east-1)
  *   DESKSPAWN_API_KEY       APIキー (ダミーモードでは不要)
  *   DESKSPAWN_E2E_REAL=1    実APIモードを有効化
  *   CDP_URL                 WebView2 CDP エンドポイント (default: http://172.28.208.1:9222)
@@ -48,7 +48,7 @@ const SHOT_DIR = path.join(__dirname, 'screenshots');
 const CDP_URL = process.env.CDP_URL || 'http://172.28.208.1:9222';
 
 // ── E2E設定 (すべて環境変数から。未設定ならダミー値でUIフローのみ検証) ──
-const PROVIDER = process.env.DESKSPAWN_E2E_PROVIDER || 'custom';
+const PROVIDER = process.env.DESKSPAWN_E2E_PROVIDER || 'openai-compatible';
 const ENDPOINT = process.env.DESKSPAWN_E2E_ENDPOINT || 'http://127.0.0.1:9/v1';
 const MODEL = process.env.DESKSPAWN_E2E_MODEL || 'e2e-model';
 const REGION = process.env.DESKSPAWN_E2E_REGION || 'us-east-1';
@@ -58,9 +58,9 @@ const REAL_API = process.env.DESKSPAWN_E2E_REAL === '1';
 const DUMMY_KEY = 'sk-e2e-dummy-key';
 
 /** エンドポイント入力欄が表示されるプロバイダー (AiConfigDialog の表示条件と一致) */
-const NEEDS_ENDPOINT = ['custom', 'anthropic', 'azure-openai', 'ollama'].includes(PROVIDER);
-/** APIキー入力欄が表示されるプロバイダー (ollama 以外すべて) */
-const NEEDS_API_KEY = PROVIDER !== 'ollama';
+const NEEDS_ENDPOINT = ['openai-compatible', 'anthropic', 'azure-foundry', 'ollama', 'lm-studio'].includes(PROVIDER);
+/** APIキー入力欄が表示されるプロバイダー (ローカル: ollama / lm-studio は不要) */
+const NEEDS_API_KEY = PROVIDER !== 'ollama' && PROVIDER !== 'lm-studio';
 
 let browser: Browser;
 let page: Page;
@@ -407,8 +407,8 @@ test('02: AI設定フロー — プロバイダーを保存しツールバーに
     await keyInput.fill(REAL_API ? API_KEY : DUMMY_KEY);
   }
 
-  // AWSリージョン (amazon-bedrock のみ)
-  if (PROVIDER === 'amazon-bedrock') {
+  // リージョン (aws-bedrock / gcp-vertexai)
+  if (PROVIDER === 'aws-bedrock' || PROVIDER === 'gcp-vertexai') {
     const regionInput = page.getByPlaceholder(/us-east-1|リージョン/).first();
     await regionInput.fill(REGION);
   }

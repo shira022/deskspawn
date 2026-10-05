@@ -9,7 +9,7 @@
 import { useState, useCallback, useRef } from "react";
 import { useAppStore } from "../store/useAppStore";
 import type { ChatMessage, StepLogEntry, TokenUsage, PipelineTierLevel } from "../types";
-import { providerLabels } from "../lib/constants";
+import { providerLabels, providerNeedsApiKey } from "../lib/constants";
 import { isDesktopEnv } from "../lib/platform";
 import { newMessageId } from "../lib/ids";
 import { getModel } from "../engine/providers";
@@ -49,17 +49,22 @@ export interface UseChatStreamReturn {
  */
 function getProviderConfigIssue(cfg: NonNullable<ReturnType<typeof useAppStore.getState>['aiConfig']>, providerLabel: string): string | null {
   switch (cfg.provider) {
-    case 'custom':
+    case 'openai-compatible':
       if (!cfg.customEndpoint) {
         return i18n.t('chat.error.customEndpointRequired', { provider: providerLabel });
       }
       break;
-    case 'amazon-bedrock':
+    case 'aws-bedrock':
       if (!cfg.region) {
         return i18n.t('chat.error.regionRequired', { provider: providerLabel });
       }
       break;
-    case 'azure-openai':
+    case 'gcp-vertexai':
+      if (!cfg.region) {
+        return i18n.t('chat.error.gcpRegionRequired', { provider: providerLabel });
+      }
+      break;
+    case 'azure-foundry':
       if (!cfg.customEndpoint) {
         return i18n.t('chat.error.customEndpointRequired', { provider: providerLabel });
       }
@@ -67,6 +72,11 @@ function getProviderConfigIssue(cfg: NonNullable<ReturnType<typeof useAppStore.g
     case 'ollama':
       if (!cfg.model) {
         return i18n.t('chat.error.ollamaModelRequired', { provider: providerLabel, example: 'llama3.2' });
+      }
+      break;
+    case 'lm-studio':
+      if (!cfg.model) {
+        return i18n.t('chat.error.ollamaModelRequired', { provider: providerLabel, example: 'qwen2.5-7b-instruct' });
       }
       break;
   }
@@ -631,7 +641,7 @@ export function useChatStream(): UseChatStreamReturn {
       // Load API key for the current provider from encrypted storage
       const apiKey = await loadApiKey(cfg.provider);
 
-      if (cfg.provider !== "ollama" && !apiKey) {
+      if (providerNeedsApiKey(cfg.provider) && !apiKey) {
         addMessage({
           id: newMessageId("msg-err"),
           role: "assistant",

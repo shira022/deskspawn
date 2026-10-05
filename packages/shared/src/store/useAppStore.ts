@@ -244,7 +244,12 @@ export const useAppStore = create<Store>((set, get) => ({
             });
 
             // Pre-populate model cost cache from models.dev
-            if (lastProvider !== "ollama" && lastProvider !== "custom") {
+            // (ローカル/互換プロバイダーは価格情報を持たないため対象外)
+            if (
+              lastProvider !== "ollama" &&
+              lastProvider !== "lm-studio" &&
+              lastProvider !== "openai-compatible"
+            ) {
               try {
                 const models = await getModelsForProvider(lastProvider);
                 if (models.length > 0) {

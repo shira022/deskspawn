@@ -56,6 +56,22 @@ const SAMPLE_CATALOG = {
       },
     },
   },
+  "google-vertex": {
+    name: "Google Cloud Vertex AI",
+    models: {
+      "gemini-2.0-flash": {
+        id: "gemini-2.0-flash",
+        name: "Gemini 2.0 Flash",
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 1048576, output: 8192 },
+        cost: { input: 0.1, output: 0.4 },
+        status: "available",
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+    },
+  },
 };
 
 const OLLAMA_RESPONSE = {
@@ -120,11 +136,29 @@ describe("getModelsForProvider", () => {
     expect(gpt4o.cost!.output).toBe(10);
   });
 
-  it("returns empty array for azure-openai provider", async () => {
+  it("returns empty array for azure-foundry provider", async () => {
     const { getModelsForProvider } = await getModule();
-    const models = await getModelsForProvider("azure-openai");
+    const models = await getModelsForProvider("azure-foundry");
 
     expect(models).toEqual([]);
+  });
+
+  it("maps aws-bedrock to the amazon-bedrock models.dev catalog key", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("aws-bedrock");
+
+    expect(models.some((m) => m.id === "claude-sonnet-4")).toBe(true);
+  });
+
+  it("maps gcp-vertexai to the google-vertex models.dev catalog key", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("gcp-vertexai");
+
+    expect(models.some((m) => m.id === "gemini-2.0-flash")).toBe(true);
   });
 
   it("returns models for ollama provider with given endpoint", async () => {
@@ -150,11 +184,11 @@ describe("getModelsForProvider", () => {
     expect(mockFetch).toHaveBeenCalledWith("http://localhost:11434/api/tags");
   });
 
-  it("returns models for custom provider with endpoint and apiKey", async () => {
+  it("returns models for openai-compatible provider with endpoint and apiKey", async () => {
     mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
 
     const { getModelsForProvider } = await getModule();
-    const models = await getModelsForProvider("custom", "https://my-api.example.com/v1", "sk-test");
+    const models = await getModelsForProvider("openai-compatible", "https://my-api.example.com/v1", "sk-test");
 
     expect(models.length).toBe(2);
     expect(models[0].id).toBe("my-custom-model");
@@ -169,11 +203,11 @@ describe("getModelsForProvider", () => {
     );
   });
 
-  it("calls custom provider without apiKey when not provided", async () => {
+  it("calls openai-compatible provider without apiKey when not provided", async () => {
     mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
 
     const { getModelsForProvider } = await getModule();
-    await getModelsForProvider("custom", "https://my-api.example.com/v1");
+    await getModelsForProvider("openai-compatible", "https://my-api.example.com/v1");
 
     expect(mockFetch).toHaveBeenCalledWith(
       "https://my-api.example.com/v1/models",
@@ -188,11 +222,39 @@ describe("getModelsForProvider", () => {
     expect(callArgs.headers).not.toHaveProperty("Authorization");
   });
 
-  it("throws when custom provider has no endpoint", async () => {
+  it("throws when openai-compatible provider has no endpoint", async () => {
     const { getModelsForProvider } = await getModule();
 
-    await expect(getModelsForProvider("custom")).rejects.toThrow(
-      "customEndpoint is required for custom provider",
+    await expect(getModelsForProvider("openai-compatible")).rejects.toThrow(
+      "customEndpoint is required for openai-compatible provider",
+    );
+  });
+
+  it("returns models for lm-studio provider via the local /v1/models endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("lm-studio");
+
+    expect(models.length).toBe(2);
+    expect(models[0].id).toBe("my-custom-model");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:1234/v1/models",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Accept: "application/json" }),
+      }),
+    );
+  });
+
+  it("uses the custom endpoint for lm-studio when provided", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
+
+    const { getModelsForProvider } = await getModule();
+    await getModelsForProvider("lm-studio", "http://192.168.1.50:1234/v1");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://192.168.1.50:1234/v1/models",
+      expect.anything(),
     );
   });
 
@@ -280,7 +342,7 @@ describe("lookupModelCostById", () => {
 
     await getModelsForProvider("openai");
 
-    // Model from amazon-bedrock provider
+    // Model from the aws-bedrock (models.dev key: amazon-bedrock) catalog
     const cost = lookupModelCostById("claude-sonnet-4");
     expect(cost).toBeDefined();
     expect(cost!.input).toBe(3);

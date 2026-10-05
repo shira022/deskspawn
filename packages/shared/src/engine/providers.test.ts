@@ -35,7 +35,7 @@ vi.mock("@ai-sdk/openai-compatible", () => ({
 
 vi.mock("@ai-sdk/amazon-bedrock", () => ({
   createAmazonBedrock: vi.fn(() =>
-    vi.fn((modelId: string) => ({ provider: "amazon-bedrock", modelId })),
+    vi.fn((modelId: string) => ({ provider: "aws-bedrock", modelId })),
   ),
 }));
 
@@ -47,7 +47,7 @@ vi.mock("@ai-sdk/azure", () => ({
 
 vi.mock("@ai-sdk/google-vertex/edge", () => ({
   createVertex: vi.fn(() =>
-    vi.fn((modelId: string) => ({ provider: "google-vertex", modelId })),
+    vi.fn((modelId: string) => ({ provider: "gcp-vertexai", modelId })),
   ),
 }));
 
@@ -166,9 +166,9 @@ describe("getModel", () => {
     });
   });
 
-  it('creates an OpenAI-compatible model for custom provider', () => {
+  it('creates an OpenAI-compatible model for the openai-compatible provider', () => {
     const config: ProviderConfig = {
-      provider: "custom",
+      provider: "openai-compatible",
       model: "my-model",
       apiKey: "custom-key",
       customEndpoint: "https://my-proxy.example.com/v1",
@@ -179,22 +179,60 @@ describe("getModel", () => {
       modelId: "my-model",
     });
     expect(createOpenAICompatible).toHaveBeenCalledWith({
-      name: "custom-provider",
+      name: "openai-compatible",
       baseURL: "https://my-proxy.example.com/v1",
       apiKey: "custom-key",
     });
   });
 
-  it('creates an amazon-bedrock model with region', () => {
+  it('creates an lm-studio model with default localhost endpoint', () => {
     const config: ProviderConfig = {
-      provider: "amazon-bedrock",
+      provider: "lm-studio",
+      model: "qwen2.5-7b-instruct",
+    };
+    const model = getModel(config) as any;
+    expect(model).toEqual({
+      provider: "openai-compatible",
+      modelId: "qwen2.5-7b-instruct",
+    });
+    expect(createOpenAICompatible).toHaveBeenCalledWith({
+      name: "lm-studio",
+      baseURL: "http://localhost:1234/v1",
+    });
+  });
+
+  it('lm-studio uses customEndpoint when provided', () => {
+    const config: ProviderConfig = {
+      provider: "lm-studio",
+      model: "local-model",
+      customEndpoint: "http://192.168.1.50:1234/v1",
+    };
+    getModel(config);
+    expect(createOpenAICompatible).toHaveBeenCalledWith({
+      name: "lm-studio",
+      baseURL: "http://192.168.1.50:1234/v1",
+    });
+  });
+
+  it('lm-studio does not require an API key', () => {
+    const config: ProviderConfig = {
+      provider: "lm-studio",
+      model: "local-model",
+      apiKey: "",
+    };
+    expect(() => getModel(config)).not.toThrow();
+  });
+
+  it('creates an aws-bedrock model with region', () => {
+    const config: ProviderConfig = {
+      provider: "aws-bedrock",
       model: "anthropic.claude-sonnet-4-20250514",
       apiKey: "aws-key",
       region: "us-east-1",
     };
     const model = getModel(config) as any;
     expect(model).toEqual({
-      provider: "amazon-bedrock",
+      provider: "aws-bedrock",
       modelId: "anthropic.claude-sonnet-4-20250514",
     });
     expect(createAmazonBedrock).toHaveBeenCalledWith({
@@ -203,9 +241,9 @@ describe("getModel", () => {
     });
   });
 
-  it('creates an azure-openai model with resource name', () => {
+  it('creates an azure-foundry model with resource name', () => {
     const config: ProviderConfig = {
-      provider: "azure-openai",
+      provider: "azure-foundry",
       model: "gpt-4",
       apiKey: "azure-key",
       customEndpoint: "https://my-resource.openai.azure.com",
@@ -218,18 +256,22 @@ describe("getModel", () => {
     });
   });
 
-  it('creates a google-vertex model with region', () => {
+  it('creates a gcp-vertexai model with region', () => {
     const config: ProviderConfig = {
-      provider: "google-vertex",
+      provider: "gcp-vertexai",
       model: "gemini-2.0-flash-001",
       apiKey: "vertex-key",
+      region: "us-central1",
     };
     const model = getModel(config) as any;
     expect(model).toEqual({
-      provider: "google-vertex",
+      provider: "gcp-vertexai",
       modelId: "gemini-2.0-flash-001",
     });
-    expect(createVertex).toHaveBeenCalledWith({ apiKey: "vertex-key" });
+    expect(createVertex).toHaveBeenCalledWith({
+      apiKey: "vertex-key",
+      location: "us-central1",
+    });
   });
 
   // ── Error cases ────────────────────────────────────────────────────────────
@@ -266,36 +308,53 @@ describe("getModel", () => {
     expect(() => getModel(config)).toThrow(/model/i);
   });
 
-  it("throws when customEndpoint is missing for custom provider", () => {
+  it("throws when model is missing for lm-studio", () => {
     const config: ProviderConfig = {
-      provider: "custom",
+      provider: "lm-studio",
+      model: "",
+    };
+    expect(() => getModel(config)).toThrow(/model/i);
+  });
+
+  it("throws when customEndpoint is missing for openai-compatible", () => {
+    const config: ProviderConfig = {
+      provider: "openai-compatible",
       model: "my-model",
       apiKey: "key",
     };
     expect(() => getModel(config)).toThrow(/endpoint/i);
   });
 
-  it("throws when API key is missing for custom provider", () => {
+  it("throws when API key is missing for openai-compatible", () => {
     const config: ProviderConfig = {
-      provider: "custom",
+      provider: "openai-compatible",
       model: "my-model",
       customEndpoint: "https://example.com/v1",
     };
     expect(() => getModel(config)).toThrow(/API key/i);
   });
 
-  it("throws when region is missing for amazon-bedrock", () => {
+  it("throws when region is missing for aws-bedrock", () => {
     const config: ProviderConfig = {
-      provider: "amazon-bedrock",
+      provider: "aws-bedrock",
       model: "claude",
       apiKey: "key",
     };
     expect(() => getModel(config)).toThrow(/region/i);
   });
 
-  it("throws when customEndpoint is missing for azure-openai", () => {
+  it("throws when region is missing for gcp-vertexai", () => {
     const config: ProviderConfig = {
-      provider: "azure-openai",
+      provider: "gcp-vertexai",
+      model: "gemini-2.0-flash-001",
+      apiKey: "key",
+    };
+    expect(() => getModel(config)).toThrow(/region/i);
+  });
+
+  it("throws when customEndpoint is missing for azure-foundry", () => {
+    const config: ProviderConfig = {
+      provider: "azure-foundry",
       model: "gpt-4",
       apiKey: "key",
     };

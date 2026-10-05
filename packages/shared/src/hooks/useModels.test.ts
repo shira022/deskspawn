@@ -90,7 +90,7 @@ describe("useModels", () => {
 
     const { result } = renderHook(() =>
       useModels({
-        provider: "custom",
+        provider: "openai-compatible",
         customEndpoint: "https://api.example.com/v1",
         apiKey: "sk-test",
       }),
@@ -101,7 +101,7 @@ describe("useModels", () => {
     });
 
     expect(getModelsForProvider).toHaveBeenCalledWith(
-      "custom",
+      "openai-compatible",
       "https://api.example.com/v1",
       "sk-test",
     );

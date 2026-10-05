@@ -29,13 +29,15 @@ On first launch you'll be prompted to configure an AI provider:
    - **Anthropic** — `https://api.anthropic.com`
    - **Google Gemini** — via Google AI Studio API key
    - **Ollama** — local, no API key needed (runs on your machine)
-   - **AWS Bedrock, Azure OpenAI, GCP Vertex AI** — enterprise options
+   - **LM Studio** — local, no API key needed (runs on your machine)
+   - **AWS Bedrock, Azure Foundry, Google Cloud (Vertex AI)** — enterprise options
+   - **Custom (OpenAI compatible)** — any OpenAI-compatible endpoint
 3. Your API key is stored in the **OS keychain** — it is never sent to any
    server other than the AI provider you choose (requests go through the
    local sidecar proxy).
 
-> For a fully offline setup, install [Ollama](https://ollama.ai) and select it
-> as the provider.
+> For a fully offline setup, install [Ollama](https://ollama.ai) or
+> [LM Studio](https://lmstudio.ai) and select it as the provider.
 
 ### 3. Build Your First App
 
