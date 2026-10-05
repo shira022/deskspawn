@@ -1,7 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { AiConfigDialog } from "./AiConfigDialog";
-import { providerLabels, providerGroups } from "../../lib/constants";
 import type { AiConfig, ProviderKind } from "../../types";
 
 // ── Locale (real en bundle → expectations stay in sync with the shipped copy) ──
@@ -153,41 +152,61 @@ beforeEach(() => {
 // ── Tests ─────────────────────────────────────────────────────────────────────
 
 describe("AiConfigDialog — provider select", () => {
+  // 期待値はリテラル固定（providerGroups を参照するとカテゴリラベル・順序の
+  // 改変に追従してミューテーション検出不能になるため）。
+  const EXPECTED_GROUP_LABELS = ["Cloud", "Local", "OpenAI Compatible"];
+  const EXPECTED_GROUP_PROVIDERS: string[][] = [
+    ["openai", "anthropic", "google", "aws-bedrock", "azure-foundry", "gcp-vertexai"],
+    ["ollama", "lm-studio"],
+    ["openai-compatible"],
+  ];
+  const EXPECTED_PROVIDERS = EXPECTED_GROUP_PROVIDERS.flat();
+
   it("renders 3 optgroups covering all 9 providers, none disabled", async () => {
     const { container } = await renderDialog();
     const select = getProviderSelect(container);
 
     const groups = Array.from(select.querySelectorAll("optgroup"));
-    expect(groups).toHaveLength(providerGroups.length);
-    expect(groups.map((g) => g.getAttribute("label"))).toEqual(
-      providerGroups.map((g) => g.label),
-    );
+    expect(groups).toHaveLength(EXPECTED_GROUP_LABELS.length);
+    expect(groups.map((g) => g.getAttribute("label"))).toEqual(EXPECTED_GROUP_LABELS);
 
     const options = Array.from(select.querySelectorAll("option"));
     expect(options).toHaveLength(9);
-    expect(options.map((o) => o.value)).toEqual(
-      providerGroups.flatMap((g) => g.providers),
-    );
+    expect(options.map((o) => o.value)).toEqual(EXPECTED_PROVIDERS);
     for (const option of options) {
       expect(option.disabled, option.value).toBe(false);
     }
 
-    providerGroups.forEach((group, index) => {
+    EXPECTED_GROUP_PROVIDERS.forEach((providers, index) => {
       const groupOptions = Array.from(groups[index].querySelectorAll("option"));
-      expect(groupOptions.map((o) => o.value)).toEqual(group.providers);
+      expect(groupOptions.map((o) => o.value)).toEqual(providers);
     });
   });
 
-  it("labels every option exactly like providerLabels", async () => {
+  it("labels every option with the aegis display name (hardcoded, not via providerLabels)", async () => {
     const { container } = await renderDialog();
     const select = getProviderSelect(container);
 
+    // 期待値はリテラル固定（providerLabels を参照すると実装側の改変に
+    // 追従して気づかれないため、ミューテーション検出不能になる）
+    const EXPECTED_LABELS: Record<ProviderKind, string> = {
+      openai: "OpenAI",
+      anthropic: "Anthropic",
+      google: "Google",
+      "aws-bedrock": "AWS Bedrock",
+      "azure-foundry": "Azure Foundry",
+      "gcp-vertexai": "Google Cloud (Vertex AI)",
+      ollama: "Ollama (Local)",
+      "lm-studio": "LM Studio (Local)",
+      "openai-compatible": "Custom (OpenAI Compatible)",
+    };
+
     const options = Array.from(select.querySelectorAll("option"));
-    expect(options).toHaveLength(Object.keys(providerLabels).length);
+    expect(options).toHaveLength(Object.keys(EXPECTED_LABELS).length);
 
     for (const option of options) {
       expect(option.textContent, option.value).toBe(
-        providerLabels[option.value as ProviderKind],
+        EXPECTED_LABELS[option.value as ProviderKind],
       );
     }
   });
@@ -403,10 +422,23 @@ describe("AiConfigDialog — legacy provider IDs", () => {
       const { container } = await renderDialog();
       const select = getProviderSelect(container);
 
+      // select.value だけでは検出不能（既知 ID に無い値を setting すると
+      // DOM が先頭 option へフォールバックして "openai" に見えるため）。
+      // provider 状態そのものが openai に落とされていることを、
+      // provider 依存のレンダリング（APIキー placeholder と手順文）で検証する。
       expect(select.value).toBe("openai");
+      expect(hasPasswordInput(container)).toBe(true);
       expect(
-        screen.getByText(providerLabels.openai),
-      ).toBeInTheDocument();
+        findInput(container, (i) => i.getAttribute("type") === "password")?.getAttribute(
+          "placeholder",
+        ),
+        "openai placeholder (not the unknown-id fallback)",
+      ).toBe("sk-app-...");
+      expect(screen.getByText(enT("ai.apiKeyInstructions.openai"))).toBeInTheDocument();
+      expect(
+        screen.queryByText(enT("ai.apiKeyInstructions.custom")),
+        "legacy id must not render the generic custom instructions",
+      ).not.toBeInTheDocument();
     },
   );
 });
