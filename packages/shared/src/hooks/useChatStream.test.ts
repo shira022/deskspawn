@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import { summarizePipelineResult, getErrorHint } from "./useChatStream";
 import i18n from "../lib/i18n";
+import { providerLabels } from "../lib/constants";
 
 function makeOutputs(over: Record<string, string> = {}) {
   const outputs: Record<string, { label: string; text: string }> = {
@@ -665,5 +666,53 @@ describe("getErrorHint: ollama プロバイダの短絡", () => {
   it("先行分岐（429）が優先され、ollama ヒントではなく rateLimit を返す", () => {
     const hint = getErrorHint("ollama", { model: "llama3.2" }, new Error("429 rate limit"));
     expect(hint).toBe(i18n.t("chat.error.rateLimit"));
+  });
+});
+
+// プロバイダー設定・APIキー・モデル起因エラーのヒント分岐
+describe("getErrorHint: プロバイダー設定 / APIキー / モデル起因のヒント", () => {
+  it("APIキー無効・認証エラーは apiKeyInvalid を返す", () => {
+    const hint = getErrorHint(
+      "openai",
+      { model: "gpt-4o" },
+      new Error("401 Unauthorized: invalid api key"),
+    );
+    expect(hint).toBe(i18n.t("chat.error.apiKeyInvalid"));
+  });
+
+  it("モデル未検出はモデル名入りの詳細ヒントを返す", () => {
+    const hint = getErrorHint(
+      "anthropic",
+      { model: "claude-sonnet-4-5" },
+      new Error("model not found"),
+    );
+    expect(hint).toBe(
+      i18n.t("chat.error.modelNotFoundDetailed", { model: "claude-sonnet-4-5" }),
+    );
+  });
+
+  it("モデル名が取れない場合はプレースホルダ無しの文面を返す", () => {
+    const hint = getErrorHint("google", null, new Error("The model does not exist"));
+    expect(hint).toBe(i18n.t("chat.error.modelNotFound"));
+  });
+
+  it("タイムアウトは timeout ヒントを返す", () => {
+    const hint = getErrorHint(
+      "aws-bedrock",
+      { model: "claude-sonnet-4" },
+      new Error("Request timeout"),
+    );
+    expect(hint).toBe(i18n.t("chat.error.timeout"));
+  });
+
+  it("該当しないエラーはプロバイダー設定の確認を促す", () => {
+    const hint = getErrorHint(
+      "google",
+      { model: "gemini-2.5-pro" },
+      new Error("something went sideways"),
+    );
+    expect(hint).toBe(
+      i18n.t("chat.error.checkProviderSettings", { provider: providerLabels.google }),
+    );
   });
 });

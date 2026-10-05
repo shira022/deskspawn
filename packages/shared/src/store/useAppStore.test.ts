@@ -1,5 +1,7 @@
 import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from "vitest";
 import type { ChatMessage, FileNode, AppMeta, ProviderKind } from "../types";
+import { getModelsForProvider } from "../lib/models-fetcher";
+import { clearModelCostCache, setModelCostCache } from "../lib/cost";
 
 // ── Mocks (hoisted by vitest) ────────────────────────────────────────────────────
 
@@ -72,6 +74,26 @@ vi.mock("../lib/seed-app", () => ({
   seedAppFromWorkspace: vi.fn().mockResolvedValue({ seeded: 0 }),
   hasAppFiles: vi.fn().mockResolvedValue(true),
 }));
+
+// デスクトップのみ: AI 設定をサイドカーへ push する先（POST /api/config）。
+const sidecarFetchMock = vi.hoisted(() => vi.fn());
+vi.mock("../lib/sidecar", () => ({ sidecarFetch: sidecarFetchMock }));
+
+/**
+ * 実行中のみ window.__DESKSPAWN_DESKTOP__ を立てる（platform は本物を使う）。
+ * 終了後は必ず元の状態へ戻す。
+ */
+async function withDesktopEnv<T>(fn: () => Promise<T>): Promise<T> {
+  const hadWindow = Object.prototype.hasOwnProperty.call(globalThis, "window");
+  const original = (globalThis as { window?: unknown }).window;
+  vi.stubGlobal("window", { __DESKSPAWN_DESKTOP__: true });
+  try {
+    return await fn();
+  } finally {
+    if (hadWindow) vi.stubGlobal("window", original);
+    else delete (globalThis as { window?: unknown }).window;
+  }
+}
 
 // ── Store import (after mocks are in place) ──────────────────────────────────────
 
@@ -718,5 +740,194 @@ describe("useAppStore — setAiConfig for every provider", () => {
     expect(useAppStore.getState().aiConfig.provider).toBe(
       ALL_PROVIDERS[ALL_PROVIDERS.length - 1],
     );
+  });
+});
+
+// ── モデル一覧から価格キャッシュを事前ロード（プロバイダー/モデル系） ──────────
+
+describe("useAppStore — initialize() がモデル価格キャッシュを事前ロードする", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    mockStorageFns.listApps.mockResolvedValue([]);
+    mockStorageFns.loadCurrentAppId.mockResolvedValue(null);
+    mockStorageFns.loadSettingsDesktop.mockResolvedValue({
+      theme: "system",
+      uiFontSize: 14,
+      codeFontSize: 13,
+      language: "ja",
+      simpleMode: true,
+    });
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.mocked(getModelsForProvider).mockResolvedValue([]);
+  });
+
+  it("models.dev 由来のモデル一覧を clearModelCostCache → setModelCostCache で入れる", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue("openai");
+    mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o" });
+    mockStorageFns.loadApiKey.mockResolvedValue("sk-test");
+    const models = [
+      {
+        id: "gpt-4o",
+        name: "GPT-4o",
+        supportsReasoning: false,
+        supportsToolCall: true,
+        supportsImageInput: true,
+        contextLimit: 128000,
+        maxOutput: 16384,
+      },
+    ];
+    vi.mocked(getModelsForProvider).mockResolvedValueOnce(models);
+
+    await useAppStore.getState().initialize();
+
+    expect(getModelsForProvider).toHaveBeenCalledWith("openai");
+    expect(clearModelCostCache).toHaveBeenCalled();
+    expect(setModelCostCache).toHaveBeenCalledWith(models);
+  });
+
+  it("ローカル/互換プロバイダーでは models.dev を叩かずキャッシュも更新しない", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue("ollama");
+    mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "llama3.2" });
+    mockStorageFns.loadApiKey.mockResolvedValue(null);
+    vi.mocked(getModelsForProvider).mockClear();
+    vi.mocked(setModelCostCache).mockClear();
+
+    await useAppStore.getState().initialize();
+
+    expect(getModelsForProvider).not.toHaveBeenCalled();
+    expect(setModelCostCache).not.toHaveBeenCalled();
+  });
+});
+
+// ── 保存済みプロバイダー設定の復元（reloadAiConfig） ─────────────────────────
+
+describe("useAppStore — reloadAiConfig（保存済みプロバイダー設定の復元）", () => {
+  beforeEach(() => {
+    sidecarFetchMock.mockReset();
+    sidecarFetchMock.mockResolvedValue({ ok: true });
+  });
+
+  it("last provider の設定と APIキー有無を復元する（Web: サイドカーへは同期しない）", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue("anthropic");
+    mockStorageFns.loadProviderConfig.mockResolvedValue({
+      model: "claude-sonnet-4-5",
+      maxSteps: 12,
+      customEndpoint: "https://up.example.com/v1",
+    });
+    mockStorageFns.loadApiKey.mockResolvedValue("sk-ant");
+
+    await useAppStore.getState().reloadAiConfig();
+
+    const state = useAppStore.getState();
+    expect(state.aiConfig.provider).toBe("anthropic");
+    expect(state.aiConfig.model).toBe("claude-sonnet-4-5");
+    expect(state.aiConfig.maxSteps).toBe(12);
+    // キー本体はステートに残さず「設定済み」だけ持つ
+    expect(state.aiConfig.apiKey).toBe("");
+    expect(state.aiConfig.apiKeyConfigured).toBe(true);
+    expect(sidecarFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("last provider が無ければ何もしない", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue(null);
+
+    await useAppStore.getState().reloadAiConfig();
+
+    expect(useAppStore.getState().aiConfig).toBeNull();
+    expect(sidecarFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("desktop: 復元した上流設定をサイドカーへ同期する", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue("openai");
+    mockStorageFns.loadProviderConfig.mockResolvedValue({
+      model: "gpt-4o",
+      customEndpoint: "https://up.example.com/v1",
+    });
+    mockStorageFns.loadApiKey.mockResolvedValue("sk-test");
+
+    await withDesktopEnv(() => useAppStore.getState().reloadAiConfig());
+
+    expect(sidecarFetchMock).toHaveBeenCalledWith(
+      "/api/config",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          apiKey: "sk-test",
+          customEndpoint: "https://up.example.com/v1",
+        }),
+      }),
+    );
+  });
+});
+
+// ── setAiConfig のサイドカー同期（desktop / web） ───────────────────────────
+
+describe("useAppStore — setAiConfig のサイドカー同期", () => {
+  beforeEach(() => {
+    sidecarFetchMock.mockReset();
+    sidecarFetchMock.mockResolvedValue({ ok: true });
+  });
+
+  it("desktop: 保存直後に上流設定をサイドカーへ POST する", async () => {
+    await withDesktopEnv(() =>
+      useAppStore.getState().setAiConfig({
+        provider: "openai",
+        model: "gpt-4o",
+        apiKey: "sk-test",
+        customEndpoint: "https://up.example.com/v1",
+      }),
+    );
+
+    expect(sidecarFetchMock).toHaveBeenCalledWith(
+      "/api/config",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify({
+          apiKey: "sk-test",
+          customEndpoint: "https://up.example.com/v1",
+        }),
+      }),
+    );
+  });
+
+  it("desktop: 同期が失敗しても保存は完結し警告のみ出す", async () => {
+    sidecarFetchMock.mockRejectedValue(new Error("ECONNREFUSED"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      await withDesktopEnv(() =>
+        useAppStore.getState().setAiConfig({
+          provider: "openai",
+          model: "gpt-4o",
+          apiKey: "sk-test",
+        }),
+      );
+      expect(warn).toHaveBeenCalledWith(
+        "[sidecar] Failed to push AI config:",
+        expect.any(Error),
+      );
+    } finally {
+      sidecarFetchMock.mockResolvedValue({ ok: true });
+      warn.mockRestore();
+    }
+
+    // 保存（プロバイダー設定・APIキー・last provider）は完了している
+    const state = useAppStore.getState();
+    expect(state.aiConfig.provider).toBe("openai");
+    expect(state.aiConfig.model).toBe("gpt-4o");
+    expect(mockStorageFns.saveLastProvider).toHaveBeenCalledWith("openai");
+  });
+
+  it("web: サイドカーへは同期しない", async () => {
+    await useAppStore.getState().setAiConfig({
+      provider: "openai",
+      model: "gpt-4o",
+      apiKey: "sk-test",
+    });
+
+    expect(sidecarFetchMock).not.toHaveBeenCalled();
   });
 });

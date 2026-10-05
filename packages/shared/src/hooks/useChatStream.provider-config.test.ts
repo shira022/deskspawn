@@ -60,6 +60,10 @@ vi.mock("../engine/tool-executors", () => ({
   createCheckpoint: vi.fn(),
 }));
 
+// エンジン実行そのものは対象外（ここでは「モデル解決まで到達する」ことだけ見る）。
+const runWithTriageMock = vi.hoisted(() => vi.fn());
+vi.mock("../engine/orchestrator", () => ({ runWithTriage: runWithTriageMock }));
+
 import { getProviderConfigIssue, useChatStream } from "./useChatStream";
 import { useAppStore } from "../store/useAppStore";
 import {
@@ -254,6 +258,36 @@ describe("startGeneration — pre-flight provider checks", () => {
 
     expect(messages).toHaveLength(1);
     expect(messages[0].content).toContain("chat.error.ollamaModelRequired");
+  });
+
+  it("AI 設定が丸ごと無い場合は chat.error.aiNotConfiguredDetailed を返す", async () => {
+    useAppStore.setState({ aiConfig: null, currentAppId: "app-1" });
+    loadApiKeyMock.mockResolvedValue(null);
+
+    const messages = await runStartGeneration();
+
+    expect(messages).toHaveLength(1);
+    expect(messages[0].content).toContain("chat.error.aiNotConfiguredDetailed");
+    expect(messages[0].content).not.toContain("providerConfigError");
+  });
+
+  it("設定が揃えばモデル解決（getModel）まで進み、そのモデルがエンジンへ渡る", async () => {
+    useAppStore.setState({
+      aiConfig: completeConfig("openai"),
+      currentAppId: "app-1",
+    });
+    loadApiKeyMock.mockResolvedValue("sk-test");
+    // エンジン実行は対象外 — 到達した時点で拒否させて呼び出しのみ観測する
+    runWithTriageMock.mockRejectedValueOnce(new Error("engine-not-run"));
+
+    const messages = await runStartGeneration();
+
+    expect(runWithTriageMock).toHaveBeenCalledTimes(1);
+    const [modelArg, aiMessagesArg] = runWithTriageMock.mock.calls[0] as [unknown, unknown];
+    expect(modelArg).toBeDefined();
+    expect(Array.isArray(aiMessagesArg)).toBe(true);
+    // 失敗はメッセージとして返る（途中で落ちていないこと）
+    expect(messages[messages.length - 1].content).toContain("chat.error.generic");
   });
 });
 

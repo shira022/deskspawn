@@ -47,6 +47,8 @@ import {
   deleteApiKey,
   saveProviderConfig,
   loadProviderConfig,
+  saveLastProvider,
+  loadLastProvider,
   getSetting,
   setSetting,
 } from "./storage";
@@ -334,5 +336,111 @@ describe("per-provider API key & config storage", () => {
     expect(invokeMock).toHaveBeenCalledWith("load_provider_config", {
       provider: "gcp-vertexai",
     });
+  });
+
+  it("keeps the legacy plaintext key sweep best-effort when IndexedDB cannot be opened", async () => {
+    // Desktop IPC は成功したが IDB へ掃除にいけないケース（DB 破損・未作成）。
+    // スイープ失敗は警告のみで、APIキー保存自体は成功したまま続くこと。
+    invokeMock.mockResolvedValue({ method: "keychain" });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal("indexedDB", undefined);
+
+    try {
+      await expect(saveApiKey("openai", "sk-new")).resolves.toBe("keychain");
+      expect(warn).toHaveBeenCalledWith(
+        "[storage] Legacy IDB api_key sweep skipped:",
+        expect.any(Error),
+      );
+    } finally {
+      vi.unstubAllGlobals();
+      warn.mockRestore();
+    }
+  });
+});
+
+// ── Last active provider（プロバイダー設定の保存/復元） ────────────────────────
+
+describe("last provider (save / load)", () => {
+  beforeEach(async () => {
+    invokeMock.mockReset();
+    // 「未保存」状態にリセット（value: undefined）
+    await setSetting("last_provider", undefined);
+  });
+
+  it("web: stores the last provider in IndexedDB when Tauri IPC is unavailable", async () => {
+    invokeMock.mockRejectedValue(new Error("not in a Tauri environment"));
+
+    await saveLastProvider("anthropic");
+
+    expect(await getSetting("last_provider")).toBe("anthropic");
+    expect(invokeMock).toHaveBeenCalledWith("save_last_provider", {
+      provider: "anthropic",
+    });
+  });
+
+  it("desktop: stores the last provider via IPC without writing IndexedDB", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    await saveLastProvider("openai");
+
+    expect(invokeMock).toHaveBeenCalledWith("save_last_provider", { provider: "openai" });
+    expect(await getSetting("last_provider")).toBeUndefined();
+  });
+
+  it("desktop: reads the last provider from config.json", async () => {
+    invokeMock.mockImplementation(async (cmd: string) =>
+      cmd === "load_last_provider" ? "google" : null,
+    );
+
+    expect(await loadLastProvider()).toBe("google");
+    expect(await getSetting("last_provider")).toBeUndefined();
+  });
+
+  it("desktop: migrates a legacy IndexedDB value into config.json once", async () => {
+    await setSetting("last_provider", "lm-studio");
+    invokeMock.mockResolvedValue(null);
+
+    expect(await loadLastProvider()).toBe("lm-studio");
+    expect(invokeMock).toHaveBeenCalledWith("save_last_provider", { provider: "lm-studio" });
+  });
+
+  it("desktop: returns null when neither config.json nor IndexedDB holds a provider", async () => {
+    invokeMock.mockResolvedValue(null);
+
+    expect(await loadLastProvider()).toBeNull();
+  });
+
+  it("web: falls back to the IndexedDB value when Tauri IPC is unavailable", async () => {
+    await setSetting("last_provider", "ollama");
+    invokeMock.mockRejectedValue(new Error("not in a Tauri environment"));
+
+    expect(await loadLastProvider()).toBe("ollama");
+  });
+});
+
+// ── Desktop: プロバイダー設定の config.json 互換 ──────────────────────────────
+
+describe("provider config — desktop config.json migration", () => {
+  beforeEach(() => {
+    invokeMock.mockReset();
+  });
+
+  it("migrates the legacy IndexedDB config into config.json when config.json has none", async () => {
+    const legacy = { model: "claude-sonnet-4-5", customEndpoint: "https://legacy.example.com" };
+    await setSetting("provider_config_openai", legacy);
+    invokeMock.mockResolvedValue(null);
+
+    await expect(loadProviderConfig("openai")).resolves.toEqual(legacy);
+    expect(invokeMock).toHaveBeenCalledWith("save_provider_config", {
+      provider: "openai",
+      config: legacy,
+    });
+  });
+
+  it("returns null when neither config.json nor IndexedDB holds a config", async () => {
+    await setSetting("provider_config_openai", undefined);
+    invokeMock.mockResolvedValue(null);
+
+    await expect(loadProviderConfig("openai")).resolves.toBeNull();
   });
 });

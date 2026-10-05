@@ -2,6 +2,22 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { providerCategories } from "./constants";
 import type { ProviderKind } from "../types";
 
+// デスクトップ(Tauri)経路のモック。platform はモックせず本物を通り、
+// window.__DESKSPAWN_DESKTOP__ のスタブで isDesktopEnv() を切り替える
+//（platform.ts をモックすると同ファイルのカバレッジが消えるため）。
+const desktopMocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  sidecarFetch: vi.fn(),
+  sidecarBase: vi.fn(() => "http://localhost:3009"),
+}));
+
+vi.mock("./sidecar", () => ({
+  sidecarBase: desktopMocks.sidecarBase,
+  sidecarFetch: desktopMocks.sidecarFetch,
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: desktopMocks.invoke }));
+
 /** models.dev カタログから一覧を取るプロバイダー（実装の switch と対応）。 */
 const MODELS_DEV_PROVIDERS = [
   "openai",
@@ -48,6 +64,30 @@ const SAMPLE_CATALOG = {
         limit: { context: 8191, output: 1 },
         status: "available",
         modalities: { input: ["text"], output: ["text"] },
+      },
+      // 画像のみ生成するモデル（output modalities に text が無い）→ 除外対象
+      "imagen-4": {
+        id: "imagen-4",
+        name: "Imagen 4",
+        reasoning: false,
+        temperature: false,
+        tool_call: false,
+        limit: { context: 32768, output: 8192 },
+        cost: { input: 0.04, output: 0.08 },
+        status: "available",
+        modalities: { input: ["text"], output: ["image"] },
+      },
+      // 画像を出力するが text も出すモデル → 残す（フィルタの過剰排除チェック）
+      "vision-chat": {
+        id: "vision-chat",
+        name: "Vision Chat",
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 128000, output: 16384 },
+        cost: { input: 1, output: 2 },
+        status: "available",
+        modalities: { input: ["text"], output: ["text", "image"] },
       },
     },
   },
@@ -477,6 +517,104 @@ describe("getModelsForProvider", () => {
     await expect(getModelsForProvider("lm-studio")).rejects.toThrow(
       "Custom /models fetch failed: 502",
     );
+  });
+
+  // ── image-only モデルの除外（models.dev カタログ） ──────────────────────
+
+  it("excludes image-only models from the models.dev catalog but keeps text-capable ones", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("openai");
+    const ids = models.map((m) => m.id);
+
+    // output modalities に text が無いモデルは結果に入らない
+    expect(ids).not.toContain("imagen-4");
+    // text を出すモデル（テキストのみ / 画像+テキスト）は残る
+    expect(ids).toContain("gpt-4o");
+    expect(ids).toContain("vision-chat");
+    // 除外系フィルタ（embedding 等）も引き続き効いている
+    expect(ids).not.toContain("text-embedding-3-small");
+  });
+
+  // ── タイムアウト signal ───────────────────────────────────────────────────
+
+  it("passes an AbortSignal to the web /models request", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
+
+    const { getModelsForProvider } = await getModule();
+    await getModelsForProvider("openai-compatible", "https://my-api.example.com/v1", "sk-test");
+
+    const init = mockFetch.mock.calls[0][1] as { signal?: AbortSignal };
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
+  // ── デスクトップ(Tauri)経路 ───────────────────────────────────────────────
+
+  describe("desktop (Tauri) path", () => {
+    beforeEach(() => {
+      vi.stubGlobal("window", { __DESKSPAWN_DESKTOP__: true });
+      desktopMocks.invoke.mockReset();
+      desktopMocks.sidecarFetch.mockReset();
+      desktopMocks.sidecarBase.mockReturnValue("http://localhost:3009");
+    });
+
+    it("syncs the upstream endpoint then reads models through the sidecar proxy", async () => {
+      desktopMocks.invoke.mockResolvedValue(undefined);
+      desktopMocks.sidecarFetch.mockResolvedValue(createJsonResponse(CUSTOM_RESPONSE));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider(
+        "openai-compatible",
+        "https://up.example.com/v1",
+        "sk-test",
+      );
+
+      expect(models.map((m) => m.id)).toEqual(["my-custom-model", "another-model"]);
+      // ① 上流エンドポイントをサイドカーに事前同期する
+      expect(desktopMocks.invoke).toHaveBeenCalledWith("sync_sidecar_config", {
+        endpoint: "https://up.example.com/v1",
+      });
+      // ③ sidecarFetch 経由（fetch は使わない）
+      expect(desktopMocks.sidecarFetch).toHaveBeenCalledTimes(1);
+      const [path, init] = desktopMocks.sidecarFetch.mock.calls[0] as [
+        string,
+        { headers: Record<string, string>; signal: AbortSignal },
+      ];
+      expect(path).toBe("/v1/models");
+      // ④ Authorization 付き
+      expect(init.headers).toEqual({
+        Accept: "application/json",
+        Authorization: "Bearer sk-test",
+      });
+      // タイムアウト signal がセットされている
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(init.signal.aborted).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("keeps going when sync_sidecar_config rejects (sidecar not started yet)", async () => {
+      desktopMocks.invoke.mockRejectedValue(new Error("sidecar not running"));
+      desktopMocks.sidecarFetch.mockResolvedValue(createJsonResponse(CUSTOM_RESPONSE));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider("lm-studio");
+
+      // ② invoke が reject しても握りつぶして続行する
+      expect(models.map((m) => m.id)).toEqual(["my-custom-model", "another-model"]);
+      expect(desktopMocks.sidecarFetch).toHaveBeenCalledTimes(1);
+      const [path, init] = desktopMocks.sidecarFetch.mock.calls[0] as [
+        string,
+        { headers: Record<string, string>; signal: AbortSignal },
+      ];
+      expect(path).toBe("/v1/models");
+      // ④ apiKey なし（lm-studio は平文ローカル）→ Authorization なし
+      expect(init.headers).toEqual({ Accept: "application/json" });
+      expect(init.headers.Authorization).toBeUndefined();
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
   });
 });
 
