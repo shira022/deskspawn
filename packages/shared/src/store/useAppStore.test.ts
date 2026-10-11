@@ -13,9 +13,14 @@ vi.mock("../lib/i18n", () => ({
   },
 }));
 
-vi.mock("../lib/constants", () => ({
-  SETTINGS_KEY: "deskspawn_settings",
-}));
+// 実物を土台にして必要な値だけ差し替える。store の lastProvider ガードが
+// isProviderKind() を使うため、実装をそのまま公開しておく必要がある。
+vi.mock("../lib/constants", async () => {
+  const actual = await vi.importActual<typeof import("../lib/constants")>(
+    "../lib/constants",
+  );
+  return { ...actual, SETTINGS_KEY: "deskspawn_settings" };
+});
 
 // vi.mock factories are hoisted, so mock definitions must be inline.
 // Use this shared object so tests can configure the mocks.
@@ -603,6 +608,24 @@ describe("useAppStore — initialize()", () => {
     expect(state.aiConfig.maxSteps).toBe(10);
   });
 
+  it("保存済み lastProvider が legacy ID のとき aiConfig.provider が openai になる", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue("custom");
+    mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o", maxSteps: 8 });
+    mockStorageFns.loadApiKey.mockResolvedValue("sk-test-key");
+    mockStorageFns.listApps.mockResolvedValue([]);
+
+    await useAppStore.getState().initialize();
+
+    const state = useAppStore.getState();
+    expect(state.aiConfig.provider).toBe("openai");
+    expect(state.phase).toBe("main");
+    // 設定・APIキーはサニタイズ後のキーで読み直す
+    expect(mockStorageFns.loadProviderConfig).toHaveBeenCalledWith("openai");
+    expect(mockStorageFns.loadApiKey).toHaveBeenCalledWith("openai");
+    expect(mockStorageFns.loadProviderConfig).not.toHaveBeenCalledWith("custom");
+    expect(mockStorageFns.loadApiKey).not.toHaveBeenCalledWith("custom");
+  });
+
   it("stays in ai-config phase when no stored config exists", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue(null);
     mockStorageFns.listApps.mockResolvedValue([]);
@@ -830,6 +853,26 @@ describe("useAppStore — reloadAiConfig（保存済みプロバイダー設定�
     expect(state.aiConfig.apiKey).toBe("");
     expect(state.aiConfig.apiKeyConfigured).toBe(true);
     expect(sidecarFetchMock).not.toHaveBeenCalled();
+  });
+
+  it("lastProvider が legacy ID のとき aiConfig.provider が openai になる", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue("amazon-bedrock");
+    mockStorageFns.loadProviderConfig.mockResolvedValue({
+      model: "claude-sonnet-4-5",
+      maxSteps: 12,
+    });
+    mockStorageFns.loadApiKey.mockResolvedValue("sk-aws");
+
+    await useAppStore.getState().reloadAiConfig();
+
+    const state = useAppStore.getState();
+    expect(state.aiConfig.provider).toBe("openai");
+    expect(state.aiConfig.model).toBe("claude-sonnet-4-5");
+    // 設定・APIキーはサニタイズ後のキーで読み直す
+    expect(mockStorageFns.loadProviderConfig).toHaveBeenCalledWith("openai");
+    expect(mockStorageFns.loadApiKey).toHaveBeenCalledWith("openai");
+    expect(mockStorageFns.loadProviderConfig).not.toHaveBeenCalledWith("amazon-bedrock");
+    expect(mockStorageFns.loadApiKey).not.toHaveBeenCalledWith("amazon-bedrock");
   });
 
   it("last provider が無ければ何もしない", async () => {

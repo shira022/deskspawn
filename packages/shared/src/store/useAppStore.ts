@@ -45,6 +45,7 @@ import { getModelsForProvider } from "../lib/models-fetcher";
 import { seedAppFromFilesystem, seedAppFromWorkspace, hasAppFiles } from "../lib/seed-app";
 import i18n from "../lib/i18n";
 import { isDesktopEnv } from "../lib/platform";
+import { isProviderKind } from "../lib/constants";
 
 // ── Sidecar config sync (デスクトップのみ) ─────────────────────────────────────
 //
@@ -221,12 +222,16 @@ export const useAppStore = create<Store>((set, get) => ({
         // Load AI config from per-provider storage
         const lastProvider = await loadLastProvider();
         if (lastProvider) {
-          const storedCfg = await loadProviderConfig(lastProvider);
-          const key = await loadApiKey(lastProvider);
+          // 旧 ID（custom / amazon-bedrock 等）や未知の値は既知 9 種に無いので
+          // openai にフォールバックする（移行はしない・表示側ガードと同一方針）。
+          // 設定・APIキー・モデル一覧はサニタイズ後のキーで読み直す。
+          const provider = isProviderKind(lastProvider) ? lastProvider : "openai";
+          const storedCfg = await loadProviderConfig(provider);
+          const key = await loadApiKey(provider);
           if (storedCfg && storedCfg.model) {
             set({
               aiConfig: {
-                provider: lastProvider as any,
+                provider,
                 model: storedCfg.model,
                 customEndpoint: storedCfg.customEndpoint,
                 region: storedCfg.region,
@@ -246,12 +251,12 @@ export const useAppStore = create<Store>((set, get) => ({
             // Pre-populate model cost cache from models.dev
             // (ローカル/互換プロバイダーは価格情報を持たないため対象外)
             if (
-              lastProvider !== "ollama" &&
-              lastProvider !== "lm-studio" &&
-              lastProvider !== "openai-compatible"
+              provider !== "ollama" &&
+              provider !== "lm-studio" &&
+              provider !== "openai-compatible"
             ) {
               try {
-                const models = await getModelsForProvider(lastProvider);
+                const models = await getModelsForProvider(provider);
                 if (models.length > 0) {
                   clearModelCostCache();
                   setModelCostCache(models);
@@ -345,12 +350,14 @@ export const useAppStore = create<Store>((set, get) => ({
   reloadAiConfig: async () => {
     const lastProvider = await loadLastProvider();
     if (!lastProvider) return;
-    const cfg = await loadProviderConfig(lastProvider);
+    // initialize と同一のガード: 旧 ID・未知の値は openai にフォールバック。
+    const provider = isProviderKind(lastProvider) ? lastProvider : "openai";
+    const cfg = await loadProviderConfig(provider);
     if (cfg && cfg.model) {
-      const key = await loadApiKey(lastProvider);
+      const key = await loadApiKey(provider);
       set({
         aiConfig: {
-          provider: lastProvider as any,
+          provider,
           model: cfg.model,
           customEndpoint: cfg.customEndpoint,
           region: cfg.region,
