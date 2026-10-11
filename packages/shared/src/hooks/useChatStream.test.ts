@@ -10,6 +10,7 @@
 import { describe, it, expect } from "vitest";
 import { summarizePipelineResult, getErrorHint } from "./useChatStream";
 import i18n from "../lib/i18n";
+import { providerLabels } from "../lib/constants";
 
 function makeOutputs(over: Record<string, string> = {}) {
   const outputs: Record<string, { label: string; text: string }> = {
@@ -624,8 +625,91 @@ describe("R14: technical mode も qaVerdict / 中断を反映する", () => {
   });
 });
 
-describe("getErrorHint: WebKit 'Load failed' を network として扱う", () => {
-  it("'Load failed' は networkError を返す（CORS ヘッダ無しエラー応答の対策）", () => {
+// ── サマリの未到達分岐（概要抽出 / 警告ヒント / technical の各ステータス） ────
+
+describe("summarizePipelineResult: 概要抽出とステータス行の残り分岐", () => {
+  it("simple(日): planner の summary 行をアプリ概要として抜き出す", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ planner: "summary: タスク管理アプリを生成" }),
+      { simpleMode: true, language: "ja", stepErrorCount: 0 },
+    );
+    expect(out).toContain("**アプリ概要**: タスク管理アプリを生成");
+  });
+
+  it("simple(英): planner の summary 行を App Overview として抜き出す", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ planner: "summary: a task management app" }),
+      { simpleMode: true, language: "en", stepErrorCount: 0 },
+    );
+    expect(out).toContain("**App Overview**: a task management app");
+  });
+
+  it("simple(英): 警告があっても生成は成功と伝え、ヒント行を添える", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "⚠️ Warning: unused import", visual_qa: "✅ PASS" }),
+      { simpleMode: true, language: "en", stepErrorCount: 0 },
+    );
+    expect(out).toContain("✅ **Status**: Generated successfully");
+    expect(out).toContain("💡 **Tip**: Some warnings were found, but the app should work.");
+    expect(out).not.toContain("Errors were detected");
+  });
+
+  it("technical(日): visual_qa が PASS なら ✅ パスと明示する", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "No issues", visual_qa: "✅ PASS" }),
+      { simpleMode: false, language: "ja", stepErrorCount: 0 },
+    );
+    expect(out).toContain("✅ **パス**: 問題なし");
+    expect(out).not.toContain("❌ **失敗**");
+    expect(out).not.toContain("⚠️ **警告付きパス**");
+  });
+
+  it("technical(英): visual_qa が ❌ なら ❌ Failed と明示する", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "All good", visual_qa: "❌ FAIL: blank page" }),
+      { simpleMode: false, language: "en", stepErrorCount: 0 },
+    );
+    expect(out).toContain("❌ **Failed**: Issues detected");
+    expect(out).not.toContain("⚠️ **Passed with warnings**");
+  });
+
+  it("technical(英): 問題が無ければ ✅ Passed と明示する", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "No issues", visual_qa: "✅ PASS" }),
+      { simpleMode: false, language: "en", stepErrorCount: 0 },
+    );
+    expect(out).toContain("✅ **Passed**: No issues");
+    expect(out).not.toContain("❌ **Failed**");
+  });
+
+  it("technical(英): 変更を適用したままのタイムアウトはその旨を伝える", () => {
+    const out = summarizePipelineResult(
+      makeOutputs({ verifier: "Verify" }),
+      {
+        simpleMode: false,
+        language: "en",
+        stepErrorCount: 0,
+        interruptedBy: "timeout",
+        failedPhases: ["coder"],
+        fileChangesApplied: true,
+      },
+    );
+    expect(out).toContain(
+      "⏱️ **Timeout**: The coding phase ended due to a timeout (applied changes have been kept).",
+    );
+  });
+  it("フェーズ出力が1つも無ければ空文字を返す", () => {
+    expect(summarizePipelineResult({}, { simpleMode: true, language: "ja" })).toBe("");
+    expect(
+      summarizePipelineResult(
+        { coder: { label: "coder", text: "   " } },
+        { simpleMode: false, language: "en" },
+      ),
+    ).toBe("");
+  });
+});
+
+describe("getErrorHint: WebKit 'Load failed' を network として扱う", () => {  it("'Load failed' は networkError を返す（CORS ヘッダ無しエラー応答の対策）", () => {
     const hint = getErrorHint("openai", { model: "gpt-5.6-luna" }, new Error("Load failed"));
     expect(hint).toBe(i18n.t("chat.error.networkError"));
   });
@@ -665,5 +749,53 @@ describe("getErrorHint: ollama プロバイダの短絡", () => {
   it("先行分岐（429）が優先され、ollama ヒントではなく rateLimit を返す", () => {
     const hint = getErrorHint("ollama", { model: "llama3.2" }, new Error("429 rate limit"));
     expect(hint).toBe(i18n.t("chat.error.rateLimit"));
+  });
+});
+
+// プロバイダー設定・APIキー・モデル起因エラーのヒント分岐
+describe("getErrorHint: プロバイダー設定 / APIキー / モデル起因のヒント", () => {
+  it("APIキー無効・認証エラーは apiKeyInvalid を返す", () => {
+    const hint = getErrorHint(
+      "openai",
+      { model: "gpt-4o" },
+      new Error("401 Unauthorized: invalid api key"),
+    );
+    expect(hint).toBe(i18n.t("chat.error.apiKeyInvalid"));
+  });
+
+  it("モデル未検出はモデル名入りの詳細ヒントを返す", () => {
+    const hint = getErrorHint(
+      "anthropic",
+      { model: "claude-sonnet-4-5" },
+      new Error("model not found"),
+    );
+    expect(hint).toBe(
+      i18n.t("chat.error.modelNotFoundDetailed", { model: "claude-sonnet-4-5" }),
+    );
+  });
+
+  it("モデル名が取れない場合はプレースホルダ無しの文面を返す", () => {
+    const hint = getErrorHint("google", null, new Error("The model does not exist"));
+    expect(hint).toBe(i18n.t("chat.error.modelNotFound"));
+  });
+
+  it("タイムアウトは timeout ヒントを返す", () => {
+    const hint = getErrorHint(
+      "aws-bedrock",
+      { model: "claude-sonnet-4" },
+      new Error("Request timeout"),
+    );
+    expect(hint).toBe(i18n.t("chat.error.timeout"));
+  });
+
+  it("該当しないエラーはプロバイダー設定の確認を促す", () => {
+    const hint = getErrorHint(
+      "google",
+      { model: "gemini-2.5-pro" },
+      new Error("something went sideways"),
+    );
+    expect(hint).toBe(
+      i18n.t("chat.error.checkProviderSettings", { provider: providerLabels.google }),
+    );
   });
 });

@@ -67,7 +67,7 @@ without installing anything, then install the desktop app for real work.
 - **🗄️ Full-Stack Generation** — optional React + Hono + bun:sqlite template with a real database (ADR-010)
 - **🧪 Automated Quality Loop** — generated apps ship with tests; the AI runs them and fixes until green (ADR-012)
 - **🤖 Multi-Agent Pipeline** — Triage → Planner → Coder → Verifier → Visual QA agents collaborate
-- **🔌 Multi-Provider AI** — OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, Azure OpenAI, GCP Vertex AI, Ollama, and any OpenAI-compatible endpoint
+- **🔌 Multi-Provider AI** — OpenAI, Anthropic Claude, Google Gemini, AWS Bedrock, Azure Foundry, Google Cloud (Vertex AI), Ollama, LM Studio, and any OpenAI-compatible endpoint
 - **🌐 i18n** — English and Japanese interfaces
 
 ---

@@ -158,9 +158,11 @@ git status --short | grep -i '\.env'
 
 | プロバイダー | endpoint | 備考 |
 |---|---|---|
-| openai / anthropic | ❌ 不要 | provider + api_key + model のみ |
-| custom / azure-openai / ollama | ✅ 必須 | ollama は api_key 不要 |
-| amazon-bedrock | ❌ 不要 | **region** 必須 |
+| openai / anthropic / google | ❌ 不要 | provider + api_key + model のみ |
+| openai-compatible | ✅ 必須 | api_key も必須 |
+| azure-foundry | ✅ 必須 | api_key も必須 |
+| ollama / lm-studio | 任意 | api_key 不要（既定 localhost:11434 / 1234/v1） |
+| aws-bedrock / gcp-vertexai | ❌ 不要 | **region** 必須 |
 
 ## 参照
 

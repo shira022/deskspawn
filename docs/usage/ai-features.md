@@ -13,7 +13,7 @@ natural language conversations with an AI model.
 | **Iterative Refinement** | Keep chatting to add features or fix issues        |
 | **Code Editing**       | Ask for specific changes to generated files          |
 | **Multi-file Aware**   | The AI understands the full app context          |
-| **Local Models**       | Works with Ollama for fully offline use              |
+| **Local Models**       | Works with Ollama or LM Studio for fully offline use  |
 
 ---
 
@@ -22,18 +22,32 @@ natural language conversations with an AI model.
 DeskSpawn supports multiple AI providers. You can configure them from the
 **model button in the toolbar** → **API key settings** dialog.
 
+Providers are grouped into **Cloud**, **Local**, and **OpenAI Compatible**
+categories in the provider dropdown.
+
 ### Cloud Providers
 
 | Provider              | API Key Required | Notes                                        |
 |-----------------------|------------------|----------------------------------------------|
 | OpenAI                | Yes              | Any model you have access to (e.g. GPT-4o family) |
 | Anthropic             | Yes              | Any Claude model                             |
-| Google Gemini         | Yes              | Google AI / Gemini API key                   |
+| Google                | Yes              | Google AI / Gemini API key                   |
 | AWS Bedrock           | Yes              | AWS region required; Claude, Llama, Nova     |
-| Azure OpenAI          | Yes              | Endpoint URL required; GPT, o-series         |
-| GCP Vertex AI         | Yes              | Express mode; Gemini, Claude, Imagen         |
-| Ollama                | No               | Local LLM — fully offline                    |
-| Custom (OpenAI-compatible) | Optional   | Any OpenAI-compatible endpoint               |
+| Azure Foundry         | Yes              | Endpoint URL required; GPT, o-series         |
+| Google Cloud (Vertex AI) | Yes           | GCP region required; Gemini, Claude, Imagen |
+
+### Local Providers
+
+| Provider              | API Key Required | Notes                                        |
+|-----------------------|------------------|----------------------------------------------|
+| Ollama (Local)        | No               | Local LLM — fully offline                    |
+| LM Studio (Local)     | No               | Local LLM served by [LM Studio](https://lmstudio.ai) |
+
+### OpenAI Compatible
+
+| Provider              | API Key Required | Notes                                        |
+|-----------------------|------------------|----------------------------------------------|
+| Custom (OpenAI Compatible) | Optional   | Any OpenAI-compatible endpoint (endpoint URL required) |
 
 To add a cloud provider:
 1. Click the **model button** in the toolbar (next to the app selector).
@@ -62,9 +76,22 @@ DeskSpawn can run entirely offline using [Ollama](https://ollama.ai).
    ollama pull codellama
    ```
 3. In DeskSpawn, click the **model button** in the toolbar → **API key settings**.
-4. Select **Ollama** as the provider.
+4. Select **Ollama (Local)** as the provider.
 5. Set the endpoint to `http://localhost:11434` (the default).
 6. Select (or enter) the model you pulled.
+7. Click **Save**.
+
+### Local Provider (LM Studio)
+
+DeskSpawn can also use models served by [LM Studio](https://lmstudio.ai).
+
+1. Install LM Studio from [lmstudio.ai](https://lmstudio.ai).
+2. Download a model and start the local server (default:
+   `http://localhost:1234/v1`).
+3. In DeskSpawn, click the **model button** in the toolbar → **API key settings**.
+4. Select **LM Studio (Local)** as the provider (no API key needed).
+5. Optionally set the endpoint to `http://localhost:1234/v1` (the default).
+6. Select (or enter) the loaded model.
 7. Click **Save**.
 
 > Using a local model means no data leaves your machine. Ideal for sensitive

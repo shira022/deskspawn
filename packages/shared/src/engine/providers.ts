@@ -78,21 +78,34 @@ export function getModel(config: ProviderConfig): LanguageModel {
       return ollama.chatModel(model) as unknown as LanguageModel;
     }
 
-    case 'custom': {
+    case 'lm-studio': {
+      const lmStudio = createOpenAICompatible({
+        name: 'lm-studio',
+        baseURL: customEndpoint ?? 'http://localhost:1234/v1',
+      });
+      if (!model) {
+        throw new Error(
+          'LM Studio model is not specified. Please enter a model name in the settings (e.g. qwen2.5-7b-instruct).',
+        );
+      }
+      return lmStudio.chatModel(model) as unknown as LanguageModel;
+    }
+
+    case 'openai-compatible': {
       if (!customEndpoint) {
         throw new Error(
-          'Custom provider requires an endpoint URL. Please enter the endpoint in the settings.',
+          'OpenAI-compatible provider requires an endpoint URL. Please enter the endpoint in the settings.',
         );
       }
       if (!apiKey) {
         throw new Error(
-          'Custom provider API key is not configured. Please enter your API key in the settings.',
+          'OpenAI-compatible provider API key is not configured. Please enter your API key in the settings.',
         );
       }
       // デスクトップ(Tauri)ではサイドカープロキシ経由で呼ぶ (CORS回避)
       const isDesktop = isDesktopEnv();
       const client = createOpenAICompatible({
-        name: 'custom-provider',
+        name: 'openai-compatible',
         baseURL: isDesktop ? `${sidecarBase()}/v1` : customEndpoint,
         apiKey,
         // H1: サイドカープロキシには X-DeskSpawn-Token 必須（無いと401）。
@@ -102,7 +115,7 @@ export function getModel(config: ProviderConfig): LanguageModel {
       return client.chatModel(model) as unknown as LanguageModel;
     }
 
-    case 'amazon-bedrock': {
+    case 'aws-bedrock': {
       if (!apiKey) {
         throw new Error(
           'AWS Bedrock API key is not configured. Please enter your API key in the settings.',
@@ -120,15 +133,15 @@ export function getModel(config: ProviderConfig): LanguageModel {
       return client(model) as unknown as LanguageModel;
     }
 
-    case 'azure-openai': {
+    case 'azure-foundry': {
       if (!apiKey) {
         throw new Error(
-          'Azure OpenAI API key is not configured. Please enter your API key in the settings.',
+          'Azure Foundry API key is not configured. Please enter your API key in the settings.',
         );
       }
       if (!customEndpoint) {
         throw new Error(
-          'Azure OpenAI endpoint is not configured. Please enter your endpoint URL in the settings.',
+          'Azure Foundry endpoint is not configured. Please enter your endpoint URL in the settings.',
         );
       }
       const client = createAzure({
@@ -138,10 +151,15 @@ export function getModel(config: ProviderConfig): LanguageModel {
       return client(model) as unknown as LanguageModel;
     }
 
-    case 'google-vertex': {
+    case 'gcp-vertexai': {
       if (!apiKey) {
         throw new Error(
-          'GCP Vertex AI API key is not configured. Please enter your API key in the settings.',
+          'Google Cloud (Vertex AI) API key is not configured. Please enter your API key in the settings.',
+        );
+      }
+      if (!config.region) {
+        throw new Error(
+          'Google Cloud (Vertex AI) region is not configured. Please enter the GCP region in the settings.',
         );
       }
       const client = createVertex({
@@ -153,7 +171,7 @@ export function getModel(config: ProviderConfig): LanguageModel {
 
     default: {
       throw new Error(
-        `Unsupported provider: "${provider}". Supported: openai, anthropic, google, amazon-bedrock, azure-openai, google-vertex, ollama, custom`,
+        `Unsupported provider: "${provider}". Supported: openai, anthropic, google, aws-bedrock, azure-foundry, gcp-vertexai, ollama, lm-studio, openai-compatible`,
       );
     }
   }

@@ -13,6 +13,12 @@ import { hasApiKey, loadProviderConfig } from "../../lib/storage";
 import { isDesktopEnv } from "../../lib/platform";
 import type { ProviderKind, AiConfig, ModelInfo } from "../../types";
 import {
+  providerLabels,
+  providerGroups,
+  isProviderKind,
+  providerNeedsApiKey,
+} from "../../lib/constants";
+import {
   Sparkles,
   Loader2,
   AlertCircle,
@@ -25,39 +31,30 @@ interface AiConfigDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-const providerNeedsApiKey = (p: ProviderKind) => p !== "ollama";
-
 const apiKeyPlaceholder: Record<ProviderKind, string> = {
   openai: "sk-app-...",
   anthropic: "sk-ant-api03-...",
   google: "AIzaSy...",
-  "amazon-bedrock": "bedrock-api-key-...",
-  "azure-openai": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
-  "google-vertex": "AIzaSy...",
+  "aws-bedrock": "bedrock-api-key-...",
+  "azure-foundry": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "gcp-vertexai": "AIzaSy...",
   ollama: "",
-  custom: "Enter your API key",
+  "lm-studio": "",
+  "openai-compatible": "Enter your API key",
 };
-
-const providerOptions: { id: ProviderKind; name: string; disabled?: boolean }[] = [
-  { id: "openai", name: "OpenAI" },
-  { id: "anthropic", name: "Anthropic" },
-  { id: "google", name: "Google" },
-  { id: "amazon-bedrock", name: "AWS Bedrock" },
-  { id: "azure-openai", name: "Azure OpenAI (Coming Soon)", disabled: true },
-  { id: "google-vertex", name: "GCP Vertex AI (Coming Soon)", disabled: true },
-  { id: "ollama", name: "Ollama" },
-  { id: "custom", name: "Custom" },
-];
 
 export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
   const { aiConfig: existingConfig, setAiConfig, addToast, apiKeyStorageMethod } = useAppStore();
   const { t } = useTranslation();
 
   // ── Local state ────────────────────────────────────────────────────────────
-  const initialProvider = existingConfig?.provider === "google-vertex" || existingConfig?.provider === "azure-openai" ? "openai" : existingConfig?.provider;
-  const [provider, setProvider] = useState<ProviderKind>(
-    initialProvider ?? "openai",
-  );
+  // 保存済み ID が既知の 9 種に無い場合（旧 custom / amazon-bedrock 等）は
+  // その場で openai へ落とす（保存データの移行はしない — ユーザー決定）。
+  const initialProvider =
+    existingConfig && isProviderKind(existingConfig.provider)
+      ? existingConfig.provider
+      : "openai";
+  const [provider, setProvider] = useState<ProviderKind>(initialProvider);
   const [apiKey, setApiKey] = useState(
     existingConfig?.apiKey ?? "",
   );
@@ -124,8 +121,8 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
   // Sync from existing config when dialog opens (provider/model/endpoint/region only)
   useEffect(() => {
     if (open && existingConfig) {
-      // google-vertex / azure-openai は未実装のため強制的に openai にフォールバック
-      if (existingConfig.provider === "google-vertex" || existingConfig.provider === "azure-openai") {
+      // 既知の ID 以外（旧ID・壊れた値）は openai にフォールバック（移行しない）
+      if (!isProviderKind(existingConfig.provider)) {
         setProvider("openai");
         setApiKey("");
         setModel("");
@@ -143,11 +140,11 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
     }
   }, [open, existingConfig]);
 
-  // Azure OpenAI: モデル一覧が空のため、プロバイダー切替時に強制的に空にする
+  // Azure Foundry: モデル一覧が空のため、プロバイダー切替時に強制的に空にする
   // auto-select より後に実行することで上書きする
   const prevProviderRef = useRef(provider);
   useEffect(() => {
-    if (provider === "azure-openai" && prevProviderRef.current !== "azure-openai") {
+    if (provider === "azure-foundry" && prevProviderRef.current !== "azure-foundry") {
       setModel("");
       setSelectedModelInfo(null);
     }
@@ -158,14 +155,14 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
 
   const handleProviderChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const p = e.target.value as ProviderKind;
-    if (p === "google-vertex" || p === "azure-openai") return; // 未実装
+    if (!isProviderKind(p)) return;
     setProvider(p);
     setModel("");
     setCustomModelMode(false);
     setSelectedModelInfo(null);
     setRegion("");
     setCustomEndpoint("");
-    if (p === "ollama") {
+    if (!providerNeedsApiKey(p)) {
       setApiKey("");
     }
 
@@ -212,13 +209,21 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
         setSaving(false);
         return;
       }
-      if (provider === "custom" && !customEndpoint.trim()) {
+      if (
+        (provider === "openai-compatible" || provider === "azure-foundry") &&
+        !customEndpoint.trim()
+      ) {
         setError(t('ai.error.customEndpointRequired'));
         setSaving(false);
         return;
       }
-      if (provider === "amazon-bedrock" && !region.trim()) {
+      if (provider === "aws-bedrock" && !region.trim()) {
         setError(t('ai.error.regionRequired'));
+        setSaving(false);
+        return;
+      }
+      if (provider === "gcp-vertexai" && !region.trim()) {
+        setError(t('ai.error.gcpRegionRequired'));
         setSaving(false);
         return;
       }
@@ -263,10 +268,14 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
             <div className="space-y-2">
               <Label>{t('ai.provider')}</Label>
               <Select value={provider} onChange={handleProviderChange}>
-                {providerOptions.map((p) => (
-                  <option key={p.id} value={p.id} disabled={p.disabled}>
-                    {p.name}
-                  </option>
+                {providerGroups.map((group) => (
+                  <optgroup key={group.category} label={group.label}>
+                    {group.providers.map((id) => (
+                      <option key={id} value={id}>
+                        {providerLabels[id]}
+                      </option>
+                    ))}
+                  </optgroup>
                 ))}
               </Select>
             </div>
@@ -305,11 +314,11 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
                         ? t('ai.apiKeyInstructions.openai')
                         : provider === "anthropic"
                           ? t('ai.apiKeyInstructions.anthropic')
-                          : provider === "amazon-bedrock"
+                          : provider === "aws-bedrock"
                             ? t('ai.apiKeyInstructions.amazonBedrock')
-                            : provider === "azure-openai"
+                            : provider === "azure-foundry"
                               ? t('ai.apiKeyInstructions.azureOpenAI')
-                              : provider === "google-vertex"
+                              : provider === "gcp-vertexai"
                                 ? t('ai.apiKeyInstructions.googleVertex')
                                 : provider === "google"
                                   ? t('ai.apiKeyInstructions.google')
@@ -425,14 +434,14 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
             </div>
 
             {/* Custom Endpoint (optional) */}
-            {(provider === "custom" || provider === "anthropic" || provider === "azure-openai") && (
+            {(provider === "openai-compatible" || provider === "anthropic" || provider === "azure-foundry") && (
               <div className="space-y-2">
                 <Label>
-                  {provider === "anthropic" ? t('ai.corsProxyUrl') : provider === "azure-openai" ? t('ai.azureEndpointUrl') : t('ai.customEndpoint')}
+                  {provider === "anthropic" ? t('ai.corsProxyUrl') : provider === "azure-foundry" ? t('ai.azureEndpointUrl') : t('ai.customEndpoint')}
                 </Label>
                 <Input
                   placeholder={
-                    provider === "azure-openai"
+                    provider === "azure-foundry"
                       ? t('ai.azureEndpointPlaceholder')
                       : "https://your-api.example.com/v1"
                   }
@@ -444,7 +453,7 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
                     {t('ai.anthropicCorsInfo')}
                   </p>
                 )}
-                {provider === "azure-openai" && (
+                {provider === "azure-foundry" && (
                   <p className="text-xs text-muted-foreground">
                     {t('ai.azureEndpointDescription')}
                   </p>
@@ -452,8 +461,8 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
               </div>
             )}
 
-            {/* AWS Region (for Amazon Bedrock) */}
-            {provider === "amazon-bedrock" && (
+            {/* AWS Region (for AWS Bedrock) */}
+            {provider === "aws-bedrock" && (
               <div className="space-y-2">
                 <Label>{t('ai.region')}</Label>
                 <Input
@@ -463,6 +472,21 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
                 />
                 <p className="text-xs text-muted-foreground">
                   {t('ai.regionDescription')}
+                </p>
+              </div>
+            )}
+
+            {/* GCP Region (for Google Cloud Vertex AI) */}
+            {provider === "gcp-vertexai" && (
+              <div className="space-y-2">
+                <Label>{t('ai.gcpRegion')}</Label>
+                <Input
+                  placeholder={t('ai.gcpRegionPlaceholder')}
+                  value={region}
+                  onChange={(e) => setRegion(e.target.value)}
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('ai.gcpRegionDescription')}
                 </p>
               </div>
             )}
@@ -495,6 +519,18 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
                     </div>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* LM Studio Endpoint (optional) */}
+            {provider === "lm-studio" && (
+              <div className="space-y-2">
+                <Label>{t('ai.customEndpoint')}</Label>
+                <Input
+                  placeholder="http://localhost:1234/v1"
+                  value={customEndpoint}
+                  onChange={(e) => setCustomEndpoint(e.target.value)}
+                />
               </div>
             )}
 

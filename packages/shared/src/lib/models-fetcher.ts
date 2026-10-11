@@ -50,13 +50,20 @@ interface ModelsDevProvider {
 
 type ModelsDevCatalog = Record<string, ModelsDevProvider>;
 
-/** Map deskspawn provider IDs to models.dev keys */
+/**
+ * Map deskspawn provider IDs to models.dev keys
+ * (実キーは https://models.dev/api.json で確認済み)。
+ * ※ lm-studio はキー対応表のみ保持し、一覧取得は下の switch で
+ *   ローカルの /v1/models を叩く（models.dev のカタログは
+ *   ローカルサーバーに読み込まれたモデルを表さないため）。
+ */
 const PROVIDER_TO_MODELSDEV: Record<string, string> = {
   openai: "openai",
   anthropic: "anthropic",
   google: "google",
-  "amazon-bedrock": "amazon-bedrock",
-  "google-vertex": "google-vertex",
+  "aws-bedrock": "amazon-bedrock",
+  "gcp-vertexai": "google-vertex",
+  "lm-studio": "lmstudio",
 };
 
 function convertModelsDevModel(raw: ModelsDevModel): ModelInfo {
@@ -262,8 +269,8 @@ async function fetchCustomModels(
  * Runs entirely in the browser — no sidecar server needed.
  *
  * @param provider   - deskspawn provider ID
- * @param endpoint   - optional custom endpoint (used for ollama / custom)
- * @param apiKey     - optional API key (used for custom provider auth)
+ * @param endpoint   - optional custom endpoint (used for ollama / lm-studio / openai-compatible)
+ * @param apiKey     - optional API key (used for openai-compatible provider auth)
  */
 export async function getModelsForProvider(
   provider: string,
@@ -274,19 +281,22 @@ export async function getModelsForProvider(
     case "openai":
     case "anthropic":
     case "google":
-    case "amazon-bedrock":
-    case "google-vertex": {
+    case "aws-bedrock":
+    case "gcp-vertexai": {
       const key = PROVIDER_TO_MODELSDEV[provider];
       return fetchModelsFromModelsDev(key);
     }
-    // Azure OpenAI にはモデル一覧 API がなく、ユーザーがデプロイしたモデル名を
+    // Azure Foundry にはモデル一覧 API がなく、ユーザーがデプロイしたモデル名を
     // 直接入力する必要があるため、空リストを返して UI で自由入力させる
-    case "azure-openai":
+    case "azure-foundry":
       return [];
     case "ollama":
       return fetchOllamaModels(endpoint ?? "http://localhost:11434");
-    case "custom": {
-      if (!endpoint) throw new Error("customEndpoint is required for custom provider");
+    case "lm-studio":
+      // ローカルの LM Studio サーバーが読み込んでいるモデル一覧を取得する
+      return fetchCustomModels(endpoint ?? "http://localhost:1234/v1", "");
+    case "openai-compatible": {
+      if (!endpoint) throw new Error("customEndpoint is required for openai-compatible provider");
       return fetchCustomModels(endpoint, apiKey ?? "");
     }
     default:

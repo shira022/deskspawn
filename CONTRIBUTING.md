@@ -118,10 +118,10 @@ All settings are injected via environment variables (no provider/model is hardco
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DESKSPAWN_E2E_PROVIDER` | `custom` | Provider ID (`custom`, `openai`, `anthropic`, `ollama`, `azure-openai`, `amazon-bedrock`, …) |
-| `DESKSPAWN_E2E_ENDPOINT` | `http://127.0.0.1:9/v1` | Endpoint URL (custom/anthropic/azure/ollama) — discard port, intentionally unreachable |
+| `DESKSPAWN_E2E_PROVIDER` | `openai-compatible` | Provider ID (`openai-compatible`, `openai`, `anthropic`, `ollama`, `lm-studio`, `azure-foundry`, `aws-bedrock`, …) |
+| `DESKSPAWN_E2E_ENDPOINT` | `http://127.0.0.1:9/v1` | Endpoint URL (openai-compatible/anthropic/azure-foundry/ollama/lm-studio) — discard port, intentionally unreachable |
 | `DESKSPAWN_E2E_MODEL` | `e2e-model` | Model ID to save |
-| `DESKSPAWN_E2E_REGION` | `us-east-1` | AWS region (amazon-bedrock only) |
+| `DESKSPAWN_E2E_REGION` | `us-east-1` | Region (aws-bedrock / gcp-vertexai) |
 | `DESKSPAWN_API_KEY` | *(none)* | Real API key (real-API mode only) |
 | `DESKSPAWN_E2E_REAL` | *(unset)* | Set to `1` to enable real-API verification |
 | `CDP_URL` | `http://172.28.208.1:9222` | WebView2 CDP endpoint |

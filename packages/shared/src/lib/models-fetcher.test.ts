@@ -1,4 +1,31 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { providerCategories } from "./constants";
+import type { ModelInfo, ProviderKind } from "../types";
+
+// デスクトップ(Tauri)経路のモック。platform はモックせず本物を通り、
+// window.__DESKSPAWN_DESKTOP__ のスタブで isDesktopEnv() を切り替える
+//（platform.ts をモックすると同ファイルのカバレッジが消えるため）。
+const desktopMocks = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  sidecarFetch: vi.fn(),
+  sidecarBase: vi.fn(() => "http://localhost:3009"),
+}));
+
+vi.mock("./sidecar", () => ({
+  sidecarBase: desktopMocks.sidecarBase,
+  sidecarFetch: desktopMocks.sidecarFetch,
+}));
+
+vi.mock("@tauri-apps/api/core", () => ({ invoke: desktopMocks.invoke }));
+
+/** models.dev カタログから一覧を取るプロバイダー（実装の switch と対応）。 */
+const MODELS_DEV_PROVIDERS = [
+  "openai",
+  "anthropic",
+  "google",
+  "aws-bedrock",
+  "gcp-vertexai",
+] as const;
 
 // ─── Sample catalog data matching models.dev schema ──────────────────────────
 
@@ -38,6 +65,73 @@ const SAMPLE_CATALOG = {
         status: "available",
         modalities: { input: ["text"], output: ["text"] },
       },
+      // 画像のみ生成するモデル（output modalities に text が無い）→ 除外対象
+      "imagen-4": {
+        id: "imagen-4",
+        name: "Imagen 4",
+        reasoning: false,
+        temperature: false,
+        tool_call: false,
+        limit: { context: 32768, output: 8192 },
+        cost: { input: 0.04, output: 0.08 },
+        status: "available",
+        modalities: { input: ["text"], output: ["image"] },
+      },
+      // 画像を出力するが text も出すモデル → 残す（フィルタの過剰排除チェック）
+      "vision-chat": {
+        id: "vision-chat",
+        name: "Vision Chat",
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 128000, output: 16384 },
+        cost: { input: 1, output: 2 },
+        status: "available",
+        modalities: { input: ["text"], output: ["text", "image"] },
+      },
+    },
+  },
+  anthropic: {
+    name: "Anthropic",
+    models: {
+      "claude-sonnet-4-5": {
+        id: "claude-sonnet-4-5",
+        name: "Claude Sonnet 4.5",
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 200000, output: 64000 },
+        cost: { input: 3, output: 15 },
+        status: "available",
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+      "claude-3-5-haiku-latest": {
+        id: "claude-3-5-haiku-latest",
+        name: "Claude 3.5 Haiku",
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 200000, output: 8192 },
+        cost: { input: 0.8, output: 4 },
+        status: "available",
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+    },
+  },
+  google: {
+    name: "Google",
+    models: {
+      "gemini-2.5-pro": {
+        id: "gemini-2.5-pro",
+        name: "Gemini 2.5 Pro",
+        reasoning: true,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 1048576, output: 65536 },
+        cost: { input: 1.25, output: 10 },
+        status: "available",
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
     },
   },
   "amazon-bedrock": {
@@ -51,6 +145,22 @@ const SAMPLE_CATALOG = {
         tool_call: true,
         limit: { context: 200000, output: 8192 },
         cost: { input: 3, output: 15 },
+        status: "available",
+        modalities: { input: ["text", "image"], output: ["text"] },
+      },
+    },
+  },
+  "google-vertex": {
+    name: "Google Cloud Vertex AI",
+    models: {
+      "gemini-2.0-flash": {
+        id: "gemini-2.0-flash",
+        name: "Gemini 2.0 Flash",
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 1048576, output: 8192 },
+        cost: { input: 0.1, output: 0.4 },
         status: "available",
         modalities: { input: ["text", "image"], output: ["text"] },
       },
@@ -120,11 +230,29 @@ describe("getModelsForProvider", () => {
     expect(gpt4o.cost!.output).toBe(10);
   });
 
-  it("returns empty array for azure-openai provider", async () => {
+  it("returns empty array for azure-foundry provider", async () => {
     const { getModelsForProvider } = await getModule();
-    const models = await getModelsForProvider("azure-openai");
+    const models = await getModelsForProvider("azure-foundry");
 
     expect(models).toEqual([]);
+  });
+
+  it("maps aws-bedrock to the amazon-bedrock models.dev catalog key", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("aws-bedrock");
+
+    expect(models.some((m) => m.id === "claude-sonnet-4")).toBe(true);
+  });
+
+  it("maps gcp-vertexai to the google-vertex models.dev catalog key", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("gcp-vertexai");
+
+    expect(models.some((m) => m.id === "gemini-2.0-flash")).toBe(true);
   });
 
   it("returns models for ollama provider with given endpoint", async () => {
@@ -150,11 +278,11 @@ describe("getModelsForProvider", () => {
     expect(mockFetch).toHaveBeenCalledWith("http://localhost:11434/api/tags");
   });
 
-  it("returns models for custom provider with endpoint and apiKey", async () => {
+  it("returns models for openai-compatible provider with endpoint and apiKey", async () => {
     mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
 
     const { getModelsForProvider } = await getModule();
-    const models = await getModelsForProvider("custom", "https://my-api.example.com/v1", "sk-test");
+    const models = await getModelsForProvider("openai-compatible", "https://my-api.example.com/v1", "sk-test");
 
     expect(models.length).toBe(2);
     expect(models[0].id).toBe("my-custom-model");
@@ -169,11 +297,11 @@ describe("getModelsForProvider", () => {
     );
   });
 
-  it("calls custom provider without apiKey when not provided", async () => {
+  it("calls openai-compatible provider without apiKey when not provided", async () => {
     mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
 
     const { getModelsForProvider } = await getModule();
-    await getModelsForProvider("custom", "https://my-api.example.com/v1");
+    await getModelsForProvider("openai-compatible", "https://my-api.example.com/v1");
 
     expect(mockFetch).toHaveBeenCalledWith(
       "https://my-api.example.com/v1/models",
@@ -188,11 +316,39 @@ describe("getModelsForProvider", () => {
     expect(callArgs.headers).not.toHaveProperty("Authorization");
   });
 
-  it("throws when custom provider has no endpoint", async () => {
+  it("throws when openai-compatible provider has no endpoint", async () => {
     const { getModelsForProvider } = await getModule();
 
-    await expect(getModelsForProvider("custom")).rejects.toThrow(
-      "customEndpoint is required for custom provider",
+    await expect(getModelsForProvider("openai-compatible")).rejects.toThrow(
+      "customEndpoint is required for openai-compatible provider",
+    );
+  });
+
+  it("returns models for lm-studio provider via the local /v1/models endpoint", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("lm-studio");
+
+    expect(models.length).toBe(2);
+    expect(models[0].id).toBe("my-custom-model");
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://localhost:1234/v1/models",
+      expect.objectContaining({
+        headers: expect.objectContaining({ Accept: "application/json" }),
+      }),
+    );
+  });
+
+  it("uses the custom endpoint for lm-studio when provided", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
+
+    const { getModelsForProvider } = await getModule();
+    await getModelsForProvider("lm-studio", "http://192.168.1.50:1234/v1");
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      "http://192.168.1.50:1234/v1/models",
+      expect.anything(),
     );
   });
 
@@ -219,6 +375,466 @@ describe("getModelsForProvider", () => {
     expect(models2.length).toBeGreaterThan(0);
     // Still only 1 fetch call
     expect(mockFetch).toHaveBeenCalledTimes(1);
+  });
+
+  // ── Full provider coverage ────────────────────────────────────────────────
+
+  const ALL_PROVIDERS = Object.keys(providerCategories) as ProviderKind[];
+
+  /** URL ごとに応答を切り替える（models.dev / ollama / OpenAI互換）。 */
+  function routeFetch(url: unknown): Promise<unknown> {
+    const u = String(url);
+    if (u.includes("models.dev")) {
+      return Promise.resolve(createJsonResponse(SAMPLE_CATALOG));
+    }
+    if (u.endsWith("/api/tags")) {
+      return Promise.resolve(createJsonResponse(OLLAMA_RESPONSE));
+    }
+    return Promise.resolve(createJsonResponse(CUSTOM_RESPONSE));
+  }
+
+  it("returns an array for every supported provider (never 'Unknown provider')", async () => {
+    expect(ALL_PROVIDERS).toHaveLength(9);
+
+    for (const provider of ALL_PROVIDERS) {
+      mockFetch.mockReset();
+      mockFetch.mockImplementation((url: unknown) => routeFetch(url));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider(
+        provider,
+        provider === "openai-compatible" ? "https://example.com/v1" : undefined,
+        "sk-test",
+      );
+
+      expect(Array.isArray(models), provider).toBe(true);
+      if (provider === "azure-foundry") {
+        // Azure Foundry にはモデル一覧 API がなく、UI は手動入力に切り替える
+        expect(models, provider).toEqual([]);
+      } else {
+        expect(models.length, provider).toBeGreaterThan(0);
+      }
+    }
+  });
+
+  it("returns models for anthropic via the models.dev catalog", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("anthropic");
+
+    expect(models.some((m) => m.id === "claude-sonnet-4-5")).toBe(true);
+    expect(models.some((m) => m.id === "claude-3-5-haiku-latest")).toBe(true);
+    expect(models.every((m) => m.contextLimit > 0)).toBe(true);
+  });
+
+  it("returns models for google via the models.dev catalog", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("google");
+
+    expect(models.some((m) => m.id === "gemini-2.5-pro")).toBe(true);
+    expect(models[0].cost?.input).toBe(1.25);
+    expect(models[0].cost?.output).toBe(10);
+  });
+
+  it.each(MODELS_DEV_PROVIDERS)(
+    "carries models.dev pricing for %s",
+    async (provider) => {
+      mockFetch.mockResolvedValue(createJsonResponse(SAMPLE_CATALOG));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider(provider);
+
+      expect(models.length, provider).toBeGreaterThan(0);
+      for (const m of models) {
+        expect(m.cost, `${provider}/${m.id}`).toBeDefined();
+        expect(m.cost?.input, `${provider}/${m.id}`).toBeGreaterThan(0);
+        expect(m.cost?.output, `${provider}/${m.id}`).toBeGreaterThan(0);
+      }
+    },
+  );
+
+  // ── Failure paths ─────────────────────────────────────────────────────────
+
+  it("rejects when models.dev responds with a non-OK status", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("openai")).rejects.toThrow(
+      "models.dev fetch failed: 500",
+    );
+  });
+
+  it("propagates a network error from models.dev", async () => {
+    mockFetch.mockRejectedValueOnce(new Error("network down"));
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("anthropic")).rejects.toThrow("network down");
+  });
+
+  it("propagates an abort from models.dev", async () => {
+    const abortError = Object.assign(new Error("The operation was aborted"), {
+      name: "AbortError",
+    });
+    mockFetch.mockRejectedValueOnce(abortError);
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("google")).rejects.toThrow(
+      "The operation was aborted",
+    );
+  });
+
+  it("rejects when Ollama /api/tags is not OK", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 503 });
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("ollama")).rejects.toThrow(
+      "Ollama /api/tags failed: 503",
+    );
+  });
+
+  it("rejects when the openai-compatible /models endpoint is not OK", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 500 });
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(
+      getModelsForProvider("openai-compatible", "https://broken.example.com/v1"),
+    ).rejects.toThrow("Custom /models fetch failed: 500");
+  });
+
+  it("rejects when the lm-studio /models endpoint is not OK", async () => {
+    mockFetch.mockResolvedValueOnce({ ok: false, status: 502 });
+
+    const { getModelsForProvider } = await getModule();
+
+    await expect(getModelsForProvider("lm-studio")).rejects.toThrow(
+      "Custom /models fetch failed: 502",
+    );
+  });
+
+  // ── image-only モデルの除外（models.dev カタログ） ──────────────────────
+
+  it("excludes image-only models from the models.dev catalog but keeps text-capable ones", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(SAMPLE_CATALOG));
+
+    const { getModelsForProvider } = await getModule();
+    const models = await getModelsForProvider("openai");
+    const ids = models.map((m) => m.id);
+
+    // output modalities に text が無いモデルは結果に入らない
+    expect(ids).not.toContain("imagen-4");
+    // text を出すモデル（テキストのみ / 画像+テキスト）は残る
+    expect(ids).toContain("gpt-4o");
+    expect(ids).toContain("vision-chat");
+    // 除外系フィルタ（embedding 等）も引き続き効いている
+    expect(ids).not.toContain("text-embedding-3-small");
+  });
+
+  // ── モデル一覧フィルタの分岐カバレッジ（表駆動） ─────────────────────────
+
+  describe("models.dev catalog filter branches", () => {
+    type RawModel = Record<string, unknown>;
+
+    /** フィルタ通過用の既定モデル（表側で個別に上書きする） */
+    function rawModel(over: RawModel = {}): RawModel {
+      return {
+        id: "candidate",
+        name: "Candidate",
+        reasoning: false,
+        temperature: true,
+        tool_call: true,
+        limit: { context: 8192, output: 2048 },
+        cost: { input: 1, output: 2 },
+        status: "available",
+        modalities: { input: ["text"], output: ["text"] },
+        ...over,
+      };
+    }
+
+    /** candidate を1件だけ差し込んだ openai カタログ（正常モデルは常に残す） */
+    function openaiCatalog(candidate: RawModel) {
+      return {
+        openai: {
+          name: "OpenAI",
+          models: {
+            "normal-model": rawModel({ id: "normal-model", name: "Normal Model" }),
+            candidate,
+          },
+        },
+      };
+    }
+
+    type FilterCase = {
+      label: string;
+      model: RawModel;
+      kept: boolean;
+      check?: (cand: ModelInfo) => void;
+    };
+
+    const FILTER_CASES: FilterCase[] = [
+      // family/name/id に除外語を含むモデル → 結果に入らない
+      {
+        label: "除外: family に embed を含むモデル",
+        model: rawModel({ id: "chroma-v1", name: "Chroma", family: "text-embedding-latest" }),
+        kept: false,
+      },
+      {
+        label: "除外: name に embed を含むモデル",
+        model: rawModel({ id: "proj-9000", name: "Project Embedder", family: "custom" }),
+        kept: false,
+      },
+      {
+        label: "除外: id に embed を含むモデル",
+        model: rawModel({ id: "prod-embed-7", name: "Vector Hub", family: "vectorhub" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に moderation を含むモデル",
+        model: rawModel({ id: "mod-1", name: "Mod Guard", family: "text-moderation-latest" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に tts を含むモデル",
+        model: rawModel({ id: "tts-1", name: "Voice One", family: "tts-1" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に whisper を含むモデル",
+        model: rawModel({ id: "whisper-lg", name: "Dictation", family: "whisper-large-v3" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に dall を含むモデル",
+        model: rawModel({ id: "dall-e-3", name: "DALL E 3", family: "dall-e-3" }),
+        kept: false,
+      },
+      {
+        label: "除外: family に audio を含むモデル",
+        model: rawModel({ id: "voice-chat", name: "Voice Chat", family: "gpt-4o-audio" }),
+        kept: false,
+      },
+      // どれにも該当しない通常モデルは残る
+      {
+        label: "残存: 除外語を含まない通常モデル",
+        model: rawModel({ id: "candidate", name: "Plain Chat", family: "plain" }),
+        kept: true,
+      },
+      // limit が 0 のモデル → 除外
+      {
+        label: "除外: limit.context が 0 のモデル",
+        model: rawModel({ limit: { context: 0, output: 2048 } }),
+        kept: false,
+      },
+      {
+        label: "除外: limit.output が 0 のモデル",
+        model: rawModel({ limit: { context: 8192, output: 0 } }),
+        kept: false,
+      },
+      // output modalities に text が無い → 除外 / 欠落 → 残る
+      {
+        label: "除外: output modalities が image のみのモデル",
+        model: rawModel({ modalities: { input: ["text"], output: ["image"] } }),
+        kept: false,
+      },
+      {
+        label: "残存: modalities 自体が欠落したモデル",
+        model: rawModel({ modalities: undefined }),
+        kept: true,
+        check: (cand) => expect(cand.supportsImageInput).toBe(false),
+      },
+      {
+        label: "残存: modalities.input が欠落したモデル",
+        model: rawModel({ modalities: { output: ["text"] } }),
+        kept: true,
+        check: (cand) => expect(cand.supportsImageInput).toBe(false),
+      },
+      {
+        label: "残存: modalities.output が欠落したモデル",
+        model: rawModel({ modalities: { input: ["text"] } }),
+        kept: true,
+        check: (cand) => expect(cand.contextLimit).toBe(8192),
+      },
+      // image 入力に対応 → supportsImageInput: true
+      {
+        label: "残存: modalities.input に image を含むモデル",
+        model: rawModel({ modalities: { input: ["text", "image"], output: ["text"] } }),
+        kept: true,
+        check: (cand) => expect(cand.supportsImageInput).toBe(true),
+      },
+      // cost 欠落 → cost: undefined
+      {
+        label: "残存: cost が無いモデルは cost: undefined",
+        model: rawModel({ cost: undefined }),
+        kept: true,
+        check: (cand) => expect(cand.cost).toBeUndefined(),
+      },
+      // name / id 欠落の分岐（欠落語は別フィルタで除外される前提）
+      {
+        label: "除外: name が欠落したモデル（family の embed 判定で除外）",
+        model: rawModel({ name: undefined, family: "text-embedding-latest" }),
+        kept: false,
+      },
+      {
+        label: "除外: id が欠落したモデル（family の whisper 判定で除外）",
+        model: rawModel({ id: undefined, family: "whisper-large-v3" }),
+        kept: false,
+      },
+    ];
+
+    it.each(FILTER_CASES)("$label", async ({ model, kept, check }) => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse(openaiCatalog(model)));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider("openai");
+      const ids = models.map((m) => m.id);
+
+      // 正常モデルは常に残る（過剰排除していないこと）
+      expect(ids).toContain("normal-model");
+      // candidate は id を差し替える行もあるため normal-model 以外で判定する
+      const candidate = models.filter((m) => m.id !== "normal-model");
+      if (kept) {
+        expect(candidate, "candidate should be kept").toHaveLength(1);
+        check?.(candidate[0]);
+      } else {
+        expect(candidate, "candidate should be excluded").toHaveLength(0);
+      }
+    });
+
+    it("returns [] when the catalog has no entry for the requested provider", async () => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse({}));
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(getModelsForProvider("openai")).resolves.toEqual([]);
+    });
+
+    it("returns [] when the catalog provider entry has no models map", async () => {
+      mockFetch.mockResolvedValueOnce(
+        createJsonResponse({ openai: { name: "OpenAI" } }),
+      );
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(getModelsForProvider("openai")).resolves.toEqual([]);
+    });
+
+    it("returns [] when the ollama response has no models array", async () => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse({}));
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(getModelsForProvider("ollama", "http://my-ollama:11434")).resolves.toEqual(
+        [],
+      );
+      expect(mockFetch).toHaveBeenCalledWith("http://my-ollama:11434/api/tags");
+    });
+
+    it("returns [] when the openai-compatible response has no data array", async () => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse({}));
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(
+        getModelsForProvider("openai-compatible", "https://my-api.example.com/v1"),
+      ).resolves.toEqual([]);
+    });
+
+    it("falls back to http://localhost:11434 when the ollama endpoint is an empty string", async () => {
+      mockFetch.mockResolvedValueOnce(createJsonResponse(OLLAMA_RESPONSE));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider("ollama", "");
+
+      expect(models).toHaveLength(2);
+      expect(mockFetch).toHaveBeenCalledWith("http://localhost:11434/api/tags");
+    });
+  });
+
+  // ── タイムアウト signal ───────────────────────────────────────────────────
+
+  it("passes an AbortSignal to the web /models request", async () => {
+    mockFetch.mockResolvedValueOnce(createJsonResponse(CUSTOM_RESPONSE));
+
+    const { getModelsForProvider } = await getModule();
+    await getModelsForProvider("openai-compatible", "https://my-api.example.com/v1", "sk-test");
+
+    const init = mockFetch.mock.calls[0][1] as { signal?: AbortSignal };
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    expect(init.signal?.aborted).toBe(false);
+  });
+
+  // ── デスクトップ(Tauri)経路 ───────────────────────────────────────────────
+
+  describe("desktop (Tauri) path", () => {
+    beforeEach(() => {
+      vi.stubGlobal("window", { __DESKSPAWN_DESKTOP__: true });
+      desktopMocks.invoke.mockReset();
+      desktopMocks.sidecarFetch.mockReset();
+      desktopMocks.sidecarBase.mockReturnValue("http://localhost:3009");
+    });
+
+    it("syncs the upstream endpoint then reads models through the sidecar proxy", async () => {
+      desktopMocks.invoke.mockResolvedValue(undefined);
+      desktopMocks.sidecarFetch.mockResolvedValue(createJsonResponse(CUSTOM_RESPONSE));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider(
+        "openai-compatible",
+        "https://up.example.com/v1",
+        "sk-test",
+      );
+
+      expect(models.map((m) => m.id)).toEqual(["my-custom-model", "another-model"]);
+      // ① 上流エンドポイントをサイドカーに事前同期する
+      expect(desktopMocks.invoke).toHaveBeenCalledWith("sync_sidecar_config", {
+        endpoint: "https://up.example.com/v1",
+      });
+      // ③ sidecarFetch 経由（fetch は使わない）
+      expect(desktopMocks.sidecarFetch).toHaveBeenCalledTimes(1);
+      const [path, init] = desktopMocks.sidecarFetch.mock.calls[0] as [
+        string,
+        { headers: Record<string, string>; signal: AbortSignal },
+      ];
+      expect(path).toBe("/v1/models");
+      // ④ Authorization 付き
+      expect(init.headers).toEqual({
+        Accept: "application/json",
+        Authorization: "Bearer sk-test",
+      });
+      // タイムアウト signal がセットされている
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(init.signal.aborted).toBe(false);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("keeps going when sync_sidecar_config rejects (sidecar not started yet)", async () => {
+      desktopMocks.invoke.mockRejectedValue(new Error("sidecar not running"));
+      desktopMocks.sidecarFetch.mockResolvedValue(createJsonResponse(CUSTOM_RESPONSE));
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider("lm-studio");
+
+      // ② invoke が reject しても握りつぶして続行する
+      expect(models.map((m) => m.id)).toEqual(["my-custom-model", "another-model"]);
+      expect(desktopMocks.sidecarFetch).toHaveBeenCalledTimes(1);
+      const [path, init] = desktopMocks.sidecarFetch.mock.calls[0] as [
+        string,
+        { headers: Record<string, string>; signal: AbortSignal },
+      ];
+      expect(path).toBe("/v1/models");
+      // ④ apiKey なし（lm-studio は平文ローカル）→ Authorization なし
+      expect(init.headers).toEqual({ Accept: "application/json" });
+      expect(init.headers.Authorization).toBeUndefined();
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
   });
 });
 
@@ -280,7 +896,7 @@ describe("lookupModelCostById", () => {
 
     await getModelsForProvider("openai");
 
-    // Model from amazon-bedrock provider
+    // Model from the aws-bedrock (models.dev key: amazon-bedrock) catalog
     const cost = lookupModelCostById("claude-sonnet-4");
     expect(cost).toBeDefined();
     expect(cost!.input).toBe(3);
