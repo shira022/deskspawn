@@ -22,3 +22,9 @@ overrides:
   # "pnpm field ... ignored" と警告するが lockfile に反映される=実効。
   # 本 yaml 側は 10.4.1 では無視され pnpm 11+ で有効 → 両方書くのが正。
   undici: 7.29.1
+  # Critical (監査対応): proxy-addr < 2.0.8 に GHSA-jqcg-44mw-7w3h（first patched: 2.0.8）
+  # express@5.2.1 経由で到達。package.json の pnpm.overrides と同内容を維持すること（上記の過渡期仕様）。
+  proxy-addr: ^2.0.8
+  # High (監査対応): sharp < 0.35.5 に GHSA-wq5f-xc86-pv6w / CVE-2026-96889（first patched: 0.35.5）
+  # sidecar の直接依存。package.json の pnpm.overrides と同内容を維持すること（上記の過渡期仕様）。
+  sharp: ^0.35.5
