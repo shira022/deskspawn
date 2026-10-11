@@ -10,6 +10,79 @@ use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::UpdaterExt;
 
+/// `APPMODEL_ERROR_NO_PACKAGE`: `GetCurrentPackageFullName` の戻り値で
+/// 「パッケージ識別子なし（非パッケージ実行）」を意味する。
+#[cfg(windows)]
+const APPMODEL_ERROR_NO_PACKAGE: i32 = 15700;
+
+/// `ERROR_INSUFFICIENT_BUFFER`: パッケージ有りで、バッファ長 0 + ヌル
+/// バッファに対して呼び出した際に必ず返る戻り値。
+#[cfg(windows)]
+const ERROR_INSUFFICIENT_BUFFER: i32 = 122;
+
+// Windows のアプリパッケージ有無をプローブする kernel32 API。
+//
+// 新しいクレート依存を追加しないため direct FFI 宣言で利用する。
+// 引数は (書き込みに必要なバッファ長, バッファ)。バッファ長 0 + ヌル
+// ポインタでの呼び出しは仕様どおりのプローブとして許可されている。
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn GetCurrentPackageFullName(
+        package_full_name_length: *mut u32,
+        package_full_name: *mut u16,
+    ) -> i32;
+}
+
+/// プロセスが OS アプリパッケージ（Windows では MSIX / Microsoft Store 版）
+/// の内側で実行されているかを返す。
+///
+/// Microsoft Store 版ではストアが更新を握るため Tauri updater を動かしては
+/// いけない。判定が true のときは updater の登録と起動時チェックを両方スキップ
+/// し、false のときは従来どおり updater を有効に保つ（NSIS 版等）。
+///
+/// Windows: `kernel32!GetCurrentPackageFullName` を extern "system" で直接
+/// FFI 呼び出しする。戻り値 122（ERROR_INSUFFICIENT_BUFFER）ならパッケージ有、
+/// 15700（APPMODEL_ERROR_NO_PACKAGE）なら非パッケージと判定する。それ以外の
+/// 想定外 rc は警告ログを出して非パッケージ扱い（fail-open: updater は有効のまま）。
+///
+/// 非 Windows プラットフォームでは常に `false`。
+#[cfg(windows)]
+fn is_packaged() -> bool {
+    // SAFETY: 第一引数は有効な stack 上の u32、第二引数は長さ 0 に対する
+    // ヌルバッファ（仕様上許可）。書き込まれるのは length のみ。
+    let rc = unsafe {
+        let mut length: u32 = 0;
+        GetCurrentPackageFullName(&mut length, std::ptr::null_mut())
+    };
+    match rc {
+        ERROR_INSUFFICIENT_BUFFER => {
+            log::info!(
+                "Packaged (Store/MSIX) build detected: updater disabled \
+                 (updates are store-managed)."
+            );
+            true
+        }
+        APPMODEL_ERROR_NO_PACKAGE => false,
+        _ => {
+            log::warn!(
+                "Unexpected GetCurrentPackageFullName rc={} (expected {} or {}); \
+                 treating as non-packaged, updater stays enabled.",
+                rc,
+                ERROR_INSUFFICIENT_BUFFER,
+                APPMODEL_ERROR_NO_PACKAGE
+            );
+            false
+        }
+    }
+}
+
+/// 非 Windows では常にパッケージ無し（NSIS 版 / 開発実行と同様に扱う）。
+#[cfg(not(windows))]
+fn is_packaged() -> bool {
+    false
+}
+
 /// Run the Tauri application.
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -23,9 +96,17 @@ pub fn run() {
         .setup(|app| {
             log::info!("DeskSpawn backend initializing...");
 
-            // Register updater plugin
+            // MSIX (Microsoft Store) 版ではストアが更新を握るため updater を
+            // 無効化する。非パッケージ版（NSIS / 開発実行）は従来どおり有効。
+            // パッケージ検出時の info ログは is_packaged() 内で出力される。
             #[cfg(desktop)]
-            app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            let packaged = is_packaged();
+
+            // Register updater plugin (skipped for packaged builds)
+            #[cfg(desktop)]
+            if !packaged {
+                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
+            }
 
             // Determine workspace path (home-based, stable — see engine/workspace)
             let workspace_path = engine::workspace::determine_workspace_path()
@@ -100,9 +181,11 @@ pub fn run() {
             }
             app.manage(sidecar_manager);
 
-            // Spawn update check in background (non-blocking, no dialog on startup)
+            // Spawn update check in background (non-blocking, no dialog on startup).
+            // Packaged (Store/MSIX) builds skip it entirely so the updater
+            // endpoint is never contacted and the store keeps update ownership.
             #[cfg(desktop)]
-            {
+            if !packaged {
                 let handle = app.handle().clone();
                 tauri::async_runtime::spawn(async move {
                     match handle.updater() {
@@ -188,5 +271,21 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_packaged;
+
+    /// CI / 開発実行（NSIS 版・cargo test の通常 exe）で is_packaged() が
+    /// false を返すことを検証する。updater 本体の挙動（登録・起動時チェック）は
+    /// 実機検証で担保する。
+    ///
+    /// 前提: パッケージ識別子を継承したシェル（Store 版アプリの子プロセス等）から
+    /// 実行していないこと。CI の通常ランナーはこの前提を満たす。
+    #[test]
+    fn non_packaged_run_reports_not_packaged() {
+        assert!(!is_packaged());
+    }
 }
 
