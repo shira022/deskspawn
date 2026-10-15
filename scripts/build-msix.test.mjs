@@ -152,6 +152,82 @@ test('rewriteManifestVersion: --> だけ余分にある場合も throw する', 
   assert.throws(() => rewriteManifestVersion(xml, '0.6.0.0'), /未終端/);
 });
 
+test('rewriteManifestVersion: テストA コメントが本物より前にある場合もインデックスとコメントを保つ', () => {
+  const xml = [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<!-- <Identity Version="9.9.9.9"/> -->',
+    '<Package>',
+    '  <Identity Name="fixture.DeskSpawn" Version="0.5.0.0" />',
+    '</Package>',
+    '',
+  ].join('\n');
+  const out = rewriteManifestVersion(xml, '0.6.0.0');
+  assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
+  assert.match(out, /Version="0\.6\.0\.0"/);
+  assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
+  assert.match(out, /<!-- <Identity Version="9\.9\.9\.9"\/> -->/);
+  assert.match(out, /9\.9\.9\.9/);
+});
+
+test('rewriteManifestVersion: テストB コメントが2つあっても本物だけを書き換える', () => {
+  const xml = [
+    '<Package>',
+    '<!-- first comment -->',
+    '<!-- <Identity Version="8.8.8.8"/> -->',
+    '  <Identity Name="fixture.DeskSpawn" Version="0.5.0.0" />',
+    '</Package>',
+    '',
+  ].join('\n');
+  const out = rewriteManifestVersion(xml, '0.6.0.0');
+  assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
+  assert.match(out, /Version="0\.6\.0\.0"/);
+  assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
+  assert.match(out, /Version="8\.8\.8\.8"/);
+  assert.equal((out.match(/<!--/g) || []).length, 2);
+});
+
+test('rewriteManifestVersion: テストC 未終端の <!-- はメッセージに「未終端」を含めて throw する', () => {
+  const xml = '<!-- broken <Identity Version="9.9.9.9"/>\n<Package><Identity Version="0.5.0.0"/></Package>';
+  assert.throws(() => rewriteManifestVersion(xml, '0.6.0.0'), (err) => {
+    assert.match(err.message, /未終端/);
+    return true;
+  });
+});
+
+test('rewriteManifestVersion: テストD コメント本体の <!-- は入れ子にせず throw しない', () => {
+  const xml = [
+    '<Package>',
+    '<!-- x <!-- y -->',
+    '  <Identity Name="fixture.DeskSpawn" Version="0.5.0.0" />',
+    '</Package>',
+    '',
+  ].join('\n');
+  const out = rewriteManifestVersion(xml, '0.6.0.0');
+  assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
+  assert.match(out, /Version="0\.6\.0\.0"/);
+  assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
+  assert.match(out, /<!-- x <!-- y -->/);
+});
+
+test('rewriteManifestVersion: テストE CRLF でも同じく本物だけを書き換える', () => {
+  const xml = [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<!-- <Identity Version="9.9.9.9"/> -->',
+    '<Package>',
+    '  <Identity Name="fixture.DeskSpawn" Version="0.5.0.0" />',
+    '</Package>',
+    '',
+  ]
+    .join('\n')
+    .replace(/\n/g, '\r\n');
+  const out = rewriteManifestVersion(xml, '0.6.0.0');
+  assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
+  assert.match(out, /Version="0\.6\.0\.0"/);
+  assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
+  assert.match(out, /<!-- <Identity Version="9\.9\.9\.9"\/> -->/);
+  assert.match(out, /9\.9\.9\.9/);
+});
+
 test('許可リスト: Package.appxmanifest と Assets 直下の png のみ', () => {
   assert.equal(isAllowedStageEntry('Package.appxmanifest'), true);
   assert.equal(isAllowedStageEntry('Assets/MedTile.png'), true);

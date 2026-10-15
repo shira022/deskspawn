@@ -89,19 +89,52 @@ export function toAppxVersion(input) {
 
 /**
  * XML コメントの各文字を同数の空白に置換し、元文字列と同じインデックスを保つ。
- * `<!--` が未終端（開始数と終了数が不一致）の場合は、コメント内の
- * <Identity Version> を本物と誤認して書き換えるのを防ぐため throw する。
+ *
+ * 正規表現でマークアップ終端を扱うと `--!>` 等の取りこぼしで誤検知し得るため、
+ * `indexOf` による走査でコメント範囲を求める。XML はコメントの入れ子を許さない
+ * ので、最初に見つけた `<!--` から次の `-->` までを 1 コメントとして扱う。
+ *
+ * `<!--` が未終端（対応する `-->` が無い）、または対応する `<!--` の無い
+ * `-->` が現れた場合は、コメント内の <Identity Version> を本物と誤認して
+ * 書き換えるのを防ぐため throw する。
+ * @param {string} xml
+ * @returns {string}
  */
 function maskXmlComments(xml) {
-  const opens = (xml.match(/<!--/g) || []).length;
-  const closes = (xml.match(/-->/g) || []).length;
-  if (opens !== closes) {
-    throw new Error(
-      `maskXmlComments: XML コメントが未終端です (<!-- ${opens} 個 / --> ${closes} 個)。` +
-        'マニフェストを確認してください',
-    );
+  const parts = [];
+  let cursor = 0;
+  for (;;) {
+    const start = xml.indexOf('<!--', cursor);
+    const strayClose = xml.indexOf('-->', cursor);
+    if (start === -1) {
+      if (strayClose !== -1) {
+        throw new Error(
+          'maskXmlComments: XML コメントが未終端です (対応する <!-- の無い --> があります)。' +
+            'マニフェストを確認してください',
+        );
+      }
+      break;
+    }
+    if (strayClose !== -1 && strayClose < start) {
+      throw new Error(
+        'maskXmlComments: XML コメントが未終端です (対応する <!-- の無い --> があります)。' +
+          'マニフェストを確認してください',
+      );
+    }
+    const end = xml.indexOf('-->', start + 4);
+    if (end === -1) {
+      throw new Error(
+        'maskXmlComments: XML コメントが未終端です (--> が見つかりません)。' +
+          'マニフェストを確認してください',
+      );
+    }
+    const closeEnd = end + 3;
+    parts.push(xml.slice(cursor, start));
+    parts.push(' '.repeat(closeEnd - start));
+    cursor = closeEnd;
   }
-  return xml.replace(/<!--[\s\S]*?-->/g, (comment) => ' '.repeat(comment.length));
+  parts.push(xml.slice(cursor));
+  return parts.join('');
 }
 
 /**
