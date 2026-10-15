@@ -13,6 +13,9 @@
   <a href="https://deskspawn.pages.dev">
     <img src="https://img.shields.io/badge/Try%20in%20Browser-Cloudflare%20Pages-380d9f?style=flat-square&logo=cloudflare&logoColor=white" alt="Try in Browser">
   </a>
+  <a href="https://apps.microsoft.com/detail/9ntl90c2lxm1">
+    <img src="https://img.shields.io/badge/Microsoft%20Store-DeskSpawn-0078D4?style=flat-square&logo=microsoft&logoColor=white" alt="Microsoft Store">
+  </a>
   <a href="https://github.com/shira022/deskspawn/releases">
     <img src="https://img.shields.io/github/v/release/shira022/deskspawn?style=flat-square&label=Release" alt="Release">
   </a>
@@ -77,7 +80,7 @@ without installing anything, then install the desktop app for real work.
 | | **Desktop App** | **Web Demo** |
 |---|---|---|
 | **Position** | Main product | Evaluation only |
-| **Install** | MSI/NSIS installer (GitHub Releases) | None — open in browser |
+| **Install** | Microsoft Store, or MSI/NSIS installer (GitHub Releases) | None — open in browser |
 | **Storage** | Real files + SQLite (`~/deskspawn/`) | IndexedDB/OPFS (browser) |
 | **API keys** | OS keychain | Browser storage (less secure) |
 | **Preview** | Local Vite (offline-capable) | WebContainer (Chromium only) |
@@ -93,7 +96,15 @@ without installing anything, then install the desktop app for real work.
 
 There are three ways to get DeskSpawn. Pick the one that matches your situation.
 
-### 1. Installer (recommended for users)
+### 1. Install (Microsoft Store recommended)
+
+**Windows — Microsoft Store (recommended):**
+<https://apps.microsoft.com/detail/9ntl90c2lxm1>
+
+The Store build is **Microsoft-signed** (no SmartScreen warning) and receives its
+**updates through the Store** — its built-in self-updater is disabled (ADR-0017).
+
+**Windows / Linux — GitHub Releases:**
 
 1. Download the installer from **[GitHub Releases](https://github.com/shira022/deskspawn/releases)**
    (`.msi` or the NSIS `-setup.exe` on Windows, `.deb` / `.AppImage` on Linux).
@@ -103,9 +114,10 @@ There are three ways to get DeskSpawn. Pick the one that matches your situation.
 4. Click **+ New App**, describe what you want to build, and watch it appear
    in the local preview.
 
-> ⚠️ Installers are currently **unsigned**. Windows SmartScreen may warn you on
-> first run; macOS builds are not published because distribution there requires a
-> paid code-signing certificate (use the bootstrap script below instead).
+> ⚠️ **GitHub Releases installers are unsigned** — Windows SmartScreen may warn you
+> on first run (the Microsoft Store build is signed, so it does not). macOS builds
+> are not published because distribution there requires a paid code-signing
+> certificate (use the bootstrap script below instead).
 
 ### 2. Bootstrap script (build from source, one command)
 
