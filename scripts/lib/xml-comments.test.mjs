@@ -13,6 +13,14 @@ import assert from 'node:assert/strict';
 
 import { maskXmlComments } from './xml-comments.mjs';
 
+/**
+ * 未終端エラー（実装メッセージに「未終端」を含む Error）かを判定する述語。
+ * 正規表現リテラルで `-->` を扱うと CodeQL の js/bad-tag-filter に抵触するため、
+ * assert.throws には正規表現ではなくこの述語を渡して判定の厳しさを保つ。
+ */
+const isUnterminatedError = (e) =>
+  e instanceof Error && e.message.includes('未終端');
+
 test('maskXmlComments: コメント無しは入力をそのまま返す', () => {
   const xml = '<Package><Identity Version="0.5.0.0"/></Package>';
   assert.equal(maskXmlComments(xml), xml);
@@ -23,7 +31,8 @@ test('maskXmlComments: コメントを同数の空白に置換し長さ（イン
   const masked = maskXmlComments(xml);
   assert.equal(masked.length, xml.length, '等長であること');
   assert.equal(masked, 'a' + ' '.repeat('<!-- comment -->'.length) + 'b');
-  assert.doesNotMatch(masked, /<!--|-->/);
+  assert.equal(masked.includes('<!--'), false, 'コメント開始が残らないこと');
+  assert.equal(masked.includes('-->'), false, 'コメント終了が残らないこと');
   // コメント外の文字は位置・内容とも不変
   assert.equal(masked[0], 'a');
   assert.equal(masked[masked.length - 1], 'b');
@@ -45,24 +54,24 @@ test('maskXmlComments: 複数コメントをすべてマスクする', () => {
 });
 
 test('maskXmlComments: 未終端の <!-- は throw する', () => {
-  assert.throws(() => maskXmlComments('<!-- broken'), /未終端/);
-  assert.throws(() => maskXmlComments('a<!-- b <Identity Version="9.9.9.9"/>'), /未終端/);
+  assert.throws(() => maskXmlComments('<!-- broken'), isUnterminatedError);
+  assert.throws(() => maskXmlComments('a<!-- b <Identity Version="9.9.9.9"/>'), isUnterminatedError);
 });
 
 test('maskXmlComments: 対応する <!-- の無い --> も throw する', () => {
-  assert.throws(() => maskXmlComments('a-->b'), /未終端/);
+  assert.throws(() => maskXmlComments('a-->b'), isUnterminatedError);
 });
 
 test('maskXmlComments: --> の後ろに <!-- が来る未終端（strayClose < start）も throw する', () => {
   // 先頭側に閉じタグだけが現れるケース。ガード（strayClose < start）を
   // 消すと後続の <!-- を正規のコメント開始として処理してしまい素通しになる。
-  assert.throws(() => maskXmlComments('a-->b<!-- c -->'), /未終端|-->/);
-  assert.throws(() => maskXmlComments('a-->b'), /未終端|-->/);
+  assert.throws(() => maskXmlComments('a-->b<!-- c -->'), isUnterminatedError);
+  assert.throws(() => maskXmlComments('a-->b'), isUnterminatedError);
 });
 
 test('maskXmlComments: 閉じたコメントの後ろに余分な --> があっても throw する', () => {
   // <!-- x --> を処理した後、対応する <!-- の無い --> が残るケース。
-  assert.throws(() => maskXmlComments('<!-- x --> then --> rest'), /未終端|-->/);
+  assert.throws(() => maskXmlComments('<!-- x --> then --> rest'), isUnterminatedError);
 });
 
 test('maskXmlComments: 正常なコメントは等長で return する（未終端 throw と対比）', () => {

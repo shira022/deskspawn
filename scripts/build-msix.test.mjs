@@ -144,7 +144,7 @@ test('rewriteManifestVersion: コメント内の <Identity> には反応せず�
   assert.match(out, /Version="0\.6\.0\.0"/);
   assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
   // コメントは除去されず、コメント内の Version は不変
-  assert.match(out, /<!-- <Identity Version="9\.9\.9\.9"\/> -->/);
+  assert.ok(out.includes('<!-- <Identity Version="9.9.9.9"/> -->'));
   assert.equal((out.match(/<!--/g) || []).length, 1);
 });
 
@@ -177,7 +177,7 @@ test('rewriteManifestVersion: テストA コメントが本物より前にある
   assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
   assert.match(out, /Version="0\.6\.0\.0"/);
   assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
-  assert.match(out, /<!-- <Identity Version="9\.9\.9\.9"\/> -->/);
+  assert.ok(out.includes('<!-- <Identity Version="9.9.9.9"/> -->'));
   assert.match(out, /9\.9\.9\.9/);
 });
 
@@ -218,7 +218,7 @@ test('rewriteManifestVersion: テストD コメント本体の <!-- は入れ子
   assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
   assert.match(out, /Version="0\.6\.0\.0"/);
   assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
-  assert.match(out, /<!-- x <!-- y -->/);
+  assert.ok(out.includes('<!-- x <!-- y -->'));
 });
 
 test('rewriteManifestVersion: テストE CRLF でも同じく本物だけを書き換える', () => {
@@ -236,7 +236,7 @@ test('rewriteManifestVersion: テストE CRLF でも同じく本物だけを書�
   assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
   assert.match(out, /Version="0\.6\.0\.0"/);
   assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
-  assert.match(out, /<!-- <Identity Version="9\.9\.9\.9"\/> -->/);
+  assert.ok(out.includes('<!-- <Identity Version="9.9.9.9"/> -->'));
   assert.match(out, /9\.9\.9\.9/);
 });
 
