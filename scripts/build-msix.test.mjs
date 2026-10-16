@@ -18,10 +18,13 @@ import { fileURLToPath } from 'node:url';
 import {
   STAGE_ENTRIES,
   buildPackArgs,
+  buildPackFlags,
+  buildWslPackCommand,
   isAllowedStageEntry,
   rewriteManifestVersion,
   selectStageEntries,
   toAppxVersion,
+  toWindowsPath,
 } from './build-msix.mjs';
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'build-msix.mjs');
@@ -276,6 +279,96 @@ test('buildPackArgs: 既定は --generate-cert と --publisher を付ける', ()
 test('buildPackArgs: --no-sign では --generate-cert を付けない', () => {
   const args = buildPackArgs('/stage', { publisher: 'CN=abc', noSign: true });
   assert.deepEqual(args, ['pack', '/stage', '--no-sign']);
+});
+
+test('toWindowsPath: /mnt/<drive>/... を C:\\... へ変換しドライブ文字を大文字化する', () => {
+  assert.equal(toWindowsPath('/mnt/c/Users/example/app'), 'C:\\Users\\example\\app');
+  assert.equal(toWindowsPath('/mnt/d/foo/bar'), 'D:\\foo\\bar');
+  assert.equal(toWindowsPath('/mnt/e/a/b/c'), 'E:\\a\\b\\c');
+});
+
+test('toWindowsPath: 非マッチや既に Windows 形式は null を返す（破綻しない）', () => {
+  assert.equal(toWindowsPath('/home/example/x'), null);
+  assert.equal(toWindowsPath('relative/path'), null);
+  assert.equal(toWindowsPath('C:\\Users\\example'), null);
+  assert.equal(toWindowsPath('/mnt/cc/Users'), null);
+  assert.equal(toWindowsPath(null), null);
+  assert.equal(toWindowsPath(undefined), null);
+});
+
+test('toWindowsPath: 末尾スラッシュ除去と /mnt/c 単体を扱える', () => {
+  assert.equal(toWindowsPath('/mnt/c'), 'C:\\');
+  assert.equal(toWindowsPath('/mnt/c/'), 'C:\\');
+  assert.equal(toWindowsPath('/mnt/c/Users/example/'), 'C:\\Users\\example');
+  assert.equal(toWindowsPath('/mnt/d//foo//bar/'), 'D:\\foo\\bar');
+});
+
+test('buildPackArgs: --output が --no-sign 経路でも必ず入る', () => {
+  const args = buildPackArgs('/stage', { noSign: true, output: '/stage/app_0.5.0.0_x64.msix' });
+  assert.deepEqual(args, [
+    'pack',
+    '/stage',
+    '--no-sign',
+    '--output',
+    '/stage/app_0.5.0.0_x64.msix',
+  ]);
+});
+
+test('buildPackArgs: --output が --generate-cert --publisher 経路でも必ず入る', () => {
+  const args = buildPackArgs('/stage', {
+    publisher: 'CN=abc',
+    output: '/stage/app_0.5.0.0_x64.msix',
+  });
+  assert.deepEqual(args, [
+    'pack',
+    '/stage',
+    '--generate-cert',
+    '--publisher',
+    'CN=abc',
+    '--output',
+    '/stage/app_0.5.0.0_x64.msix',
+  ]);
+});
+
+test('buildPackFlags: 出力先を常に含め、パスは呼び出し側の形式のまま返す', () => {
+  assert.deepEqual(buildPackFlags({ noSign: true, output: 'C:\\stage\\app.msix' }), [
+    '--no-sign',
+    '--output',
+    'C:\\stage\\app.msix',
+  ]);
+  assert.deepEqual(
+    buildPackFlags({ publisher: 'CN=abc', output: 'C:\\stage\\app.msix' }),
+    ['--generate-cert', '--publisher', 'CN=abc', '--output', 'C:\\stage\\app.msix'],
+  );
+});
+
+test('buildWslPackCommand: powershell 用コマンド文字列を組み立てる（フラグは素、パスは引用）', () => {
+  assert.equal(
+    buildWslPackCommand('C:\\stage', ['--no-sign', '--output', 'C:\\stage\\app.msix']),
+    'winapp pack "C:\\stage" --no-sign --output "C:\\stage\\app.msix"',
+  );
+  assert.equal(
+    buildWslPackCommand('C:\\stage', [
+      '--generate-cert',
+      '--publisher',
+      'CN=abc',
+      '--output',
+      'C:\\stage\\app.msix',
+    ]),
+    'winapp pack "C:\\stage" --generate-cert --publisher "CN=abc" --output "C:\\stage\\app.msix"',
+  );
+});
+
+test('buildWslPackCommand: toWindowsPath と組み合わせて Windows 形式の引数になる', () => {
+  const winStage = toWindowsPath('/mnt/c/Users/me/repo/apps/desktop/src-tauri/target/msix-stage');
+  const winOutput = toWindowsPath(
+    '/mnt/c/Users/me/repo/apps/desktop/src-tauri/target/msix-stage/app_0.5.0.0_x64.msix',
+  );
+  assert.equal(
+    buildWslPackCommand(winStage, buildPackFlags({ noSign: true, output: winOutput })),
+    'winapp pack "C:\\Users\\me\\repo\\apps\\desktop\\src-tauri\\target\\msix-stage" --no-sign ' +
+      '--output "C:\\Users\\me\\repo\\apps\\desktop\\src-tauri\\target\\msix-stage\\app_0.5.0.0_x64.msix"',
+  );
 });
 
 test('ペイロード欠落時はステージ削除より前に exit 1 し旧ステージを保持する', (t) => {
