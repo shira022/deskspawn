@@ -194,9 +194,21 @@ function getIdentityPublisher(xml) {
 }
 
 /** <Identity ... Name="..."> の Name 値を取り出す（出力 .msix の名前に使う）。 */
-function getIdentityName(xml) {
+export function getIdentityName(xml) {
   const m = xml.match(/<Identity\b[^>]*?\sName="([^"]*)"/);
   return m ? m[1] : null;
+}
+
+/**
+ * 出力 .msix のファイル名を組み立てる（純関数）。
+ *  - ('shira022.DeskSpawn', '0.5.0.0') -> 'shira022.DeskSpawn_0.5.0.0_x64.msix'
+ * ディレクトリは含めない（join は呼び出し側で行う）。
+ * @param {string} identityName
+ * @param {string} appxVersion
+ * @returns {string}
+ */
+export function buildOutputFileName(identityName, appxVersion) {
+  return `${identityName}_${appxVersion}_x64.msix`;
 }
 
 /**
@@ -485,7 +497,7 @@ function main(argv) {
   }
 
   // 出力 .msix は常に絶対パスで明示する（winapp 既定の cwd 依存出力を避ける）。
-  const outputPath = join(STAGE_DIR, `${identityName}_${appxVersion}_x64.msix`);
+  const outputPath = join(STAGE_DIR, buildOutputFileName(identityName, appxVersion));
   const invocation = buildPackInvocation(STAGE_DIR, outputPath, {
     publisher,
     noSign: opts.noSign,

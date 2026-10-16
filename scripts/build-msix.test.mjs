@@ -17,9 +17,11 @@ import { fileURLToPath } from 'node:url';
 
 import {
   STAGE_ENTRIES,
+  buildOutputFileName,
   buildPackArgs,
   buildPackFlags,
   buildPackInvocation,
+  getIdentityName,
   isAllowedStageEntry,
   rewriteManifestVersion,
   selectStageEntries,
@@ -271,6 +273,33 @@ test('selectStageEntries: バックアップやサブディレクトリを除外
   ]);
 });
 
+test('getIdentityName: manifest 断片から <Identity Name> を取り出す', () => {
+  const xml = [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<Package>',
+    '  <Identity',
+    '    Name="shira022.DeskSpawn"',
+    '    Publisher="CN=44EAA9A0-7A82-4923-8FB6-B9698B129FDB"',
+    '    Version="0.5.0.0" />',
+    '</Package>',
+    '',
+  ].join('\n');
+  assert.equal(getIdentityName(xml), 'shira022.DeskSpawn');
+});
+
+test('getIdentityName: Name が無ければ null を返す', () => {
+  assert.equal(getIdentityName('<Identity Publisher="CN=abc" Version="0.5.0.0" />'), null);
+  assert.equal(getIdentityName('<Package></Package>'), null);
+});
+
+test('buildOutputFileName: <Identity Name>_<X.Y.Z.0>_x64.msix を組み立てる', () => {
+  assert.equal(
+    buildOutputFileName('shira022.DeskSpawn', '0.5.0.0'),
+    'shira022.DeskSpawn_0.5.0.0_x64.msix',
+  );
+  assert.equal(buildOutputFileName('app', '1.2.3.0'), 'app_1.2.3.0_x64.msix');
+});
+
 test('buildPackArgs: 既定は --generate-cert と --publisher を付ける', () => {
   const args = buildPackArgs('/stage', { publisher: 'CN=abc' });
   assert.deepEqual(args, ['pack', '/stage', '--generate-cert', '--publisher', 'CN=abc']);
@@ -285,6 +314,21 @@ test('toWindowsPath: /mnt/<drive>/... を C:\\... へ変換しドライブ文字
   assert.equal(toWindowsPath('/mnt/c/Users/example/app'), 'C:\\Users\\example\\app');
   assert.equal(toWindowsPath('/mnt/d/foo/bar'), 'D:\\foo\\bar');
   assert.equal(toWindowsPath('/mnt/e/a/b/c'), 'E:\\a\\b\\c');
+});
+
+test('toWindowsPath: 大文字ドライブ入力も大文字 C:\\ に正規化する', () => {
+  assert.equal(toWindowsPath('/mnt/C/Users/example/app'), 'C:\\Users\\example\\app');
+  assert.equal(toWindowsPath('/mnt/C'), 'C:\\');
+  assert.equal(toWindowsPath('/mnt/C/'), 'C:\\');
+});
+
+test('toWindowsPath: 大文字小文字が混在したパスを正規化する', () => {
+  assert.equal(toWindowsPath('/mnt/c/Users/example'), 'C:\\Users\\example');
+  assert.equal(toWindowsPath('/mnt/C/Users/example'), 'C:\\Users\\example');
+  assert.equal(
+    toWindowsPath('/mnt/c/Users/example/app'),
+    'C:\\Users\\example\\app',
+  );
 });
 
 test('toWindowsPath: 非マッチや既に Windows 形式は null を返す（破綻しない）', () => {

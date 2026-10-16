@@ -108,7 +108,8 @@ apps/desktop/src-tauri/target/msix-stage/<Name>_<X.Y.Z.0>_x64.msix
 - payload は本体 exe ＋ サイドカー（`deskspawn-sidecar.exe` と `deskspawn-sidecar-x86_64-pc-windows-msvc.exe` の**両名**）。
 - ステージングは**許可リスト方式**（manifest と `Assets/*.png` のみ）。バックアップディレクトリなどを混入させない。
 - 出力 .msix は **`--output` で常にステージ先の中に固定**される（winapp 既定の「カレントディレクトリ出力」に依存しない）。
-  `--pack` 実行後にスクリプトが出力の存在とサイズを検証し、無ければ exit 1 で失敗する。
+  `--pack` 実行後にスクリプトが出力の**存在**を検証し（無ければ exit 1）、サイズは表示のみ
+  （合否判定はしない）。
 
 ### 実測（2026-10-16 / winapp 0.7.1 / WSL の node v26）
 
@@ -124,7 +125,8 @@ apps/desktop/src-tauri/target/msix-stage/<Name>_<X.Y.Z.0>_x64.msix
 - ステージ先が Windows から見えない場所（`/home/...` 等）だと `--pack` は
   「stage ディレクトリが Windows から見える場所（/mnt/<drive>/...）にないため pack できません」で exit 1 する。
 - payload が無いリポジトリ（例: WSL 側にしか無いソースツリー）で実行すると、
-  ペイロード欠落の 3 行メッセージを出して exit 1 する（**旧ステージを消さずに**失敗する）。
+  欠落 1 件につき 2 行（対象パスと生成コマンド）＋ 締めの 1 行を出して exit 1 する
+  （実測: 2 件欠落で **5 行**・**旧ステージを消さずに**失敗する）。
   → **pack はビルド成果物のある Windows 側コピー（例 `C:\Users\<user>\dev\deskspawn-staging`）で実行する**。
 - 昇格は不要（`--no-sign` の pack に UAC は出ない）。
 
