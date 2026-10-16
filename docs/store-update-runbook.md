@@ -107,6 +107,28 @@ apps/desktop/src-tauri/target/msix-stage/<Name>_<X.Y.Z.0>_x64.msix
 
 - payload は本体 exe ＋ サイドカー（`deskspawn-sidecar.exe` と `deskspawn-sidecar-x86_64-pc-windows-msvc.exe` の**両名**）。
 - ステージングは**許可リスト方式**（manifest と `Assets/*.png` のみ）。バックアップディレクトリなどを混入させない。
+- 出力 .msix は **`--output` で常にステージ先の中に固定**される（winapp 既定の「カレントディレクトリ出力」に依存しない）。
+  `--pack` 実行後にスクリプトが出力の**存在**を検証し（無ければ exit 1）、サイズは表示のみ
+  （合否判定はしない）。
+
+### 実測（2026-10-16 / winapp 0.7.1 / WSL の node v26）
+
+- **この環境では node は WSL にのみ、winapp は Windows にのみ入っている**。それでも上の 3 行は
+  WSL のリポジトリからそのまま実行できる: 非 Windows 環境ではスクリプトが `winapp.exe` を
+  **直接 spawn** し（WSL の interop PATH で解決できることを実測済み。PowerShell は経由しない）、
+  `/mnt/c/...` を `C:\...` に変換した Windows 形式パスを argv で渡す。
+- pack は 214.4 MiB のステージから **約 9 秒 / 85.9 MiB** の MSIX を生成（`--no-sign`）。
+- **`.msix` 全体のバイト同一性は保証されない**（実測: 同じステージから再実行して `90,071,452` →
+  `90,071,456` bytes）。差分は zip のタイムスタンプと `AppxBlockMap.xml` の `<File>` 列挙順だけで、
+  **payload・manifest・アセットのハッシュは全一致**する。再現性の確認は
+  「ステージ内容（許可リスト＋manifest の版）と payload の md5 一致」で行い、ファイル全体のハッシュ比較はしない。
+- ステージ先が Windows から見えない場所（`/home/...` 等）だと `--pack` は
+  「stage ディレクトリが Windows から見える場所（/mnt/<drive>/...）にないため pack できません」で exit 1 する。
+- payload が無いリポジトリ（例: WSL 側にしか無いソースツリー）で実行すると、
+  欠落 1 件につき 2 行（対象パスと生成コマンド）＋ 締めの 1 行を出して exit 1 する
+  （実測: 2 件欠落で **5 行**・**旧ステージを消さずに**失敗する）。
+  → **pack はビルド成果物のある Windows 側コピー（例 `C:\Users\<user>\dev\deskspawn-staging`）で実行する**。
+- 昇格は不要（`--no-sign` の pack に UAC は出ない）。
 
 ## 6. 提出前のローカル実機検証（Windows）
 
@@ -120,8 +142,25 @@ apps/desktop/src-tauri/target/msix-stage/<Name>_<X.Y.Z.0>_x64.msix
    Start-Process "<InstallLocation>\deskspawn-desktop.exe"
    ```
 4. ログに `Packaged (Store/MSIX) build detected: updater disabled` が出ること（Store モードの実行時証明）。
+   ログは `env_logger` で **stderr** に出るため、パッケージ版 exe を stderr リダイレクト付きで起動して捕まえる:
+
+   ```powershell
+   $pkg = Get-AppxPackage -Name shira022.DeskSpawn
+   $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = '--remote-debugging-port=9222'
+   Start-Process -FilePath (Join-Path $pkg.InstallLocation 'deskspawn-desktop.exe') `
+     -RedirectStandardError 'C:\Users\<user>\dev\ds-run-err.log' -RedirectStandardOutput 'C:\Users\<user>\dev\ds-run-out.log'
+   ```
+
+   `C:\Program Files\WindowsApps\...` の exe は**この方法で直接起動できる**（実測）。
+   併せて **`No updates available.` が 0 件**であることを確認すると「updater が登録すらされていない」ことまで言える
+   （非パッケージ版ではこの行が出て updater が走る）。
+   なお `Start-Process` を付けた親プロセスは、GUI 子プロセスがハンドルを保持する間パイプが閉じない点に注意
+   （バックグラウンドで走らせるか、出力をファイルに取る）。
 5. CDP で UI・プレビュー・チャットを確認し、サイドカーの `/health` を叩く
    （WSL からは `127.0.0.1` に届かないため、Windows 側の `curl.exe` か `Invoke-RestMethod` を使う）。
+   WSL から `9222` を見るには既定ゲートウェイ経由（`$(ip route | awk '/^default/{print $3}')`）で到達でき、
+   Playwright の `chromium.connectOverCDP()` で DOM を読める（実測: タイトル `DeskSpawn`・本文・button 数など）。
+   **サイドカーの `/health` は 401 が正常**（認証トークン必須の設計。到達＝プロセス生存の証拠）。
 6. 旧パッケージの `Remove-AppxPackage` は**新パッケージの起動検証が済んでから**行う。
 
 ## 7. 提出（Partner Center）

@@ -57,6 +57,12 @@ Each release is documented on **GitHub Releases**. See the full history at
   → Partner Center → publish), a Microsoft Store link in the README /
   installation docs, and ignore rules for packaging and signing artifacts
   (`*.msix`, `*.pfx`, `*.cer`, `*.p12`).
+- 🧭 `winapp pack` is now runnable from WSL: non-Windows hosts spawn
+  `winapp.exe` directly (resolved via the WSL interop PATH) and convert the stage
+  path (`/mnt/c/...` → `C:\...`) into Windows-form argv, and the
+  output `.msix` is pinned with `--output` inside the stage directory instead of
+  landing in the current directory (verified end-to-end: 85.9 MiB / 18 entries /
+  payload md5 matches the build artifacts).
 
 ---
 

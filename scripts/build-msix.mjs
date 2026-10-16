@@ -193,28 +193,100 @@ function getIdentityPublisher(xml) {
   return m ? m[1] : null;
 }
 
-/** winapp pack に渡す引数を組み立てる（純関数）。 */
-export function buildPackArgs(stageDir, { publisher = null, noSign = false } = {}) {
-  const args = ['pack', stageDir];
+/** <Identity ... Name="..."> の Name 値を取り出す（出力 .msix の名前に使う）。 */
+export function getIdentityName(xml) {
+  const m = xml.match(/<Identity\b[^>]*?\sName="([^"]*)"/);
+  return m ? m[1] : null;
+}
+
+/**
+ * 出力 .msix のファイル名を組み立てる（純関数）。
+ *  - ('shira022.DeskSpawn', '0.5.0.0') -> 'shira022.DeskSpawn_0.5.0.0_x64.msix'
+ * ディレクトリは含めない（join は呼び出し側で行う）。
+ * @param {string} identityName
+ * @param {string} appxVersion
+ * @returns {string}
+ */
+export function buildOutputFileName(identityName, appxVersion) {
+  return `${identityName}_${appxVersion}_x64.msix`;
+}
+
+/**
+ * WSL 形式のパス `/mnt/<drive>/...` を Windows 形式 `C:\...` に変換する（純関数）。
+ *  - `/mnt/c/Users/example/app` -> `C:\Users\example\app`
+ *  - `/mnt/c` / `/mnt/c/` -> `C:\`
+ *  - 末尾スラッシュは除去し、区切りは `\` に正規化する。
+ *  - `/mnt/...` 形式でない（`/home/...` や既に `C:\...` の入力）は null を返す。
+ * @param {unknown} p
+ * @returns {string|null}
+ */
+export function toWindowsPath(p) {
+  if (typeof p !== 'string') return null;
+  const m = p.match(/^\/mnt\/([a-zA-Z])(?:\/|$)/);
+  if (!m) return null;
+  const drive = m[1].toUpperCase();
+  const rest = p
+    .slice(m[0].length)
+    .replace(/^\/+/, '')
+    .replace(/\/+$/, '')
+    .replace(/\/+/g, '\\');
+  return rest === '' ? `${drive}:\\` : `${drive}:\\${rest}`;
+}
+
+/** winapp pack のオプション列（'pack' と stage を除く）を組み立てる（純関数）。 */
+export function buildPackFlags({ publisher = null, noSign = false, output = null } = {}) {
+  const args = [];
   if (noSign) {
     args.push('--no-sign');
   } else {
     args.push('--generate-cert');
     if (publisher) args.push('--publisher', publisher);
   }
+  // 出力先 .msix は常に明示する（winapp 既定の cwd 依存出力を避ける）。
+  if (output) args.push('--output', output);
   return args;
 }
 
-/** 表示用の winapp pack コマンド文字列（常に引用符付き）。 */
-function describePackCommand(stageDir, publisher, noSign) {
-  const parts = ['winapp', 'pack', `"${stageDir}"`];
-  if (noSign) {
-    parts.push('--no-sign');
-  } else {
-    parts.push('--generate-cert');
-    if (publisher) parts.push(`--publisher "${publisher}"`);
+/** winapp pack に渡す引数を組み立てる（純関数）。 */
+export function buildPackArgs(stageDir, opts = {}) {
+  return ['pack', stageDir, ...buildPackFlags(opts)];
+}
+
+/**
+ * 実際に spawn する winapp pack のコマンドと引数を組み立てる（純関数）。
+ *
+ * Windows では `winapp` をネイティブパスのまま使う。非 Windows（WSL 等）では
+ * `winapp.exe` を直接 spawn し、`winapp.exe` は Windows 形式の argv を要求する
+ * ため stage / output を `toWindowsPath()` で変換する。WSL の interop PATH から
+ * `winapp.exe` が解決できることは実測済み（PowerShell 経由は不要）。
+ *
+ * stage / output が Windows から見えない（`/mnt/<drive>/...` でない）場合は
+ * null を返し、呼び出し側が明確なメッセージで失敗させる。
+ * @param {string} stageDir ステージ先（呼び出し側の形式）
+ * @param {string} output 出力 .msix（呼び出し側の形式）
+ * @param {{ publisher?: string|null, noSign?: boolean, platform?: string }} [opts]
+ * @returns {{ command: string, args: string[] }|null}
+ */
+export function buildPackInvocation(stageDir, output, opts = {}) {
+  const { publisher = null, noSign = false, platform = process.platform } = opts;
+  if (platform === 'win32') {
+    return {
+      command: 'winapp',
+      args: buildPackArgs(stageDir, { publisher, noSign, output }),
+    };
   }
-  return parts.join(' ');
+  const winStage = toWindowsPath(stageDir);
+  const winOutput = toWindowsPath(output);
+  if (winStage === null || winOutput === null) return null;
+  return {
+    command: 'winapp.exe',
+    args: buildPackArgs(winStage, { publisher, noSign, output: winOutput }),
+  };
+}
+
+/** 実行コマンドを表示用の文字列にする（クォートやエスケープはしない）。 */
+function formatPackCommand(invocation) {
+  return [invocation.command, ...invocation.args].join(' ');
 }
 
 /** ステージ元から許可リストに一致する相対パスを列挙する。 */
@@ -294,7 +366,13 @@ function printUsage() {
 既定動作:
   引数なしでは apps/desktop/src-tauri/target/msix-stage/ に
   pack 用のステージングディレクトリを作るだけで、winapp pack は実行しない。
-  次に実行すべき winapp pack コマンド例を標準出力に表示する。`);
+  次に実行すべき winapp pack コマンド例を標準出力に表示する。
+
+WSL からの --pack:
+  Windows 以外では winapp.exe を直接 spawn する（WSL の interop PATH で解決できる。
+  PowerShell は経由しない）。ステージ先が /mnt/<drive>/... にある必要がある
+  （Windows から見えない場所では失敗する）。出力 .msix は
+  <stage>/<Identity Name>_<version>_x64.msix に固定する。`);
 }
 
 function parseArgs(argv) {
@@ -413,23 +491,56 @@ function main(argv) {
 
   const stagedXml = readFileSync(join(STAGE_DIR, MANIFEST), 'utf8');
   const publisher = getIdentityPublisher(stagedXml);
-  const packArgs = buildPackArgs(STAGE_DIR, { publisher, noSign: opts.noSign });
+  const identityName = getIdentityName(stagedXml);
+  if (!identityName) {
+    fail(`${MANIFEST} の <Identity Name="..."> を取得できませんでした`);
+  }
+
+  // 出力 .msix は常に絶対パスで明示する（winapp 既定の cwd 依存出力を避ける）。
+  const outputPath = join(STAGE_DIR, buildOutputFileName(identityName, appxVersion));
+  const invocation = buildPackInvocation(STAGE_DIR, outputPath, {
+    publisher,
+    noSign: opts.noSign,
+    platform: process.platform,
+  });
 
   console.log('\n次のコマンド (winapp pack):');
-  console.log(`  ${describePackCommand(STAGE_DIR, publisher, opts.noSign)}`);
+  if (invocation) {
+    console.log(`  ${formatPackCommand(invocation)}`);
+  } else {
+    console.log('  (ステージ先が Windows から見えないため pack できません)');
+  }
 
   if (opts.pack) {
-    console.log('\n[build-msix] winapp pack を実行します...');
-    const result = spawnSync('winapp', packArgs, { stdio: 'inherit' });
+    if (invocation === null) {
+      fail(
+        'stage ディレクトリが Windows から見える場所（/mnt/<drive>/...）にないため pack できません',
+      );
+    }
+    console.log(`\n[build-msix] ${invocation.command} で winapp pack を実行します...`);
+    const result = spawnSync(invocation.command, invocation.args, { stdio: 'inherit' });
     if (result.error) {
       if (result.error.code === 'ENOENT') {
-        fail('winapp が見つかりません。インストールしてください: winget install microsoft.winappcli --source winget');
+        if (process.platform === 'win32') {
+          fail('winapp が見つかりません。インストールしてください: winget install microsoft.winappcli --source winget');
+        }
+        fail(
+          'winapp.exe を WSL の PATH から解決できません（Windows 側に winapp を入れ、' +
+            'interop の PATH を確認してください）。インストール: ' +
+            'winget install microsoft.winappcli --source winget',
+        );
       }
-      fail(`winapp の実行に失敗しました: ${result.error.message}`);
+      fail(`${invocation.command} の実行に失敗しました: ${result.error.message}`);
     }
     if (result.status !== 0) {
       fail(`winapp pack が終了コード ${result.status} で失敗しました`);
     }
+
+    // pack 後の検証: 出力 .msix が期待した絶対パスに存在するか。
+    if (!existsSync(outputPath)) {
+      fail(`pack 後の .msix が見つかりません: ${outputPath}`);
+    }
+    console.log(`OK: ${outputPath} (${humanSize(statSync(outputPath).size)})`);
   }
 
   return 0;
