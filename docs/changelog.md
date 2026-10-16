@@ -41,6 +41,23 @@ Each release is documented on **GitHub Releases**. See the full history at
   TLS certificate validation bypass, CVE-2026-84961; both high severity).
   Keeps the CI `npm-audit` gate green.
 
+**Microsoft Store distribution (ADR-017):**
+
+- 🏪 MSIX packaging is now reproducible from the repository.
+  `scripts/build-msix.mjs` stages the payload with an allow-list, derives the
+  MSIX 4-part version (`X.Y.Z.0`) from `package.json`, rewrites the manifest
+  identity version, and can run `winapp pack`.
+- 📦 The submitted manifest and tile assets now live in
+  `apps/desktop/store/msix/` (byte-identical to the shipped v0.5.0 package),
+  so a future submission no longer depends on a build machine.
+- 🔢 `scripts/set-version.py` and `scripts/check-versions.mjs` now cover the
+  appxmanifest version, so a version bump can no longer desynchronize the
+  Store package from the app.
+- 📖 Added `docs/store-update-runbook.md` (bump → build → stage/pack → verify
+  → Partner Center → publish), a Microsoft Store link in the README /
+  installation docs, and ignore rules for packaging and signing artifacts
+  (`*.msix`, `*.pfx`, `*.cer`, `*.p12`).
+
 ---
 
 ## v0.4.2 (Security Hardening & Desktop-First Renewal) — 2026-08-06
