@@ -29,6 +29,8 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { maskXmlComments } from './lib/xml-comments.mjs';
+
 const ROOT = process.env.DESKSPAWN_CHECK_VERSIONS_ROOT || join(dirname(fileURLToPath(import.meta.url)), '..');
 const EXPECTED = process.argv[2] || null;
 
@@ -76,7 +78,9 @@ function cargoLockVersion() {
 function appxVersion() {
   try {
     const xml = readFileSync(join(ROOT, 'apps/desktop/store/msix/Package.appxmanifest'), 'utf8');
-    const m = xml.match(/<Identity\b[^>]*?\bVersion="([^"]*)"/);
+    // コメントアウトされた旧 <Identity> を実体と誤認しないようマスクしてから読む。
+    // maskXmlComments は等長置換でマッチ位置を保つ（ここでは値の取得のみ）。
+    const m = maskXmlComments(xml).match(/<Identity\b[^>]*?\bVersion="([^"]*)"/);
     return m ? m[1] : null;
   } catch {
     return null;
