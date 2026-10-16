@@ -9,13 +9,30 @@ for evaluation. For real work, install or build the desktop app.
 
 | Path | Best for | Requirements |
 |------|----------|--------------|
-| **1. Installer** | Most users | None |
+| **1. Installer** | Most users (Microsoft Store, or a GitHub Releases installer) | None |
 | **2. Bootstrap script** | Building from source, macOS, or unsupported setups | Git + ~2 GB free disk for the toolchain |
 | **3. Web demo** | A quick look | A Chromium-based browser |
 
 ---
 
 ## 1. Installer
+
+### Microsoft Store (recommended on Windows)
+
+<https://apps.microsoft.com/detail/9ntl90c2lxm1>
+
+Installing from the Store gives you a **Microsoft-signed package** (no SmartScreen
+warning) and **Store-managed updates** — the built-in self-updater is disabled in
+that build (see ADR-0017).
+
+### Install from GitHub Releases
+
+1. Download the latest installer from
+   [GitHub Releases](https://github.com/shira022/deskspawn/releases):
+   - Windows: `.msi` or the NSIS `-setup.exe`
+   - Linux: `.deb` or `.AppImage` (AppImage requires FUSE)
+2. Run the installer and follow the setup wizard.
+3. Launch **DeskSpawn** from the Start menu (or your application menu).
 
 ### System Requirements
 
@@ -27,15 +44,6 @@ for evaluation. For real work, install or build the desktop app.
 | Disk | ~200 MB for the app, plus space for your generated apps |
 | Network | Only needed for AI API calls (preview runs fully offline) |
 
-### Install
-
-1. Download the latest installer from
-   [GitHub Releases](https://github.com/shira022/deskspawn/releases):
-   - Windows: `.msi` or the NSIS `-setup.exe`
-   - Linux: `.deb` or `.AppImage` (AppImage requires FUSE)
-2. Run the installer and follow the setup wizard.
-3. Launch **DeskSpawn** from the Start menu (or your application menu).
-
 > ⚠️ **The installers are unsigned.** Windows SmartScreen may show a warning on
 > first run — choose "More info" → "Run anyway" if you trust the source.
 >
@@ -45,16 +53,15 @@ for evaluation. For real work, install or build the desktop app.
 
 ### Updates
 
-At startup the app checks the configured update endpoint
+For GitHub Releases builds, at startup the app checks the configured update endpoint
 (`https://shira022.github.io/deskspawn/updates.json`) in the background and logs
 the result — it does not show a dialog. If the endpoint is not published yet (or
 is unreachable), the check fails and the app only logs a warning; it never blocks
 startup. You can always download the newest installer manually from
 [GitHub Releases](https://github.com/shira022/deskspawn/releases).
 
-> 📝 **Microsoft Store**: a Store listing is planned. Once published, you will also
-> be able to install DeskSpawn from the Microsoft Store — the Store build is what
-> removes the SmartScreen warning.
+> 💡 **Installed from the Microsoft Store?** Updates are delivered by the Store —
+> the built-in self-updater is disabled in that build (see ADR-0017 in `docs/adr/`).
 
 ---
 
