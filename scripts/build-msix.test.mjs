@@ -19,7 +19,7 @@ import {
   STAGE_ENTRIES,
   buildPackArgs,
   buildPackFlags,
-  buildWslPackCommand,
+  buildPackInvocation,
   isAllowedStageEntry,
   rewriteManifestVersion,
   selectStageEntries,
@@ -342,32 +342,64 @@ test('buildPackFlags: 出力先を常に含め、パスは呼び出し側の形�
   );
 });
 
-test('buildWslPackCommand: powershell 用コマンド文字列を組み立てる（フラグは素、パスは引用）', () => {
-  assert.equal(
-    buildWslPackCommand('C:\\stage', ['--no-sign', '--output', 'C:\\stage\\app.msix']),
-    'winapp pack "C:\\stage" --no-sign --output "C:\\stage\\app.msix"',
-  );
-  assert.equal(
-    buildWslPackCommand('C:\\stage', [
+test('buildPackInvocation: win32 は winapp をネイティブパスのまま使う', () => {
+  const inv = buildPackInvocation('/stage', '/stage/app_0.5.0.0_x64.msix', {
+    publisher: 'CN=abc',
+    platform: 'win32',
+  });
+  assert.deepEqual(inv, {
+    command: 'winapp',
+    args: [
+      'pack',
+      '/stage',
       '--generate-cert',
       '--publisher',
       'CN=abc',
       '--output',
-      'C:\\stage\\app.msix',
-    ]),
-    'winapp pack "C:\\stage" --generate-cert --publisher "CN=abc" --output "C:\\stage\\app.msix"',
-  );
+      '/stage/app_0.5.0.0_x64.msix',
+    ],
+  });
 });
 
-test('buildWslPackCommand: toWindowsPath と組み合わせて Windows 形式の引数になる', () => {
-  const winStage = toWindowsPath('/mnt/c/Users/me/repo/apps/desktop/src-tauri/target/msix-stage');
-  const winOutput = toWindowsPath(
-    '/mnt/c/Users/me/repo/apps/desktop/src-tauri/target/msix-stage/app_0.5.0.0_x64.msix',
-  );
+test('buildPackInvocation: 非 win32 は winapp.exe と Windows 形式パスを使う（--no-sign / --output 込み）', () => {
+  const stage = '/mnt/c/Users/example/repo/apps/desktop/src-tauri/target/msix-stage';
+  const out = `${stage}/app_0.5.0.0_x64.msix`;
+  const inv = buildPackInvocation(stage, out, { noSign: true, platform: 'linux' });
+  assert.equal(inv.command, 'winapp.exe');
+  assert.deepEqual(inv.args, [
+    'pack',
+    'C:\\Users\\example\\repo\\apps\\desktop\\src-tauri\\target\\msix-stage',
+    '--no-sign',
+    '--output',
+    'C:\\Users\\example\\repo\\apps\\desktop\\src-tauri\\target\\msix-stage\\app_0.5.0.0_x64.msix',
+  ]);
+});
+
+test('buildPackInvocation: 非 win32 の --generate-cert 経路でも --output が Windows 形式で入る', () => {
+  const stage = '/mnt/d/stage';
+  const out = '/mnt/d/stage/app_0.6.0.0_x64.msix';
+  const inv = buildPackInvocation(stage, out, { publisher: 'CN=abc', platform: 'linux' });
+  assert.equal(inv.command, 'winapp.exe');
+  assert.deepEqual(inv.args, [
+    'pack',
+    'D:\\stage',
+    '--generate-cert',
+    '--publisher',
+    'CN=abc',
+    '--output',
+    'D:\\stage\\app_0.6.0.0_x64.msix',
+  ]);
+});
+
+test('buildPackInvocation: 非 win32 で Windows から見えないパスは null を返す', () => {
   assert.equal(
-    buildWslPackCommand(winStage, buildPackFlags({ noSign: true, output: winOutput })),
-    'winapp pack "C:\\Users\\me\\repo\\apps\\desktop\\src-tauri\\target\\msix-stage" --no-sign ' +
-      '--output "C:\\Users\\me\\repo\\apps\\desktop\\src-tauri\\target\\msix-stage\\app_0.5.0.0_x64.msix"',
+    buildPackInvocation('/home/example/stage', '/home/example/stage/app.msix', { platform: 'linux' }),
+    null,
+  );
+  // stage は見えるが output が見えない場合も null。
+  assert.equal(
+    buildPackInvocation('/mnt/c/stage', '/home/example/stage/app.msix', { platform: 'linux' }),
+    null,
   );
 });
 

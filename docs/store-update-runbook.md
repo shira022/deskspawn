@@ -113,10 +113,14 @@ apps/desktop/src-tauri/target/msix-stage/<Name>_<X.Y.Z.0>_x64.msix
 ### 実測（2026-10-16 / winapp 0.7.1 / WSL の node v26）
 
 - **この環境では node は WSL にのみ、winapp は Windows にのみ入っている**。それでも上の 3 行は
-  WSL のリポジトリからそのまま実行できる: 非 Windows 環境ではスクリプトが
-  `powershell.exe -NoProfile -Command` 経由で winapp を呼び、`/mnt/c/...` を `C:\...` に変換して渡す。
+  WSL のリポジトリからそのまま実行できる: 非 Windows 環境ではスクリプトが `winapp.exe` を
+  **直接 spawn** し（WSL の interop PATH で解決できることを実測済み。PowerShell は経由しない）、
+  `/mnt/c/...` を `C:\...` に変換した Windows 形式パスを argv で渡す。
 - pack は 214.4 MiB のステージから **約 9 秒 / 85.9 MiB** の MSIX を生成（`--no-sign`）。
-  同一ステージからの再実行で**バイト単位で同じ** .msix になる（`90,071,452` bytes、payload の md5 も一致）。
+- **`.msix` 全体のバイト同一性は保証されない**（実測: 同じステージから再実行して `90,071,452` →
+  `90,071,456` bytes）。差分は zip のタイムスタンプと `AppxBlockMap.xml` の `<File>` 列挙順だけで、
+  **payload・manifest・アセットのハッシュは全一致**する。再現性の確認は
+  「ステージ内容（許可リスト＋manifest の版）と payload の md5 一致」で行い、ファイル全体のハッシュ比較はしない。
 - ステージ先が Windows から見えない場所（`/home/...` 等）だと `--pack` は
   「stage ディレクトリが Windows から見える場所（/mnt/<drive>/...）にないため pack できません」で exit 1 する。
 - payload が無いリポジトリ（例: WSL 側にしか無いソースツリー）で実行すると、
