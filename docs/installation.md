@@ -43,6 +43,7 @@ that build (see ADR-0017).
 | RAM | 4 GB minimum (8 GB recommended) |
 | Disk | ~200 MB for the app, plus space for your generated apps |
 | Network | Only needed for AI API calls (preview runs fully offline) |
+| OS keychain | **Required to store API keys** (Windows Credential Manager on Windows). The desktop app only writes keys to the OS keychain — it does not fall back to a plain-text file. |
 
 > ⚠️ **The installers are unsigned.** Windows SmartScreen may show a warning on
 > first run — choose "More info" → "Run anyway" if you trust the source.

@@ -53,6 +53,10 @@ import {
   saveChatHistory,
   saveApiKey,
   loadApiKey,
+  loadApiKeyInfo,
+  deleteLegacyPlaintextFile,
+  setSessionApiKey,
+  clearSessionApiKeys,
   hasApiKey,
   deleteApiKey,
   saveProviderConfig,
@@ -103,6 +107,8 @@ beforeEach(() => {
   getChatHistoryDesktopMock.mockReset();
   mockLookupModelCostById.mockReset();
   clearModelCostCache();
+  clearSessionApiKeys();
+  invokeMock.mockReset();
 });
 
 describe("getChatHistory cost normalization", () => {
@@ -234,7 +240,9 @@ describe("per-provider API key & config storage", () => {
     expect(ALL_PROVIDERS).toHaveLength(9);
 
     for (const provider of ALL_PROVIDERS) {
-      await expect(saveApiKey(provider, `key-${provider}`)).resolves.toBe("browser");
+      await expect(
+        saveApiKey(provider, `key-${provider}`, { consent: true }),
+      ).resolves.toBe("browser");
     }
 
     for (const provider of ALL_PROVIDERS) {
@@ -246,7 +254,7 @@ describe("per-provider API key & config storage", () => {
 
   it("deleting one provider's key leaves every other provider untouched", async () => {
     for (const provider of ALL_PROVIDERS) {
-      await saveApiKey(provider, `key-${provider}`);
+      await saveApiKey(provider, `key-${provider}`, { consent: true });
     }
 
     await deleteApiKey("openai");
@@ -276,7 +284,7 @@ describe("per-provider API key & config storage", () => {
 
   it("provider configs and API keys use separate keys (never overwrite each other)", async () => {
     for (const provider of ALL_PROVIDERS) {
-      await saveApiKey(provider, `key-${provider}`);
+      await saveApiKey(provider, `key-${provider}`, { consent: true });
       await saveProviderConfig(provider, configFor(provider));
     }
 
@@ -291,9 +299,12 @@ describe("per-provider API key & config storage", () => {
   // ── Desktop (invoke-first) path ──────────────────────────────────────────
 
   it("uses the Tauri IPC path for API keys when invoke succeeds", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
     invokeMock.mockImplementation(async (cmd: string) => {
       if (cmd === "save_api_key") return { method: "keychain" };
-      if (cmd === "load_api_key") return "key-from-keychain";
+      if (cmd === "load_api_key_info") {
+        return { key: "key-from-keychain", method: "keychain", legacyPlaintext: false };
+      }
       if (cmd === "delete_api_key") return null;
       return null;
     });
@@ -306,15 +317,18 @@ describe("per-provider API key & config storage", () => {
 
     expect(await loadApiKey("anthropic")).toBe("key-from-keychain");
     expect(await hasApiKey("anthropic")).toBe(true);
-    expect(invokeMock).toHaveBeenCalledWith("load_api_key", { provider: "anthropic" });
+    expect(invokeMock).toHaveBeenCalledWith("load_api_key_info", { provider: "anthropic" });
 
     await deleteApiKey("anthropic");
     expect(invokeMock).toHaveBeenCalledWith("delete_api_key", { provider: "anthropic" });
   });
 
   it("returns null / false for a desktop key that is not stored", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
     invokeMock.mockImplementation(async (cmd: string) => {
-      if (cmd === "load_api_key") return null;
+      if (cmd === "load_api_key_info") {
+        return { key: null, method: null, legacyPlaintext: false };
+      }
       return null;
     });
 
@@ -322,13 +336,104 @@ describe("per-provider API key & config storage", () => {
     expect(await hasApiKey("ollama")).toBe(false);
   });
 
+  it("Tauri save_api_key が Err を返したら IndexedDB に落ちず throw する", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "save_api_key") throw new Error("keychain unavailable");
+      return null;
+    });
+
+    await expect(saveApiKey("openai", "sk-secret")).rejects.toThrow("keychain unavailable");
+    // 平文の IndexedDB フォールバックが起きていないこと
+    expect(await getSetting("api_key_openai")).toBeUndefined();
+  });
+
   it("sweeps the legacy plaintext IndexedDB copy after a desktop save", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
     // デスクトップ移行前の平文が settings ストアに残っている状態を再現
     await setSetting("api_key_openai", "legacy-plain-text");
 
     invokeMock.mockResolvedValue({ method: "keychain" });
     await expect(saveApiKey("openai", "sk-new")).resolves.toBe("keychain");
 
+    expect(await getSetting("api_key_openai")).toBeUndefined();
+  });
+
+  // ── ADR-018: 保存先情報 / Web 同意ガード（defense-in-depth） ─────────────
+
+  it("web: saveApiKey without consent throws and writes nothing to IndexedDB", async () => {
+    isDesktopEnvMock.mockReturnValue(false);
+
+    await expect(saveApiKey("openai", "sk-secret")).rejects.toThrow(/[Cc]onsent/);
+    // IndexedDB（settings ストア）に平文が書かれていないこと
+    expect(await getSetting("api_key_openai")).toBeUndefined();
+  });
+
+  it("web: saveApiKey with consent persists to IndexedDB", async () => {
+    isDesktopEnvMock.mockReturnValue(false);
+
+    await expect(saveApiKey("openai", "sk-ok", { consent: true })).resolves.toBe("browser");
+    expect(await getSetting("api_key_openai")).toBe("sk-ok");
+  });
+
+  it("desktop: saveApiKey does not require consent (keychain path)", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    invokeMock.mockResolvedValue({ method: "keychain" });
+
+    await expect(saveApiKey("openai", "sk-desktop")).resolves.toBe("keychain");
+  });
+
+  it("deleteLegacyPlaintextFile: desktop invokes the Rust cleanup command", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    invokeMock.mockResolvedValue(null);
+
+    await deleteLegacyPlaintextFile();
+
+    expect(invokeMock).toHaveBeenCalledWith("delete_legacy_plaintext_file");
+  });
+
+  it("deleteLegacyPlaintextFile: web does not touch IPC", async () => {
+    isDesktopEnvMock.mockReturnValue(false);
+
+    await deleteLegacyPlaintextFile();
+
+    expect(invokeMock).not.toHaveBeenCalled();
+  });
+
+  it("loadApiKeyInfo: desktop returns key + method + legacy flag", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_api_key_info") {
+        return { key: "sk-legacy", method: "file", legacyPlaintext: true };
+      }
+      return null;
+    });
+
+    await expect(loadApiKeyInfo("openai")).resolves.toEqual({
+      key: "sk-legacy",
+      method: "",
+      legacyPlaintext: true,
+    });
+  });
+
+  it("session-only keys take priority and are never persisted (Web)", async () => {
+    isDesktopEnvMock.mockReturnValue(false);
+    setSessionApiKey("openai", "sk-session");
+
+    expect(await loadApiKey("openai")).toBe("sk-session");
+    expect(await getSetting("api_key_openai")).toBeUndefined();
+  });
+
+  it("loadApiKeyInfo: session-only key reports method 'session' (not inferred)", async () => {
+    isDesktopEnvMock.mockReturnValue(false);
+    setSessionApiKey("openai", "sk-session");
+
+    await expect(loadApiKeyInfo("openai")).resolves.toEqual({
+      key: "sk-session",
+      method: "session",
+      legacyPlaintext: false,
+    });
+    // メモリ保持のみ — IndexedDB には書かれない
     expect(await getSetting("api_key_openai")).toBeUndefined();
   });
 
@@ -362,6 +467,7 @@ describe("per-provider API key & config storage", () => {
   it("keeps the legacy plaintext key sweep best-effort when IndexedDB cannot be opened", async () => {
     // Desktop IPC は成功したが IDB へ掃除にいけないケース（DB 破損・未作成）。
     // スイープ失敗は警告のみで、APIキー保存自体は成功したまま続くこと。
+    isDesktopEnvMock.mockReturnValue(true);
     invokeMock.mockResolvedValue({ method: "keychain" });
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     vi.stubGlobal("indexedDB", undefined);

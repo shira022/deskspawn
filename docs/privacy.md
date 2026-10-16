@@ -32,9 +32,9 @@ DeskSpawn は以下の目的でのみ外部へ通信します。
 
 | 保存先 | 内容 |
 |---|---|
-| **OS キーチェーン**（Windows Credential Manager / macOS Keychain） | デスクトップ版の AI プロバイダー API キー。**キーチェーンが利用できない環境では、平文の設定ファイルにフォールバックし、保存時にその旨をアプリ内表示します** |
+| **OS キーチェーン**（Windows Credential Manager / macOS Keychain） | デスクトップ版の AI プロバイダー API キー。**キーチェーンが利用できない場合、平文ファイルへ保存することはありません**（保存自体が失敗し、その旨をアプリ内に表示します）。旧バージョンが平文で保存していたキーは、読み込み時に自動でキーチェーンへ移行します（移行できない場合は平文を削除せず、アプリ内で警告します） |
 | `~/deskspawn/`（ローカルファイル） | 作成したアプリのソースコード、チャット履歴（SQLite）、設定（JSON）、レジストリ |
-| Web 版のブラウザ（IndexedDB / OPFS / localStorage） | 言語設定・UI 状態・AI 設定・チャット履歴・生成アプリのファイル。**Web 版の API キーはブラウザの IndexedDB に平文で保存されます**（この点は [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md) にも記載） |
+| Web 版のブラウザ（IndexedDB / OPFS / localStorage） | 言語設定・UI 状態・AI 設定・チャット履歴・生成アプリのファイル。**Web 版の API キーは、ユーザーが同意した場合に限りブラウザの IndexedDB に平文で保存されます**（このタブのみの利用も選択できます。この点は [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md) にも記載） |
 
 プロジェクトのファイル・チャット履歴・設定の保存はすべてあなたの端末内に留まり、DeskSpawn の開発者がこれらにアクセスすることはありません。ただし、セクション 1 で挙げた送信先へは送信内容が渡ります（それらは送信先のプライバシーポリシーの適用範囲です）。
 
@@ -47,7 +47,7 @@ DeskSpawn は以下の目的でのみ外部へ通信します。
 
 ## 4. セキュリティ
 
-- デスクトップ版の API キーは、原則として OS キーチェーンに保存します。キーチェーンが使えない場合は平文の設定ファイルへフォールバックし、保存時にその旨を UI でユーザーに表示します
+- デスクトップ版の API キーは OS キーチェーンにのみ保存します（平文ファイルへは保存しません）。キーチェーンが使えない場合は保存に失敗した旨を UI に表示します。旧バージョンの平文キーは読み込み時にキーチェーンへ自動移行し、移行できない場合のみ平文が残ることを UI で警告します
 - チャット履歴はローカルの SQLite データベースに保存されます
 - プロバイダーのカスタムエンドポイントへの転送は、許可リスト・URL 検証などの多層防御で検証されます（詳細は [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md)）
 
@@ -97,9 +97,9 @@ DeskSpawn communicates externally only for the following purposes:
 
 | Location | Contents |
 |---|---|
-| **OS keychain** (Windows Credential Manager / macOS Keychain) | Desktop API keys. **If the keychain is unavailable, keys fall back to a plain-text settings file, and the app discloses this in the UI at save time** |
+| **OS keychain** (Windows Credential Manager / macOS Keychain) | Desktop API keys. **If the keychain is unavailable, keys are never written to a plain-text file** (the save fails and the app says so in the UI). Keys previously stored in plain text by older versions are auto-migrated to the keychain on read; if migration fails the plaintext is kept and the app shows a warning |
 | `~/deskspawn/` (local files) | Generated app source code, chat history (SQLite), settings (JSON), registry |
-| Web version browser storage (IndexedDB / OPFS / localStorage) | Language settings, UI state, AI settings, chat history, and generated app files. **Web version API keys are stored in the browser's IndexedDB in plain text** (also documented in [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md)) |
+| Web version browser storage (IndexedDB / OPFS / localStorage) | Language settings, UI state, AI settings, chat history, and generated app files. **Web version API keys are stored in plain text in the browser's IndexedDB only after the user consents** (a "this tab only" in-memory mode is also available) (also documented in [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md)) |
 
 Project files, chat history, and settings always remain on your device and are never
 accessible to the DeskSpawn developers. However, the content described in section 1 is
@@ -114,8 +114,10 @@ transmitted to the destinations listed there, where their privacy policies apply
 
 ## 4. Security
 
-- Desktop API keys are stored in the OS keychain where possible. If the keychain is
-  unavailable, they fall back to a plain-text settings file, and the UI discloses this at save time
+- Desktop API keys are stored in the OS keychain only (never in a plain-text file).
+  If the keychain is unavailable, the save fails and the UI reports it. Keys stored in
+  plain text by older versions are auto-migrated to the keychain on read; the UI warns
+  when the plaintext could not be migrated
 - Chat history is stored in a local SQLite database
 - Forwarding to user-configured custom provider endpoints is protected by allow-listing
   and URL validation (details in [SECURITY.md](https://github.com/shira022/deskspawn/blob/main/SECURITY.md))

@@ -44,7 +44,15 @@ const apiKeyPlaceholder: Record<ProviderKind, string> = {
 };
 
 export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
-  const { aiConfig: existingConfig, setAiConfig, addToast, apiKeyStorageMethod } = useAppStore();
+  const {
+    aiConfig: existingConfig,
+    setAiConfig,
+    addToast,
+    apiKeyStorageMethod,
+    apiKeyLegacyPlaintext,
+    reloadAiConfig,
+    deleteLegacyPlaintextFile,
+  } = useAppStore();
   const { t } = useTranslation();
 
   // ── Local state ────────────────────────────────────────────────────────────
@@ -72,6 +80,14 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
   // Track whether the CURRENT provider has a saved key (per-provider)
   const [providerKeyConfigured, setProviderKeyConfigured] = useState(false);
   const [showApiKeyInput, setShowApiKeyInput] = useState(true);
+  // Web のみ: 平文でブラウザ（IndexedDB）に保存されることへの同意
+  const [webConsent, setWebConsent] = useState(false);
+  // Web のみ: 「このタブのみ（保存しない）」= メモリ保持
+  const [webSessionOnly, setWebSessionOnly] = useState(false);
+  // レガシー平文の移行再試行中フラグ
+  const [retryingMigration, setRetryingMigration] = useState(false);
+  // レガシー平文ファイル削除中フラグ
+  const [deletingLegacy, setDeletingLegacy] = useState(false);
   const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
 
   const showApiKey = providerNeedsApiKey(provider);
@@ -90,6 +106,15 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
       setShowApiKeyInput(!configured);
     });
   }, [open, showApiKey, provider]);
+
+  // ダイアログを開くたびに Web の保存モード選択をリセットする
+  // （同意は毎回の明示、保存モードも永続保存が既定に戻る）
+  useEffect(() => {
+    if (open) {
+      setWebConsent(false);
+      setWebSessionOnly(false);
+    }
+  }, [open]);
 
   // ── Model discovery ────────────────────────────────────────────────────────
   const { models, loading: modelsLoading, error: modelsError, fetchModels } = useModels({
@@ -228,6 +253,14 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
         return;
       }
 
+      // Web: 平文保存（IndexedDB）への明示同意が必要（このタブのみなら不要）
+      const sessionOnly = !isDesktopEnv() && webSessionOnly;
+      if (!isDesktopEnv() && !sessionOnly && resolvedApiKey && !webConsent) {
+        setError(t('ai.error.webConsentRequired'));
+        setSaving(false);
+        return;
+      }
+
       const config: AiConfig = {
         provider,
         apiKey: resolvedApiKey,
@@ -237,17 +270,71 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
         apiKeyConfigured: hasExistingKey || !!resolvedApiKey,
       };
 
-      await setAiConfig(config);
+      await setAiConfig(config, { sessionOnly, consent: webConsent });
       addToast({ message: t('ai.savedConfig'), variant: "success" });
       onOpenChange(false);
     } catch (e: any) {
-      setError(e.message || t('common.errorOccurred'));
+      // 保存失敗（キーチェーン不可等）はインライン + トーストで必ず表示する
+      const message = e?.message || t('common.errorOccurred');
+      setError(message);
+      addToast({ message, variant: "error" });
     } finally {
       setSaving(false);
     }
   };
 
+  const handleRetryMigration = async () => {
+    setRetryingMigration(true);
+    try {
+      await reloadAiConfig();
+      addToast({ message: t('ai.legacyPlaintextRetried'), variant: "info" });
+    } catch {
+      addToast({ message: t('ai.legacyPlaintextRetryFailed'), variant: "error" });
+    } finally {
+      setRetryingMigration(false);
+    }
+  };
+
+  // キーチェーン・キーが有効なまま残った旧平文ファイルを明示削除する（冪等）。
+  const handleDeleteLegacyPlaintext = async () => {
+    setDeletingLegacy(true);
+    try {
+      await deleteLegacyPlaintextFile();
+      addToast({ message: t('ai.legacyPlaintextDeleted'), variant: "success" });
+    } catch (e: any) {
+      addToast({ message: e?.message || t('common.errorOccurred'), variant: "error" });
+    } finally {
+      setDeletingLegacy(false);
+    }
+  };
+
   const hasModels = models.length > 0 && !modelsLoading && !modelsError;
+
+  // Web: 新しいキーを平文保存する前に同意が必要（このタブのみなら不要）
+  const consentPending =
+    !isDesktopEnv() &&
+    showApiKey &&
+    showApiKeyInput &&
+    !webSessionOnly &&
+    apiKey.trim().length > 0 &&
+    !webConsent;
+
+  // 保存先バッジ（中A）。明示された保存先を優先し、不明（""）なら環境既定へ
+  // フォールバックする: デスクトップはキーチェーン以外に永続できないため
+  // キーチェーン、Web は永続キーが IndexedDB のみ。順序は
+  // keychain → browser → session → レガシー平文 → 環境既定。
+  const badgeKey =
+    apiKeyStorageMethod === 'keychain'
+      ? 'ai.savedInKeychain'
+      : apiKeyStorageMethod === 'browser'
+        ? 'ai.savedInBrowser'
+        : apiKeyStorageMethod === 'session'
+          ? 'ai.savedInTabOnly'
+          : apiKeyLegacyPlaintext
+            ? 'ai.savedInLegacyFile'
+            : isDesktopEnv()
+              ? 'ai.savedInKeychain'
+              : 'ai.savedInBrowser';
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -258,12 +345,60 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
             {t(isDesktopEnv() ? 'ai.welcomeDescriptionDesktop' : 'ai.welcomeDescription')}
           </DialogDescription>
           <p className="mt-1 text-xs text-muted-foreground/70 leading-relaxed">
-            {t('ai.securityNote')}
+            {t(isDesktopEnv() ? 'ai.securityNoteDesktop' : 'ai.securityNote')}
           </p>
         </DialogHeader>
 
         <ScrollArea className="flex-1 px-6 pb-4">
           <div className="space-y-5">
+            {/* レガシー平文の警告バナー */}
+            {apiKeyLegacyPlaintext && apiKeyStorageMethod === 'keychain' ? (
+              // キーチェーンに有効なキーがあり、旧平文ファイルだけが残っている
+              // → 現在のキーは安全。残存ファイルの明示削除のみ促す。
+              <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 space-y-2">
+                <div className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span className="flex-1 leading-relaxed">
+                    {t('ai.legacyPlaintextLeftoverWarning')}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={handleDeleteLegacyPlaintext}
+                  disabled={deletingLegacy}
+                >
+                  {deletingLegacy && (
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  )}
+                  {t('ai.legacyPlaintextDelete')}
+                </Button>
+              </div>
+            ) : apiKeyLegacyPlaintext ? (
+              // 移行失敗で平文が残っている（キーは平文側）→ 再試行導線（既存挙動）
+              <div className="rounded-md border border-amber-200 bg-amber-50 dark:border-amber-800 dark:bg-amber-950/30 p-3 space-y-2">
+                <div className="flex items-start gap-2 text-xs text-amber-800 dark:text-amber-300">
+                  <AlertCircle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+                  <span className="flex-1 leading-relaxed">
+                    {t('ai.legacyPlaintextWarning')}
+                  </span>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs"
+                  onClick={handleRetryMigration}
+                  disabled={retryingMigration}
+                >
+                  {retryingMigration && (
+                    <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                  )}
+                  {t('ai.legacyPlaintextRetry')}
+                </Button>
+              </div>
+            ) : null}
+
             {/* Provider */}
             <div className="space-y-2">
               <Label>{t('ai.provider')}</Label>
@@ -289,7 +424,8 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
                   <div className="flex items-center gap-2 rounded-md border bg-muted/30 px-3 py-2 text-sm text-muted-foreground">
                     <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
                     <span className="flex-1">
-                      {t('ai.apiKey')} {t(apiKeyStorageMethod === 'file' ? 'ai.savedInFile' : isDesktopEnv() ? 'ai.savedInKeychain' : 'ai.savedInBrowser')}
+                      {t('ai.apiKey')}{' '}
+                      {t(badgeKey)}
                     </span>
                     <Button
                       variant="ghost"
@@ -320,10 +456,39 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
                               ? t('ai.apiKeyInstructions.azureOpenAI')
                               : provider === "gcp-vertexai"
                                 ? t('ai.apiKeyInstructions.googleVertex')
-                                : provider === "google"
-                                  ? t('ai.apiKeyInstructions.google')
-                                  : t('ai.apiKeyInstructions.custom')}
+                                 : provider === "google"
+                                   ? t('ai.apiKeyInstructions.google')
+                                   : t('ai.apiKeyInstructions.custom')}
                     </p>
+
+                    {/* Web のみ: 保存モード（平文同意 / このタブのみ） */}
+                    {!isDesktopEnv() && (
+                      <div className="space-y-2 pt-1">
+                        {!webSessionOnly && (
+                          <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
+                            <input
+                              type="checkbox"
+                              className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-primary"
+                              checked={webConsent}
+                              onChange={(e) => setWebConsent(e.target.checked)}
+                            />
+                            <span className="leading-relaxed">{t('ai.webConsent')}</span>
+                          </label>
+                        )}
+                        <label className="flex items-start gap-2 text-xs text-muted-foreground cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="mt-0.5 h-3.5 w-3.5 shrink-0 accent-primary"
+                            checked={webSessionOnly}
+                            onChange={(e) => setWebSessionOnly(e.target.checked)}
+                          />
+                          <span className="leading-relaxed">{t('ai.tabOnlyMode')}</span>
+                        </label>
+                        <p className="text-xs text-muted-foreground/70 leading-relaxed">
+                          {t('ai.tabOnlyModeHint')}
+                        </p>
+                      </div>
+                    )}
                   </>
                 )}
               </div>
@@ -550,7 +715,7 @@ export function AiConfigDialog({ open, onOpenChange }: AiConfigDialogProps) {
           >
             {t('common.cancel')}
           </Button>
-          <Button onClick={handleSave} disabled={saving}>
+          <Button onClick={handleSave} disabled={saving || consentPending}>
             {saving ? (
               <>
                 <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />

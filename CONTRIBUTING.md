@@ -151,8 +151,10 @@ pnpm test:e2e
 >
 > **Leak-mitigation is automatic:** `playwright.config.ts` disables trace when
 > `DESKSPAWN_E2E_REAL=1`, and `pnpm test:e2e:real` cleans `test-results/` and
-> `playwright-report/` afterwards. credentials.json (file fallback) only ever
-> lives under the user profile.
+> `playwright-report/` afterwards. Plain-text writes to `credentials.json` are
+> removed (ADR-018): existing plain-text keys are auto-migrated to the OS
+> keychain on read, and if the keychain is unavailable the save fails with an
+> error instead of falling back to a plain-text file.
 >
 > Prefer `pnpm test:e2e:real` (desktop-only + cleanup) over the raw command
 > above, since `pnpm test:e2e` also targets the web suite which needs a live

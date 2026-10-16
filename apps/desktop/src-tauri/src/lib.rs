@@ -250,6 +250,8 @@ pub fn run() {
             commands::ai_config::sync_sidecar_config,
             commands::ai_config::save_api_key,
             commands::ai_config::load_api_key,
+            commands::ai_config::load_api_key_info,
+            commands::ai_config::delete_legacy_plaintext_file,
             commands::ai_config::delete_api_key,
             commands::ai_config::save_provider_config,
             commands::ai_config::load_provider_config,

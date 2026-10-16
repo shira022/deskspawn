@@ -7,6 +7,34 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ## Unreleased
 
+**API key storage — keychain only on desktop (ADR-018):**
+
+- 🔐 The desktop app **no longer writes API keys to a plain-text file**
+  (`credentials.json`). If the OS keychain is unavailable, saving fails and the
+  dialog shows a clear error instead of silently falling back to plaintext.
+- 🔁 Legacy plaintext keys are **auto-migrated to the OS keychain** on read:
+  the app saves to the keychain, verifies by reading back, and deletes the
+  plaintext only after a successful round-trip. If migration fails the plaintext
+  is left untouched (no data loss) and the AI settings dialog shows a warning
+  banner with a retry action. If the key is already in the keychain but an old
+  plaintext file remains, the dialog warns and offers an explicit
+  **"delete plain-text file"** action (`delete_legacy_plaintext_file`); plaintext
+  is never auto-deleted (it may belong to another provider).
+- 🔎 `load_api_key_info` (`{ key, method, legacyPlaintext }`) lets the UI show the
+  real storage location and detect leftover plaintext without ever logging key
+  material. The saved-key badge distinguishes keychain / browser /
+  leftover-plaintext / this-tab-only.
+- 🖥️ **Fixed bug #172**: the saved-key badge now correctly shows the storage
+  location ("OS keychain" / "browser") after startup and reload; the stale
+  "file" label was removed.
+- 🌐 **Web (demo)**: storing a key in IndexedDB is plaintext, so it now requires
+  an explicit consent checkbox before saving; a "this tab only (do not save)"
+  mode keeps the key in memory and discards it on reload. The desktop
+  `save_api_key` error is no longer swallowed into a plaintext IndexedDB
+  fallback.
+- 📝 Privacy / security docs updated: desktop plaintext fallback is removed; the
+  web demo documents consent-based IndexedDB storage.
+
 **Agent composition tiers (ADR-016):**
 
 - 🧩 Agent composition is now a true 5-level scale, centralized in the

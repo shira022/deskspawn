@@ -32,7 +32,10 @@ vi.mock("../lib/storage", () => {
     loadProviderConfig: vi.fn().mockResolvedValue(null),
     saveApiKey: vi.fn().mockResolvedValue(undefined),
     loadApiKey: vi.fn().mockResolvedValue(null),
+    loadApiKeyInfo: vi.fn().mockResolvedValue({ key: null, method: "", legacyPlaintext: false }),
+    setSessionApiKey: vi.fn(),
     deleteApiKey: vi.fn().mockResolvedValue(undefined),
+    deleteLegacyPlaintextFile: vi.fn().mockResolvedValue(undefined),
     hasApiKey: vi.fn().mockResolvedValue(false),
     saveLastProvider: vi.fn().mockResolvedValue(undefined),
     loadLastProvider: vi.fn().mockResolvedValue(null),
@@ -235,7 +238,7 @@ describe("useAppStore — aiConfig", () => {
       apiKeyConfigured: undefined as boolean | undefined,
     };
 
-    await useAppStore.getState().setAiConfig(config);
+    await useAppStore.getState().setAiConfig(config, { consent: true });
 
     expect(mockStorageFns.saveProviderConfig).toHaveBeenCalledWith("openai", {
       model: "gpt-4o",
@@ -243,7 +246,9 @@ describe("useAppStore — aiConfig", () => {
       region: undefined,
       maxSteps: undefined,
     });
-    expect(mockStorageFns.saveApiKey).toHaveBeenCalledWith("openai", "sk-test");
+    expect(mockStorageFns.saveApiKey).toHaveBeenCalledWith("openai", "sk-test", {
+      consent: true,
+    });
     expect(mockStorageFns.saveLastProvider).toHaveBeenCalledWith("openai");
   });
 
@@ -269,7 +274,7 @@ describe("useAppStore — aiConfig", () => {
       apiKey: "sk-test",
     };
 
-    await useAppStore.getState().setAiConfig(config);
+    await useAppStore.getState().setAiConfig(config, { consent: true });
 
     const state = useAppStore.getState();
     expect(state.aiConfig.provider).toBe("openai");
@@ -594,7 +599,11 @@ describe("useAppStore — initialize()", () => {
   it("loads AI config from storage when last provider exists", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue("openai");
     mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o", maxSteps: 10 });
-    mockStorageFns.loadApiKey.mockResolvedValue("sk-test-key");
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-test-key",
+      method: "keychain",
+      legacyPlaintext: false,
+    });
     mockStorageFns.listApps.mockResolvedValue([]);
 
     await useAppStore.getState().initialize();
@@ -611,7 +620,11 @@ describe("useAppStore — initialize()", () => {
   it("保存済み lastProvider が legacy ID のとき aiConfig.provider が openai になる", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue("custom");
     mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o", maxSteps: 8 });
-    mockStorageFns.loadApiKey.mockResolvedValue("sk-test-key");
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-test-key",
+      method: "keychain",
+      legacyPlaintext: false,
+    });
     mockStorageFns.listApps.mockResolvedValue([]);
 
     await useAppStore.getState().initialize();
@@ -621,9 +634,9 @@ describe("useAppStore — initialize()", () => {
     expect(state.phase).toBe("main");
     // 設定・APIキーはサニタイズ後のキーで読み直す
     expect(mockStorageFns.loadProviderConfig).toHaveBeenCalledWith("openai");
-    expect(mockStorageFns.loadApiKey).toHaveBeenCalledWith("openai");
+    expect(mockStorageFns.loadApiKeyInfo).toHaveBeenCalledWith("openai");
     expect(mockStorageFns.loadProviderConfig).not.toHaveBeenCalledWith("custom");
-    expect(mockStorageFns.loadApiKey).not.toHaveBeenCalledWith("custom");
+    expect(mockStorageFns.loadApiKeyInfo).not.toHaveBeenCalledWith("custom");
   });
 
   it("stays in ai-config phase when no stored config exists", async () => {
@@ -731,7 +744,7 @@ describe("useAppStore — setAiConfig for every provider", () => {
         region: "us-east-1",
       };
 
-      await useAppStore.getState().setAiConfig(config);
+      await useAppStore.getState().setAiConfig(config, { consent: true });
 
       // provider_config_{provider} へ保存される（キー生成は storage 側の責務）
       expect(mockStorageFns.saveProviderConfig, provider).toHaveBeenCalledWith(provider, {
@@ -746,6 +759,7 @@ describe("useAppStore — setAiConfig for every provider", () => {
       expect(mockStorageFns.saveApiKey, provider).toHaveBeenCalledWith(
         provider,
         `key-${provider}`,
+        { consent: true },
       );
 
       const state = useAppStore.getState();
@@ -758,7 +772,7 @@ describe("useAppStore — setAiConfig for every provider", () => {
 
   it("keeps the provider list and the store in sync (9 kinds)", async () => {
     for (const provider of ALL_PROVIDERS) {
-      await useAppStore.getState().setAiConfig({ provider, model: "m", apiKey: "k" });
+      await useAppStore.getState().setAiConfig({ provider, model: "m", apiKey: "k" }, { consent: true });
       expect(useAppStore.getState().aiConfig.provider, provider).toBe(provider);
     }
     expect(useAppStore.getState().aiConfig.provider).toBe(
@@ -791,7 +805,11 @@ describe("useAppStore — initialize() がモデル価格キャッシュを事�
   it("models.dev 由来のモデル一覧を clearModelCostCache → setModelCostCache で入れる", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue("openai");
     mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o" });
-    mockStorageFns.loadApiKey.mockResolvedValue("sk-test");
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-test",
+      method: "keychain",
+      legacyPlaintext: false,
+    });
     const models = [
       {
         id: "gpt-4o",
@@ -815,7 +833,11 @@ describe("useAppStore — initialize() がモデル価格キャッシュを事�
   it("ローカル/互換プロバイダーでは models.dev を叩かずキャッシュも更新しない", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue("ollama");
     mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "llama3.2" });
-    mockStorageFns.loadApiKey.mockResolvedValue(null);
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: null,
+      method: "",
+      legacyPlaintext: false,
+    });
     vi.mocked(getModelsForProvider).mockClear();
     vi.mocked(setModelCostCache).mockClear();
 
@@ -841,7 +863,11 @@ describe("useAppStore — reloadAiConfig（保存済みプロバイダー設定�
       maxSteps: 12,
       customEndpoint: "https://up.example.com/v1",
     });
-    mockStorageFns.loadApiKey.mockResolvedValue("sk-ant");
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-ant",
+      method: "keychain",
+      legacyPlaintext: false,
+    });
 
     await useAppStore.getState().reloadAiConfig();
 
@@ -861,7 +887,11 @@ describe("useAppStore — reloadAiConfig（保存済みプロバイダー設定�
       model: "claude-sonnet-4-5",
       maxSteps: 12,
     });
-    mockStorageFns.loadApiKey.mockResolvedValue("sk-aws");
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-aws",
+      method: "keychain",
+      legacyPlaintext: false,
+    });
 
     await useAppStore.getState().reloadAiConfig();
 
@@ -870,9 +900,9 @@ describe("useAppStore — reloadAiConfig（保存済みプロバイダー設定�
     expect(state.aiConfig.model).toBe("claude-sonnet-4-5");
     // 設定・APIキーはサニタイズ後のキーで読み直す
     expect(mockStorageFns.loadProviderConfig).toHaveBeenCalledWith("openai");
-    expect(mockStorageFns.loadApiKey).toHaveBeenCalledWith("openai");
+    expect(mockStorageFns.loadApiKeyInfo).toHaveBeenCalledWith("openai");
     expect(mockStorageFns.loadProviderConfig).not.toHaveBeenCalledWith("amazon-bedrock");
-    expect(mockStorageFns.loadApiKey).not.toHaveBeenCalledWith("amazon-bedrock");
+    expect(mockStorageFns.loadApiKeyInfo).not.toHaveBeenCalledWith("amazon-bedrock");
   });
 
   it("last provider が無ければ何もしない", async () => {
@@ -890,7 +920,11 @@ describe("useAppStore — reloadAiConfig（保存済みプロバイダー設定�
       model: "gpt-4o",
       customEndpoint: "https://up.example.com/v1",
     });
-    mockStorageFns.loadApiKey.mockResolvedValue("sk-test");
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-test",
+      method: "keychain",
+      legacyPlaintext: false,
+    });
 
     await withDesktopEnv(() => useAppStore.getState().reloadAiConfig());
 
@@ -904,6 +938,217 @@ describe("useAppStore — reloadAiConfig（保存済みプロバイダー設定�
         }),
       }),
     );
+  });
+});
+
+// ── apiKeyStorageMethod の復元（bug #172） / このタブのみモード ──────────────
+
+describe("useAppStore — apiKeyStorageMethod の復元", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("initialize() が保存先（keychain / browser / ''）を復元する", async () => {
+    const cases: Array<["keychain" | "browser" | "", boolean]> = [
+      ["keychain", false],
+      ["browser", false],
+      ["", false],
+    ];
+
+    for (const [method, legacy] of cases) {
+      useAppStore.setState({ apiKeyStorageMethod: "", apiKeyLegacyPlaintext: false }, false);
+      mockStorageFns.loadLastProvider.mockResolvedValue("openai");
+      mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o" });
+      mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+        key: method ? "sk-x" : null,
+        method,
+        legacyPlaintext: legacy,
+      });
+      mockStorageFns.listApps.mockResolvedValue([]);
+
+      await useAppStore.getState().initialize();
+
+      expect(useAppStore.getState().apiKeyStorageMethod, method).toBe(method);
+    }
+  });
+
+  it("initialize() がレガシー平文フラグを復元する", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue("openai");
+    mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o" });
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-legacy",
+      method: "",
+      legacyPlaintext: true,
+    });
+    mockStorageFns.listApps.mockResolvedValue([]);
+
+    await useAppStore.getState().initialize();
+
+    expect(useAppStore.getState().apiKeyLegacyPlaintext).toBe(true);
+  });
+
+  it("reloadAiConfig() が保存先を復元する", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue("openai");
+    mockStorageFns.loadProviderConfig.mockResolvedValue({ model: "gpt-4o" });
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-x",
+      method: "browser",
+      legacyPlaintext: false,
+    });
+
+    await useAppStore.getState().reloadAiConfig();
+
+    expect(useAppStore.getState().apiKeyStorageMethod).toBe("browser");
+  });
+
+  it("setAiConfig({ sessionOnly }) は saveApiKey を呼ばずメモリ保持する（Web）", async () => {
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-session",
+      method: "session",
+      legacyPlaintext: false,
+    });
+
+    await useAppStore.getState().setAiConfig(
+      { provider: "openai", model: "gpt-4o", apiKey: "sk-session" },
+      { sessionOnly: true },
+    );
+
+    expect(mockStorageFns.saveApiKey).not.toHaveBeenCalled();
+    expect(mockStorageFns.setSessionApiKey).toHaveBeenCalledWith("openai", "sk-session");
+    // 保存先は実測（loadApiKeyInfo）の "session" を反映する
+    expect(useAppStore.getState().apiKeyStorageMethod).toBe("session");
+  });
+});
+
+// ── setAiConfig の保存先 / レガシー平文フラグの保持と実測（中A/中B） ──────────
+
+describe("useAppStore — setAiConfig の保存先とレガシー平文フラグ", () => {
+  it("キー未変更（モデル変更のみ）の setAiConfig は保存先とフラグを保持する", async () => {
+    useAppStore.setState(
+      { apiKeyStorageMethod: "keychain", apiKeyLegacyPlaintext: true },
+      false,
+    );
+
+    await useAppStore.getState().setAiConfig({
+      provider: "openai",
+      model: "gpt-4o-mini",
+      apiKey: "",
+      apiKeyConfigured: true,
+    });
+
+    const state = useAppStore.getState();
+    // "" 上書きでキーチェーンが「このタブのみ」に化けない
+    expect(state.apiKeyStorageMethod).toBe("keychain");
+    // 平文が残っているのに警告が消えない
+    expect(state.apiKeyLegacyPlaintext).toBe(true);
+    // キー操作が無いので再実測もしない
+    expect(mockStorageFns.loadApiKeyInfo).not.toHaveBeenCalled();
+  });
+
+  it("キー保存後は loadApiKeyInfo の実測値で保存先とフラグを更新する", async () => {
+    mockStorageFns.saveApiKey.mockResolvedValue("keychain");
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: "sk-new",
+      method: "keychain",
+      legacyPlaintext: false,
+    });
+    useAppStore.setState(
+      { apiKeyStorageMethod: "", apiKeyLegacyPlaintext: true },
+      false,
+    );
+
+    await useAppStore.getState().setAiConfig(
+      { provider: "openai", model: "gpt-4o", apiKey: "sk-new" },
+      { consent: true },
+    );
+
+    expect(mockStorageFns.loadApiKeyInfo).toHaveBeenCalledWith("openai");
+    const state = useAppStore.getState();
+    expect(state.apiKeyStorageMethod).toBe("keychain");
+    expect(state.apiKeyLegacyPlaintext).toBe(false);
+  });
+
+  it("キー削除後も loadApiKeyInfo の実測値でフラグを更新する", async () => {
+    mockStorageFns.loadApiKeyInfo.mockResolvedValue({
+      key: null,
+      method: "",
+      legacyPlaintext: false,
+    });
+    useAppStore.setState(
+      { apiKeyStorageMethod: "keychain", apiKeyLegacyPlaintext: true },
+      false,
+    );
+
+    await useAppStore.getState().setAiConfig({
+      provider: "openai",
+      model: "gpt-4o",
+      apiKey: "",
+      apiKeyConfigured: false,
+    });
+
+    expect(mockStorageFns.deleteApiKey).toHaveBeenCalledWith("openai");
+    expect(mockStorageFns.loadApiKeyInfo).toHaveBeenCalledWith("openai");
+    const state = useAppStore.getState();
+    expect(state.apiKeyStorageMethod).toBe("");
+    expect(state.apiKeyLegacyPlaintext).toBe(false);
+  });
+});
+
+// ── Web 同意ガード（defense-in-depth） / レガシー平文ファイル削除 ─────────────
+
+describe("useAppStore — Web 同意ガードとレガシー平文削除", () => {
+  it("Web で同意なし＋キーありの setAiConfig は throw し何も保存しない", async () => {
+    await expect(
+      useAppStore.getState().setAiConfig({
+        provider: "openai",
+        model: "gpt-4o",
+        apiKey: "sk-no-consent",
+      }),
+    ).rejects.toThrow(/[Cc]onsent/);
+
+    expect(mockStorageFns.saveApiKey).not.toHaveBeenCalled();
+    // 保存経路の入口で拒否するため provider 設定も書かれない
+    expect(mockStorageFns.saveProviderConfig).not.toHaveBeenCalled();
+    expect(useAppStore.getState().aiConfig).toBeNull();
+  });
+
+  it("Web で sessionOnly なら同意なしでもメモリ保持する（throw しない）", async () => {
+    await expect(
+      useAppStore.getState().setAiConfig(
+        { provider: "openai", model: "gpt-4o", apiKey: "sk-session" },
+        { sessionOnly: true },
+      ),
+    ).resolves.toBe("");
+
+    expect(mockStorageFns.setSessionApiKey).toHaveBeenCalledWith("openai", "sk-session");
+    expect(mockStorageFns.saveApiKey).not.toHaveBeenCalled();
+  });
+
+  it("desktop では同意なしでも保存できる（キーチェーン経路）", async () => {
+    await withDesktopEnv(() =>
+      useAppStore.getState().setAiConfig({
+        provider: "openai",
+        model: "gpt-4o",
+        apiKey: "sk-desktop",
+      }),
+    );
+
+    expect(mockStorageFns.saveApiKey).toHaveBeenCalledWith("openai", "sk-desktop", {
+      consent: undefined,
+    });
+  });
+
+  it("deleteLegacyPlaintextFile は storage を呼びフラグを false にする", async () => {
+    useAppStore.setState({ apiKeyLegacyPlaintext: true }, false);
+
+    await useAppStore.getState().deleteLegacyPlaintextFile();
+
+    expect(mockStorageFns.deleteLegacyPlaintextFile).toHaveBeenCalled();
+    expect(useAppStore.getState().apiKeyLegacyPlaintext).toBe(false);
   });
 });
 
@@ -966,11 +1211,14 @@ describe("useAppStore — setAiConfig のサイドカー同期", () => {
   });
 
   it("web: サイドカーへは同期しない", async () => {
-    await useAppStore.getState().setAiConfig({
-      provider: "openai",
-      model: "gpt-4o",
-      apiKey: "sk-test",
-    });
+    await useAppStore.getState().setAiConfig(
+      {
+        provider: "openai",
+        model: "gpt-4o",
+        apiKey: "sk-test",
+      },
+      { consent: true },
+    );
 
     expect(sidecarFetchMock).not.toHaveBeenCalled();
   });

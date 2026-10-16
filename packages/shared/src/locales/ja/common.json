@@ -42,9 +42,22 @@
   },
   "ai": {
     "welcome": "DeskSpawn へようこそ",
-    "welcomeDescription": "使用する AI モデルを設定してください。API キーはブラウザ内のローカルストレージに保存され、選択した AI プロバイダーに直接送信されます。",
-    "savedInBrowser": "このブラウザに保存されています（サーバーには送信されません）",
+    "welcomeDescription": "使用する AI モデルを設定してください。API キーはブラウザ内の IndexedDB（ブラウザ内DB）に平文で保存され、選択した AI プロバイダーに直接送信されます。保存には同意が必要です。",
+    "savedInBrowser": "IndexedDB（ブラウザ内DB）に保存されています（サーバーには送信されません）",
+    "savedInTabOnly": "このタブのみ保持されています（保存されないため、リロードで消えます）",
+    "savedInLegacyFile": "設定ファイル（平文）に保存されています",
+    "webConsent": "API キーが IndexedDB（ブラウザ内DB）に平文で保存されることを理解しました",
+    "tabOnlyMode": "このタブのみ（保存しない）",
+    "tabOnlyModeHint": "リロードやタブを閉じると消えます。別の端末とは共有されません。",
+    "legacyPlaintextWarning": "平文の API キーが残っています。OS キーチェーンに移行できませんでした（Windows 資格情報マネージャー等が必要です）。",
+    "legacyPlaintextRetry": "キーチェーンへの移行を再試行",
+    "legacyPlaintextRetried": "キーチェーンへの移行を再試行しました",
+    "legacyPlaintextRetryFailed": "キーチェーンへの移行に失敗しました",
+    "legacyPlaintextLeftoverWarning": "旧形式の平文ファイル（credentials.json）が残っています。現在のキーは OS キーチェーンにあります。",
+    "legacyPlaintextDelete": "平文ファイルを削除",
+    "legacyPlaintextDeleted": "平文キーファイルを削除しました",
     "securityNote": "APIキーとは、AIサービスを使うためのパスワードのようなものです。このキーはあなたのブラウザ内にのみ保存され、DeskSpawnのサーバーには送信されません。ただし、信頼できないブラウザ拡張機能がインストールされている場合は読み取られる可能性があります。各AIサービスの管理画面で「利用上限（spending limit）」を設定しておくことを強くおすすめします。",
+    "securityNoteDesktop": "APIキーとは、AIサービスを使うためのパスワードのようなものです。このキーはOSキーチェーンに保存され、DeskSpawnのサーバーには送信されません。各AIサービスの管理画面で「利用上限（spending limit）」を設定しておくことを強くおすすめします。",
     "provider": "AI プロバイダー",
     "providerOllamaDesc": "ローカルLLM",
     "providerLmStudioDesc": "ローカルLLM",
@@ -81,7 +94,8 @@
       "corsProxyRequired": "カスタムエンドポイントを入力してください",
       "modelsFetchFailed": "モデル一覧の取得に失敗しました",
       "regionRequired": "AWS Bedrock にはリージョンの指定が必要です（例: us-east-1）",
-      "gcpRegionRequired": "Google Cloud (Vertex AI) にはリージョンの指定が必要です（例: us-central1）"
+      "gcpRegionRequired": "Google Cloud (Vertex AI) にはリージョンの指定が必要です（例: us-central1）",
+      "webConsentRequired": "API キーをブラウザに平文で保存することへの同意が必要です（または「このタブのみ」を選択してください）"
     },
     "apiKeyInstructions": {
       "openai": "OpenAI API キー — sk-app- または sk- で始まります（https://platform.openai.com/api-keys）",
@@ -113,9 +127,8 @@
     "costOutput": "出力",
     "costCached": "キャッシュ",
     "costReasoning": "推論",
-    "welcomeDescriptionDesktop": "使用する AI モデルを設定してください。API キーはアプリ内のローカルストレージに保存され、選択した AI プロバイダーへの送信はローカルサイドカー（プロキシ）経由で行われます。キーが直接外部サーバーへ送信されることはありません。",
-    "savedInKeychain": "OSキーチェーンに保存されています（Windows 資格情報マネージャー）",
-    "savedInFile": "設定ファイルに保存されています（平文・OSキーチェーンではありません）"
+    "welcomeDescriptionDesktop": "使用する AI モデルを設定してください。API キーは OS キーチェーン（Windows 資格情報マネージャー）に保存され、選択した AI プロバイダーへの送信はローカルサイドカー（プロキシ）経由で行われます。キーが直接外部サーバーへ送信されることはありません。",
+    "savedInKeychain": "OSキーチェーンに保存されています（Windows 資格情報マネージャー）"
   },
   "env": {
     "title": "環境チェック",
