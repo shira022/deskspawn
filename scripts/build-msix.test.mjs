@@ -11,7 +11,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,15 +23,21 @@ import {
   buildPackFlags,
   buildPackInvocation,
   getIdentityName,
+  getIdentityPublisher,
   isAllowedStageEntry,
+  packBlockerMessage,
   rewriteManifestVersion,
   selectStageEntries,
   toAppxVersion,
   toWindowsPath,
 } from './build-msix.mjs';
 
-const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), 'build-msix.mjs');
-const REPO = join(dirname(fileURLToPath(import.meta.url)), '..');
+const SCRIPT_DIR = dirname(fileURLToPath(import.meta.url));
+const SCRIPT = join(SCRIPT_DIR, 'build-msix.mjs');
+// 早期検証の統合テストは build-msix.mjs を一時リポジトリへコピーするため、
+// 相対 import される lib も併せてコピーする。
+const XML_COMMENTS_SRC = join(SCRIPT_DIR, 'lib', 'xml-comments.mjs');
+const REPO = join(SCRIPT_DIR, '..');
 const STAGE_DIR = join(REPO, 'apps/desktop/src-tauri/target/msix-stage');
 const PAYLOAD_PATHS = [
   join(REPO, 'apps/desktop/src-tauri/target/release/deskspawn-desktop.exe'),
@@ -137,7 +144,7 @@ test('rewriteManifestVersion: コメント内の <Identity> には反応せず�
   assert.match(out, /Version="0\.6\.0\.0"/);
   assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
   // コメントは除去されず、コメント内の Version は不変
-  assert.match(out, /<!-- <Identity Version="9\.9\.9\.9"\/> -->/);
+  assert.ok(out.includes('<!-- <Identity Version="9.9.9.9"/> -->'));
   assert.equal((out.match(/<!--/g) || []).length, 1);
 });
 
@@ -170,7 +177,7 @@ test('rewriteManifestVersion: テストA コメントが本物より前にある
   assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
   assert.match(out, /Version="0\.6\.0\.0"/);
   assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
-  assert.match(out, /<!-- <Identity Version="9\.9\.9\.9"\/> -->/);
+  assert.ok(out.includes('<!-- <Identity Version="9.9.9.9"/> -->'));
   assert.match(out, /9\.9\.9\.9/);
 });
 
@@ -211,7 +218,7 @@ test('rewriteManifestVersion: テストD コメント本体の <!-- は入れ子
   assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
   assert.match(out, /Version="0\.6\.0\.0"/);
   assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
-  assert.match(out, /<!-- x <!-- y -->/);
+  assert.ok(out.includes('<!-- x <!-- y -->'));
 });
 
 test('rewriteManifestVersion: テストE CRLF でも同じく本物だけを書き換える', () => {
@@ -229,7 +236,7 @@ test('rewriteManifestVersion: テストE CRLF でも同じく本物だけを書�
   assert.equal(out.length, xml.length, '出力長は入力と等しい（インデックス保存）');
   assert.match(out, /Version="0\.6\.0\.0"/);
   assert.doesNotMatch(out, /Version="0\.5\.0\.0"/);
-  assert.match(out, /<!-- <Identity Version="9\.9\.9\.9"\/> -->/);
+  assert.ok(out.includes('<!-- <Identity Version="9.9.9.9"/> -->'));
   assert.match(out, /9\.9\.9\.9/);
 });
 
@@ -290,6 +297,46 @@ test('getIdentityName: manifest 断片から <Identity Name> を取り出す', (
 test('getIdentityName: Name が無ければ null を返す', () => {
   assert.equal(getIdentityName('<Identity Publisher="CN=abc" Version="0.5.0.0" />'), null);
   assert.equal(getIdentityName('<Package></Package>'), null);
+});
+
+test('getIdentityName: コメントアウトされた <Identity Name> を無視し実体を返す', () => {
+  const xml = [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<!-- <Identity Name="WRONG" Version="9.9.9.9" /> -->',
+    '<Package>',
+    '  <Identity Name="RIGHT" Version="0.5.0.0" />',
+    '</Package>',
+    '',
+  ].join('\n');
+  assert.equal(getIdentityName(xml), 'RIGHT');
+});
+
+test('getIdentityName: コメント内にしか <Identity Name> が無ければ null を返す', () => {
+  const xml = '<!-- <Identity Name="WRONG" /> -->\n<Package></Package>';
+  assert.equal(getIdentityName(xml), null);
+});
+
+test('getIdentityPublisher: コメントアウトされた <Identity Publisher> を無視し実体を返す', () => {
+  const xml = [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<!-- <Identity Publisher="CN=WRONG" Version="9.9.9.9" /> -->',
+    '<Package>',
+    '  <Identity Publisher="CN=RIGHT" Version="0.5.0.0" />',
+    '</Package>',
+    '',
+  ].join('\n');
+  assert.equal(getIdentityPublisher(xml), 'CN=RIGHT');
+});
+
+test('getIdentityPublisher: 未マッチ時は null を返す', () => {
+  assert.equal(getIdentityPublisher('<Identity Name="app" Version="0.5.0.0" />'), null);
+  assert.equal(getIdentityPublisher('<Package></Package>'), null);
+});
+
+test('getIdentityName / getIdentityPublisher: 未終端コメントは throw する', () => {
+  const xml = '<!-- <Identity Name="X" /> <Package><Identity Name="RIGHT" /></Package>';
+  assert.throws(() => getIdentityName(xml), /未終端/);
+  assert.throws(() => getIdentityPublisher(xml), /未終端/);
 });
 
 test('buildOutputFileName: <Identity Name>_<X.Y.Z.0>_x64.msix を組み立てる', () => {
@@ -447,6 +494,18 @@ test('buildPackInvocation: 非 win32 で Windows から見えないパスは nul
   );
 });
 
+test('packBlockerMessage: win32 と /mnt/<drive>/... は pack 可能として null を返す', () => {
+  assert.equal(packBlockerMessage('/mnt/c/stage', 'linux'), null);
+  assert.equal(packBlockerMessage('C:\\stage', 'win32'), null);
+});
+
+test('packBlockerMessage: 非 win32 で Windows から見えない stage は理由メッセージを返す', () => {
+  assert.equal(
+    packBlockerMessage('/home/example/stage', 'linux'),
+    'stage ディレクトリが Windows から見える場所（/mnt/<drive>/...）にないため pack できません',
+  );
+});
+
 test('ペイロード欠落時はステージ削除より前に exit 1 し旧ステージを保持する', (t) => {
   if (PAYLOAD_PATHS.some((p) => existsSync(p))) {
     t.skip('ペイロードが存在する環境ではステージ削除より後に到達するためスキップ');
@@ -469,5 +528,65 @@ test('ペイロード欠落時はステージ削除より前に exit 1 し旧ス
     );
   } finally {
     rmSync(STAGE_DIR, { recursive: true, force: true });
+  }
+});
+
+test('pack 早期検証: Windows から見えない場所では旧ステージを残して exit 1 する（--pack）', (t) => {
+  if (process.platform === 'win32') {
+    t.skip('win32 では packBlockerMessage が null を返すため検証できない');
+    return;
+  }
+
+  // REPO_ROOT はスクリプト自身の位置から `resolve(dirname(import.meta.url), '..')` で
+  // 決まるため、テンポラリに最小リポジトリ構造を作れば実行できる。
+  const root = mkdtempSync(join(tmpdir(), 'deskspawn-pack-early-'));
+  const write = (rel, content) => {
+    mkdirSync(join(root, dirname(rel)), { recursive: true });
+    writeFileSync(join(root, rel), content);
+  };
+  try {
+    // scripts/build-msix.mjs と、その相対 import 先（lib）をコピー。
+    mkdirSync(join(root, 'scripts', 'lib'), { recursive: true });
+    copyFileSync(SCRIPT, join(root, 'scripts', 'build-msix.mjs'));
+    copyFileSync(XML_COMMENTS_SRC, join(root, 'scripts', 'lib', 'xml-comments.mjs'));
+
+    // --version 未指定時に root package.json の version を読むため必須。
+    write('package.json', JSON.stringify({ name: 'fixture', version: '1.2.3' }, null, 2));
+
+    // 実装が要求するステージ元マニフェスト。
+    write(
+      'apps/desktop/store/msix/Package.appxmanifest',
+      [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<Package>',
+        '  <Identity Name="example.App" Publisher="CN=example" Version="1.2.3.0" />',
+        '</Package>',
+        '',
+      ].join('\n'),
+    );
+
+    // 必須ペイロード2種のダミー（中身は空でよい）。
+    write('apps/desktop/src-tauri/target/release/deskspawn-desktop.exe', '');
+    write('apps/desktop/src-tauri/binaries/deskspawn-sidecar-x86_64-pc-windows-msvc.exe', '');
+
+    // 旧ステージの代役。早期検証で pack 不可と判明すれば rmSync より前に exit 1 し残る。
+    const stageDir = join(root, 'apps/desktop/src-tauri/target/msix-stage');
+    mkdirSync(stageDir, { recursive: true });
+    const sentinel = join(stageDir, 'SENTINEL.txt');
+    writeFileSync(sentinel, 'previous stage must survive a pack blocker\n');
+
+    const result = spawnSync(process.execPath, [join(root, 'scripts', 'build-msix.mjs'), '--pack'], {
+      encoding: 'utf8',
+      timeout: 30_000,
+    });
+
+    assert.equal(result.status, 1, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+    assert.ok(
+      existsSync(sentinel),
+      'pack 不可で失敗する場合、旧ステージを削除してはならない（rmSync より前に exit 1）',
+    );
+    assert.match(result.stderr, /Windows から見える場所/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });

@@ -40,6 +40,12 @@ import { spawnSync } from 'node:child_process';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { maskXmlComments } from './lib/xml-comments.mjs';
+
+// maskXmlComments は scripts/lib/xml-comments.mjs に移設したが、既存の
+// import 元（テスト等）との互換のためここから再エクスポートする。
+export { maskXmlComments };
+
 const REPO_ROOT = resolve(join(dirname(fileURLToPath(import.meta.url)), '..'));
 const SOURCE_DIR = join(REPO_ROOT, 'apps/desktop/store/msix');
 const STAGE_DIR = join(REPO_ROOT, 'apps/desktop/src-tauri/target/msix-stage');
@@ -85,56 +91,6 @@ export function toAppxVersion(input) {
     throw new Error(`toAppxVersion: 4桁目が 0 以外のバージョンは受理できません: ${describe(input)}`);
   }
   throw new Error(`toAppxVersion: 無効なバージョン形式です: ${describe(input)}`);
-}
-
-/**
- * XML コメントの各文字を同数の空白に置換し、元文字列と同じインデックスを保つ。
- *
- * 正規表現でマークアップ終端を扱うと `--!>` 等の取りこぼしで誤検知し得るため、
- * `indexOf` による走査でコメント範囲を求める。XML はコメントの入れ子を許さない
- * ので、最初に見つけた `<!--` から次の `-->` までを 1 コメントとして扱う。
- *
- * `<!--` が未終端（対応する `-->` が無い）、または対応する `<!--` の無い
- * `-->` が現れた場合は、コメント内の <Identity Version> を本物と誤認して
- * 書き換えるのを防ぐため throw する。
- * @param {string} xml
- * @returns {string}
- */
-function maskXmlComments(xml) {
-  const parts = [];
-  let cursor = 0;
-  for (;;) {
-    const start = xml.indexOf('<!--', cursor);
-    const strayClose = xml.indexOf('-->', cursor);
-    if (start === -1) {
-      if (strayClose !== -1) {
-        throw new Error(
-          'maskXmlComments: XML コメントが未終端です (対応する <!-- の無い --> があります)。' +
-            'マニフェストを確認してください',
-        );
-      }
-      break;
-    }
-    if (strayClose !== -1 && strayClose < start) {
-      throw new Error(
-        'maskXmlComments: XML コメントが未終端です (対応する <!-- の無い --> があります)。' +
-          'マニフェストを確認してください',
-      );
-    }
-    const end = xml.indexOf('-->', start + 4);
-    if (end === -1) {
-      throw new Error(
-        'maskXmlComments: XML コメントが未終端です (--> が見つかりません)。' +
-          'マニフェストを確認してください',
-      );
-    }
-    const closeEnd = end + 3;
-    parts.push(xml.slice(cursor, start));
-    parts.push(' '.repeat(closeEnd - start));
-    cursor = closeEnd;
-  }
-  parts.push(xml.slice(cursor));
-  return parts.join('');
 }
 
 /**
@@ -187,16 +143,47 @@ export function selectStageEntries(relPaths) {
   return relPaths.filter((p) => isAllowedStageEntry(p)).sort();
 }
 
-/** <Identity ... Publisher="..."> の Publisher 値を取り出す（例: CN=...）。 */
-function getIdentityPublisher(xml) {
-  const m = xml.match(/<Identity\b[^>]*?\sPublisher="([^"]*)"/);
+/**
+ * <Identity ... Publisher="..."> の Publisher 値を取り出す（例: CN=...）。
+ *
+ * 生の XML ではなく maskXmlComments() を通してからマッチする。maskXmlComments は
+ * コメントを同じ長さの空白に置換する（等長）実装なので、コメントアウトされた
+ * <Identity> を誤って拾わず、かつ実体のマッチ位置も保たれる。未終端コメントは
+ * maskXmlComments が throw する（壊れたマニフェストを黙って通さない）。
+ * Publisher は証明書サブジェクト＝パッケージ識別子になるため、コメント内の
+ * 値を拾うと署名がマニフェストと食い違いインストール/Store 入稿で弾かれる。
+ */
+export function getIdentityPublisher(xml) {
+  const m = maskXmlComments(xml).match(/<Identity\b[^>]*?\sPublisher="([^"]*)"/);
   return m ? m[1] : null;
 }
 
-/** <Identity ... Name="..."> の Name 値を取り出す（出力 .msix の名前に使う）。 */
+/**
+ * <Identity ... Name="..."> の Name 値を取り出す（出力 .msix の名前に使う）。
+ *
+ * getIdentityPublisher と同じく maskXmlComments()（等長）を通してからマッチし、
+ * コメントアウトされた <Identity> を拾わない。未終端コメントは throw する。
+ */
 export function getIdentityName(xml) {
-  const m = xml.match(/<Identity\b[^>]*?\sName="([^"]*)"/);
+  const m = maskXmlComments(xml).match(/<Identity\b[^>]*?\sName="([^"]*)"/);
   return m ? m[1] : null;
+}
+
+/**
+ * --pack が実行可能かを判定し、不可なら理由メッセージを返す（純関数）。
+ *  - platform === 'win32' は常に pack 可能（null）。
+ *  - 非 Windows では stage が Windows から見える（/mnt/<drive>/...）必要がある。
+ *    見えない場合は main() の fail にそのまま渡せるメッセージを返す。
+ * @param {string} stageDir
+ * @param {string} [platform]
+ * @returns {string|null}
+ */
+export function packBlockerMessage(stageDir, platform = process.platform) {
+  if (platform === 'win32') return null;
+  if (toWindowsPath(stageDir) === null) {
+    return 'stage ディレクトリが Windows から見える場所（/mnt/<drive>/...）にないため pack できません';
+  }
+  return null;
 }
 
 /**
@@ -455,6 +442,14 @@ function main(argv) {
     fail(`${missing.length} 件のペイロードが欠落しています。上記コマンドでビルドしてください。`);
   }
 
+  // --pack のプラットフォーム検証もステージ削除より前に行う。Windows から
+  // 見えない場所で pack すると、旧ステージを破壊した後に失敗してしまうため
+  // （ペイロード欠落と同じ原則）。
+  const packBlocker = opts.pack ? packBlockerMessage(STAGE_DIR) : null;
+  if (packBlocker !== null) {
+    fail(packBlocker);
+  }
+
   rmSync(STAGE_DIR, { recursive: true, force: true });
   mkdirSync(STAGE_DIR, { recursive: true });
 
@@ -513,9 +508,10 @@ function main(argv) {
 
   if (opts.pack) {
     if (invocation === null) {
-      fail(
-        'stage ディレクトリが Windows から見える場所（/mnt/<drive>/...）にないため pack できません',
-      );
+      // 早期検証（ステージ削除前の packBlockerMessage チェック）があるため通常は
+      // 到達しない（防御として残す）。早期検証と同じメッセージを
+      // packBlockerMessage から取得する（重複定義しない）。
+      fail(packBlockerMessage(STAGE_DIR));
     }
     console.log(`\n[build-msix] ${invocation.command} で winapp pack を実行します...`);
     const result = spawnSync(invocation.command, invocation.args, { stdio: 'inherit' });
