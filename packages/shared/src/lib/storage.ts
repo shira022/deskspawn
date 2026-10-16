@@ -5,10 +5,9 @@
  * - IndexedDB for structured data (settings, apps, chat history)
  * - OPFS for file data (source code), with IndexedDB fallback
  *
- * API keys are stored as plaintext in IndexedDB.
- * This is the same approach used by OpenCode, GitHub CLI, AWS CLI,
- * and virtually all other developer CLI tools — filesystem-level
- * isolation (browser profile directory) provides adequate protection.
+ * On desktop, API keys live in the OS keychain (Rust IPC) only — never in
+ * plaintext files. The web demo stores them as plaintext in IndexedDB, which
+ * is opt-in via an explicit consent checkbox in the AI settings dialog.
  *
  * All data stays in the browser's origin — never leaves the device.
  * Only outbound communication is to AI provider APIs and CDNs.
@@ -106,11 +105,49 @@ function apiKeyStorageKey(provider: string): string {
 }
 
 /**
- * APIキー保存の実際の保存先（M2）。
- * - Desktop: "keychain"（OSキーチェーン）| "file"（credentials.json 平文フォールバック）
- * - Web: "browser"（IndexedDB 平文）
+ * APIキー保存の実際の保存先（M2/ADR-018）。
+ * - Desktop: "keychain"（OSキーチェーン）
+ * - Web: "browser"（IndexedDB 平文・同意の上）
+ * - "session": このタブのみ（メモリ保持・永続化なし）
+ * - "": 未保存（キー無し、または移行失敗で平文が保存先）
  */
-export type ApiKeyStorageMethod = "keychain" | "file" | "browser" | "";
+export type ApiKeyStorageMethod = "keychain" | "browser" | "session" | "";
+
+/**
+ * loadApiKeyInfo の戻り値。
+ * `legacyPlaintext` が true のとき、移行に失敗したレガシー平文キーが
+ * ディスク上に残っている（UI で警告・再試行導線を出す）。
+ */
+export interface ApiKeyInfo {
+  key: string | null;
+  method: ApiKeyStorageMethod;
+  legacyPlaintext: boolean;
+}
+
+// ── Session-only (in-memory) API keys — Web「このタブのみ」モード ──────────────
+// Web で「保存しない」を選んだ場合、キーはこのモジュールのメモリ上にのみ保持し、
+// IndexedDB には書かない。リロードで消える。AI 呼び出しの loadApiKey は
+// 永続ストレージより先にここを参照する（供給経路の一元化）。
+const sessionApiKeys = new Map<string, string>();
+
+/** タブ内メモリにキーを保持する（空文字で削除）。 */
+export function setSessionApiKey(provider: string, apiKey: string): void {
+  if (apiKey) {
+    sessionApiKeys.set(provider, apiKey);
+  } else {
+    sessionApiKeys.delete(provider);
+  }
+}
+
+/** タブ内メモリのキーを取得する（無ければ null）。 */
+export function getSessionApiKey(provider: string): string | null {
+  return sessionApiKeys.get(provider) ?? null;
+}
+
+/** タブ内メモリのキーを全て破棄する（テスト用）。 */
+export function clearSessionApiKeys(): void {
+  sessionApiKeys.clear();
+}
 
 // ── Legacy IDB API key sweep (Medium-1, 監査 2026-08-28) ─────────────────────
 // デスクトップはキーチェーン保存（IPC）に移行済みだが、旧 WebView 時代の
@@ -150,35 +187,89 @@ async function sweepLegacyIdbApiKeys(): Promise<void> {
   }
 }
 
-export async function saveApiKey(provider: string, apiKey: string): Promise<ApiKeyStorageMethod> {
-  // Try Tauri IPC (Desktop) first, fall back to IndexedDB (Web)
-  try {
+export interface SaveApiKeyOptions {
+  /**
+   * Web で API キーを平文（IndexedDB）へ永続保存することへの明示同意。
+   * デスクトップ（キーチェーン）では不要。Web の永続保存では必須 —
+   * UI のチェックボックス無効化だけに依存しない defense-in-depth。
+   */
+  consent?: boolean;
+}
+
+export async function saveApiKey(
+  provider: string,
+  apiKey: string,
+  opts?: SaveApiKeyOptions,
+): Promise<ApiKeyStorageMethod> {
+  // Web 以外（デスクトップ）はキーチェーン IPC のみ。invoke が Err を返したら
+  // そのまま throw する（IndexedDB の平文へは絶対にフォールバックしない）。
+  if (isDesktopEnv()) {
     const { invoke } = await import("@tauri-apps/api/core");
     const result = await invoke<{ method: string }>("save_api_key", { provider, apiKey });
-    // Desktop: キーチェーン保存が成功したので、IDB に残るレガシー平文キーを掃除する
+    // キーチェーン保存が成功したので、IDB に残るレガシー平文キーを掃除する
     await sweepLegacyIdbApiKeys();
+    // 永続保存したらタブ内メモリのコピーは不要
+    setSessionApiKey(provider, "");
     return (result?.method as ApiKeyStorageMethod) || "";
-  } catch {
-    // Not in Tauri environment, use IndexedDB
   }
+  // Web（非 Tauri）: IndexedDB に平文保存。同意が無ければ保存せずエラーにする。
+  // （UI は同意なしでは保存ボタンを無効化するが、呼び出し経路に依らずここで拒否する）
+  if (!opts?.consent) {
+    throw new Error("Consent is required to store the API key in the browser");
+  }
+  setSessionApiKey(provider, "");
   await setSetting(apiKeyStorageKey(provider), apiKey);
   return "browser";
 }
 
-export async function loadApiKey(provider: string): Promise<string | null> {
-  // Try Tauri IPC (Desktop) first
-  try {
+/**
+ * デスクトップ: レガシー平文ファイル（credentials.json）を削除する（冪等）。
+ *
+ * `loadApiKeyInfo` が `legacyPlaintext` を返したとき、UI の明示操作から呼ぶ。
+ * 平文の自動削除はデータ喪失リスクがあるため行わない（ADR-018）。Web では
+ * 平文ファイルが存在しないため何もしない。
+ */
+export async function deleteLegacyPlaintextFile(): Promise<void> {
+  if (!isDesktopEnv()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("delete_legacy_plaintext_file");
+}
+
+/**
+ * API キーを読み込み、保存先とレガシー平文残存を返す。
+ * タブ内メモリ（このタブのみモード）→ 永続ストレージの順に参照する。
+ */
+export async function loadApiKeyInfo(provider: string): Promise<ApiKeyInfo> {
+  // このタブのみモードのメモリ値を最優先で返す（永続保存はされていない）。
+  // 「タブのみ」は推測ではなく明示する（"session"）— デスクトップ既定の
+  // キーチェーン表示に誤って落ちないようにするため。
+  const session = getSessionApiKey(provider);
+  if (session !== null) {
+    return { key: session, method: "session", legacyPlaintext: false };
+  }
+  if (isDesktopEnv()) {
     const { invoke } = await import("@tauri-apps/api/core");
-    const key = (await invoke("load_api_key", { provider })) as string | null;
-    // Desktop: キーチェーン読込が成功 = デスクトップ環境。IDB のレガシー平文キーを掃除する
-    // （起動時の loadApiKey が initialize() から呼ばれるため、起動時掃除も兼ねる）。
+    const info = await invoke<{
+      key: string | null;
+      method: string | null;
+      legacyPlaintext: boolean;
+    }>("load_api_key_info", { provider });
+    // デスクトップ: IDB のレガシー平文キーを掃除する（起動時掃除も兼ねる）
     await sweepLegacyIdbApiKeys();
-    return key;
-  } catch {
-    // Not in Tauri environment
+    const legacyPlaintext = !!info?.legacyPlaintext || info?.method === "file";
+    const method: ApiKeyStorageMethod = info?.method === "keychain" ? "keychain" : "";
+    return { key: info?.key ?? null, method, legacyPlaintext };
   }
   const key = await getSetting<string>(apiKeyStorageKey(provider));
-  return key ?? null;
+  return {
+    key: key ?? null,
+    method: key ? "browser" : "",
+    legacyPlaintext: false,
+  };
+}
+
+export async function loadApiKey(provider: string): Promise<string | null> {
+  return (await loadApiKeyInfo(provider)).key;
 }
 
 export async function hasApiKey(provider: string): Promise<boolean> {
@@ -187,6 +278,8 @@ export async function hasApiKey(provider: string): Promise<boolean> {
 }
 
 export async function deleteApiKey(provider: string): Promise<void> {
+  // タブ内メモリのコピーも破棄する（このタブのみモードの解除）
+  setSessionApiKey(provider, "");
   // Try Tauri IPC (Desktop) first
   try {
     const { invoke } = await import("@tauri-apps/api/core");

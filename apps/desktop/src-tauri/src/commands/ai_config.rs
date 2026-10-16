@@ -52,23 +52,18 @@ fn credentials_file_path() -> Result<PathBuf, String> {
 
 // ── OS Keychain helpers ───────────────────────────────────────────────────────
 
-fn save_api_key_to_keychain(api_key: &str, provider: &str) -> Result<bool, String> {
-    match keyring::Entry::new(&keyring_service(), &keyring_user(provider)) {
-        Ok(entry) => {
-            entry
-                .set_password(api_key)
-                .map_err(|e| format!("Failed to save API key to keychain: {}", e))?;
-            log::info!("API key stored in OS keychain");
-            Ok(true)
-        }
-        Err(e) => {
-            log::warn!(
-                "OS keychain not available, falling back to config file: {}",
-                e
-            );
-            Ok(false)
-        }
-    }
+/// Save the API key to the OS keychain.
+///
+/// 平文ファイルへのフォールバックは廃止した（ADR-018）。キーチェーンが
+/// 利用できない場合は `Err` を返し、呼び出し元（UI）へそのまま伝える。
+fn save_api_key_to_keychain(api_key: &str, provider: &str) -> Result<(), String> {
+    let entry = keyring::Entry::new(&keyring_service(), &keyring_user(provider))
+        .map_err(|e| format!("Failed to open OS keychain entry: {}", e))?;
+    entry
+        .set_password(api_key)
+        .map_err(|e| format!("Failed to save API key to keychain: {}", e))?;
+    log::info!("API key stored in OS keychain");
+    Ok(())
 }
 
 /// Load the API key from the OS keychain for internal Rust use
@@ -114,6 +109,11 @@ fn delete_api_key_from_keychain(provider: &str) {
 /// （APPDATA ではない — 実パスは `~/deskspawn/config/credentials.json` で APPDATA 配下に
 /// 解決されないため、APPDATA 基準の旧実装では正当なパスまで拒否されていた・実績 2026-08-22）。
 /// ディレクトリ境界（`alice` vs `alice2`）と大文字小文字・区切り文字差を吸収して比較する。
+///
+/// ADR-018 で平文の書き込み経路は廃止したため、現在の呼び出し元は
+/// `is_within_user_profile`（非テストビルドでは未使用）とテストのみ。非テスト
+/// ビルドで dead_code 警告を出さないよう `#[allow]` を付す。
+#[allow(dead_code)]
 fn is_within_profile(profile: &str, path: &str) -> bool {
     let root = profile.replace('\\', "/").trim_end_matches('/').to_lowercase();
     if root.is_empty() {
@@ -126,6 +126,10 @@ fn is_within_profile(profile: &str, path: &str) -> bool {
 }
 
 /// 現在のユーザープロファイル（HOME/USERPROFILE）基準で `path` を検証する薄いラッパー。
+///
+/// ADR-018 で平文の書き込み経路は廃止したが、プロファイル内限定ポリシーの
+/// 防御ユーティリティ（およびそのテスト）は維持する。
+#[allow(dead_code)]
 fn is_within_user_profile(path: &std::path::Path) -> bool {
     let profile = std::env::var("HOME")
         .or_else(|_| std::env::var("USERPROFILE"))
@@ -133,66 +137,9 @@ fn is_within_user_profile(path: &std::path::Path) -> bool {
     is_within_profile(&profile, &path.to_string_lossy())
 }
 
-fn save_api_key_to_file(api_key: &str) -> Result<bool, String> {
-    let path = credentials_file_path()?;
-    // セキュリティ: credentials.json がユーザープロファイルの外に解決されたら
-    // 拒否する (平文キーが共有ディレクトリに書かれる事故の防止)。
-    // Windows / Unix 両方で有効（Unix は HOME 基準・実パスは常に HOME 配下なので通常通過）。
-    if !is_within_user_profile(&path) {
-        return Err(format!(
-            "Refusing to write credentials file outside user profile: {}",
-            path.display()
-        ));
-    }
-    let json = serde_json::json!({ "api_key": api_key });
-    let content = serde_json::to_string_pretty(&json)
-        .map_err(|e| format!("Failed to serialize credentials: {}", e))?;
-
-    // Restrictive permissions on config directory (Unix only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        if let Some(parent) = path.parent() {
-            let _ = fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
-        }
-    }
-
-    // Windows: ファイルを「隠し属性」で作成する (ユーザープロファイル内・親DACL継承で
-    // ユーザーのみアクセス可とする防御の補助)。完全なACL制限は OS キーチェーン
-    // 利用が本筋 (file フォールバックは keychain 利用不可時の保険)。
-    #[cfg(windows)]
-    {
-        use std::io::Write;
-        use std::os::windows::fs::OpenOptionsExt;
-        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
-        if let Ok(mut f) = std::fs::OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .attributes(FILE_ATTRIBUTE_HIDDEN)
-            .open(&path)
-        {
-            let _ = f.write_all(content.as_bytes());
-        } else {
-            // OpenOptions 失敗時は通常書き込みにフォールバック (ユーザープロファイル内は保護済み)
-            fs::write(&path, &content)
-                .map_err(|e| format!("Failed to write credentials file: {}", e))?;
-        }
-    }
-    #[cfg(not(windows))]
-    fs::write(&path, &content)
-        .map_err(|e| format!("Failed to write credentials file: {}", e))?;
-
-    // Restrictive permissions on credentials file (Unix only)
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let _ = fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
-    }
-
-    log::info!("API key saved to credentials file ({})", path.display());
-    Ok(true)
-}
+// ADR-018: 平文ファイル（credentials.json）への書き込み経路は廃止した。
+// `save_api_key_to_file()` は削除済み。既存の平文キーは `load_api_key_info` が
+// キーチェーンへ自動移行する（読み取り専用の `load_api_key_from_file` のみ残す）。
 
 fn load_api_key_from_file() -> Option<String> {
     let path = credentials_file_path().ok()?;
@@ -217,33 +164,139 @@ fn delete_credentials_file() {
 
 // ── Unified storage helpers ───────────────────────────────────────────────────
 
-/// Save the API key to the given storage method.
+/// レガシー平文キーのキーチェーン移行結果。
+#[derive(Debug, Clone, PartialEq)]
+pub struct LegacyMigrationOutcome {
+    /// 取得できたキー（移行成否に関わらず返す）。
+    pub key: Option<String>,
+    /// 移行後の保存先: `"keychain"` | `"file"` | `None`。
+    pub method: Option<String>,
+    /// 移行に失敗し、レガシー平文が残っているか。
+    pub legacy_plaintext: bool,
+}
+
+/// レガシー平文キーをキーチェーンへ移行する純粋ロジック（テスト可能）。
 ///
-/// Returns the method actually used: `"keychain"` or `"file"`.
-/// When `keychain` is requested but the OS keychain is unavailable, this
-/// falls back to the credentials file (M2: UI must reflect the real storage).
-fn save_key_to_storage(api_key: &str, provider: &str, method: &str) -> Result<String, String> {
-    match method {
-        "keychain" => {
-            if save_api_key_to_keychain(api_key, provider)? {
-                Ok("keychain".to_string())
-            } else {
-                log::warn!(
-                    "OS keychain unavailable — falling back to credentials file ({})",
-                    credentials_file_path()
-                        .map(|p| p.display().to_string())
-                        .unwrap_or_else(|_| "?".to_string())
-                );
-                save_api_key_to_file(api_key)?;
-                Ok("file".to_string())
-            }
-        }
-        "file" => {
-            save_api_key_to_file(api_key)?;
-            Ok("file".to_string())
-        }
-        other => Err(format!("Invalid storage method: {}", other)),
+/// - `read_legacy`: 平文ファイルからキーを読む
+/// - `save_keychain`: キーチェーンへ保存する
+/// - `read_keychain`: キーチェーンから読み戻す（一致検証用）
+/// - `delete_legacy`: 平文側を削除する
+///
+/// 保存 → 読み戻しの一致検証に成功した場合のみ平文を削除する。失敗時は
+/// 平文を残し `legacy_plaintext = true` を返す（キーは返すのでアプリは使える）。
+pub fn migrate_legacy_plaintext<R, S, G, D>(
+    read_legacy: R,
+    save_keychain: S,
+    read_keychain: G,
+    delete_legacy: D,
+) -> LegacyMigrationOutcome
+where
+    R: FnOnce() -> Option<String>,
+    S: FnOnce(&str) -> Result<(), String>,
+    G: FnOnce() -> Option<String>,
+    D: FnOnce(),
+{
+    let Some(key) = read_legacy() else {
+        return LegacyMigrationOutcome {
+            key: None,
+            method: None,
+            legacy_plaintext: false,
+        };
+    };
+    if save_keychain(&key).is_ok() && read_keychain().as_deref() == Some(key.as_str()) {
+        delete_legacy();
+        return LegacyMigrationOutcome {
+            key: Some(key),
+            method: Some("keychain".to_string()),
+            legacy_plaintext: false,
+        };
     }
+    // キーチェーン不可・読み戻し不一致 → 平文は削除しない
+    LegacyMigrationOutcome {
+        key: Some(key),
+        method: Some("file".to_string()),
+        legacy_plaintext: true,
+    }
+}
+
+/// `load_api_key_info` の判断ロジック（クロージャ注入でテスト可能）。
+///
+/// 優先順:
+///   1. キーチェーンにキーがあればそれを採用（`method = "keychain"`）。
+///      ただしレガシー平文ファイルが残っていれば `legacy_plaintext = true` を
+///      付けて UI に残存を知らせる（**自動削除はしない** — そのファイルのキーが
+///      別プロバイダ用かもしれず、データ喪失リスクを避けるため。削除はユーザーの
+///      明示操作 `delete_legacy_plaintext_file` に委ねる）。
+///   2. キーチェーンに無ければレガシー平文をキーチェーンへ移行する
+///      （`migrate_legacy_plaintext` と同じ規則）。
+///   3. どちらも無ければ空。
+pub fn resolve_api_key_info<K, E, R, S, G, D>(
+    read_keychain: K,
+    legacy_exists: E,
+    read_legacy: R,
+    save_keychain: S,
+    read_back_keychain: G,
+    delete_legacy: D,
+) -> LoadKeyInfo
+where
+    K: FnOnce() -> Option<String>,
+    E: Fn() -> bool,
+    R: FnOnce() -> Option<String>,
+    S: FnOnce(&str) -> Result<(), String>,
+    G: FnOnce() -> Option<String>,
+    D: FnOnce(),
+{
+    if let Some(key) = read_keychain() {
+        return LoadKeyInfo {
+            key: Some(key),
+            method: Some("keychain".to_string()),
+            // キーチェーンにキーがあっても平文残存は必ず確認する（無期限残存の防止）
+            legacy_plaintext: legacy_exists(),
+        };
+    }
+    if !legacy_exists() {
+        return LoadKeyInfo {
+            key: None,
+            method: None,
+            legacy_plaintext: false,
+        };
+    }
+    let outcome = migrate_legacy_plaintext(
+        read_legacy,
+        save_keychain,
+        read_back_keychain,
+        delete_legacy,
+    );
+    LoadKeyInfo {
+        key: outcome.key,
+        method: outcome.method,
+        legacy_plaintext: outcome.legacy_plaintext,
+    }
+}
+
+/// Save the API key to the OS keychain.
+///
+/// 平文フォールバックは廃止（ADR-018）。失敗時は UI にそのまま出せる
+/// 日本語のエラーメッセージを返す。成功時は `"keychain"` を返す。
+fn save_key_to_storage(api_key: &str, provider: &str) -> Result<String, String> {
+    save_key_to_storage_with(api_key, provider, save_api_key_to_keychain)
+}
+
+/// `save_key_to_storage` のテスト可能版（保存関数を注入）。
+fn save_key_to_storage_with<S>(
+    api_key: &str,
+    provider: &str,
+    keychain_save: S,
+) -> Result<String, String>
+where
+    S: FnOnce(&str, &str) -> Result<(), String>,
+{
+    keychain_save(api_key, provider).map_err(|e| {
+        format!(
+            "OS キーチェーンに保存できませんでした（Windows 資格情報マネージャー等が必要です）: {e}"
+        )
+    })?;
+    Ok("keychain".to_string())
 }
 
 /// Load the API key from the given storage method.
@@ -424,23 +477,33 @@ pub fn load_full_config_for_sidecar() -> Option<String> {
 /// 保存処理の結果（M2: フロントエンドが実際の保存先を表示するために使う）。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct SaveKeyResult {
-    /// 実際にキーが保存された場所: "keychain" | "file" | "" (保存なし/削除)
+    /// 実際にキーが保存された場所: "keychain" | "" (保存なし/削除)
     pub method: String,
+}
+
+/// 読み込み処理の結果（M2/ADR-018: フロントが保存先とレガシー平文残存を表示）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LoadKeyInfo {
+    /// 読み込んだキー（無ければ None）。
+    pub key: Option<String>,
+    /// 保存先: "keychain" | "file"（移行失敗で平文が残る場合） | None。
+    pub method: Option<String>,
+    /// 移行に失敗してレガシー平文が残っているか。
+    pub legacy_plaintext: bool,
 }
 
 /// Save AI configuration.
 ///
-/// Security model:
-///   - `storage_method = "keychain"`:
-///       API key → OS keychain (never in config.json)
-///   - `storage_method = "file"`:
-///       API key → `credentials.json` (600 perms, same directory as config.json)
+/// Security model (ADR-018: plaintext file storage廃止):
+///   - API key → OS keychain (never in config.json / credentials.json)
+///   - 旧 `storage_method = "file"` は移行扱い。受け付けてもキーチェーンへ保存する
 ///   - API key → Sidecar (in-memory, for AI API calls)
-///   - Other settings → `~/.config/deskspawn/config.json`
+///   - Other settings → `~/deskspawn/config/config.json`
 ///   - Frontend sees `apiKey: ""` and `apiKeyConfigured: bool`
 ///
 /// Key lifecycle:
-///   - If api_key is non-empty: save to chosen storage + push to sidecar
+///   - If api_key is non-empty: save to keychain + push to sidecar
 ///   - If api_key is empty + api_key_configured is true:
 ///     keep existing entry (no-op unless storage method changed → auto-migrate)
 ///   - If api_key is empty + api_key_configured is false:
@@ -467,11 +530,11 @@ pub fn save_ai_config(
 
     // 1. Handle API key lifecycle
     if !config.api_key.is_empty() {
-        // New/changed key → save to selected storage + push to sidecar
-        actual_method = save_key_to_storage(&config.api_key, &config.provider, dest_method)?;
+        // New/changed key → save to keychain (平文ファイルは使わない) + push to sidecar
+        actual_method = save_key_to_storage(&config.api_key, &config.provider)?;
 
-        // Clean up old storage if method changed (e.g., user switched
-        // dropdown from keychain to file and entered a new key)
+        // Clean up old storage if method changed (e.g., legacy config had
+        // storage_method "file" and the user entered a new key)
         if let Some(ref ex) = existing {
             if ex.storage_method != dest_method {
                 delete_key_from_storage(&config.provider, &ex.storage_method);
@@ -480,7 +543,9 @@ pub fn save_ai_config(
     } else if config.api_key_configured {
         // No new key but was previously configured
         if let Some(ref ex) = existing {
-            if ex.storage_method != dest_method {
+            // dest_method が "file"（旧UI）または保存先が変わった場合は
+            // キーチェーンへ移行する（平文に留めない）。
+            if ex.storage_method != dest_method || dest_method == "file" {
                 // Storage method changed → auto-migrate
                 let key = load_key_from_storage(&config.provider, &ex.storage_method).ok_or_else(|| {
                     format!(
@@ -489,12 +554,11 @@ pub fn save_ai_config(
                         ex.storage_method
                     )
                 })?;
-                actual_method = save_key_to_storage(&key, &config.provider, dest_method)?;
+                actual_method = save_key_to_storage(&key, &config.provider)?;
                 delete_key_from_storage(&config.provider, &ex.storage_method);
                 log::info!(
-                    "API key migrated from '{}' to '{}'",
-                    ex.storage_method,
-                    dest_method
+                    "API key migrated from '{}' to keychain",
+                    ex.storage_method
                 );
             } else {
                 // Same storage method, key already there — keep it
@@ -513,7 +577,11 @@ pub fn save_ai_config(
 
     // 2. Save config.json WITHOUT the API key
     let mut json_config = config;
-    json_config.api_key = String::new(); // never exposed to frontend
+    // never exposed to frontend
+    json_config.api_key = String::new();
+    // ADR-018: 平文保存は廃止したため、保存先は常に "keychain" として記録する
+    // （旧 config.json に "file" が残っていても次回保存で解消される）。
+    json_config.storage_method = "keychain".to_string();
     if !actual_method.is_empty() {
         json_config.api_key_configured = true;
     }
@@ -608,11 +676,11 @@ pub fn sync_sidecar_config(
     Ok(())
 }
 
-/// API キーを保存する（デスクトップ: OS キーチェーン → 失敗時は credentials.json）。
+/// API キーを保存する（デスクトップ: OS キーチェーンのみ）。
 ///
-/// M2: 実際に保存された場所（"keychain" | "file"）を返し、UI が実態に
-/// 合わせた表示（「OSキーチェーンに保存」/「設定ファイルに保存（平文）」）を
-/// できるようにする。Web 版はこのコマンドが無いため IndexedDB にフォールバックする。
+/// ADR-018: 平文ファイルへのフォールバックは廃止。キーチェーンが利用できない
+/// 場合は UI にそのまま出せる日本語エラーを返す。成功時は `"keychain"` を返す。
+/// Web 版はこのコマンドが無いため IndexedDB に保存する（同意の上）。
 #[tauri::command]
 pub fn save_api_key(
     sidecar: State<'_, SidecarManager>,
@@ -625,30 +693,57 @@ pub fn save_api_key(
             method: String::new(),
         });
     }
-    // デスクトップの既定はキーチェーン（利用不可時は自動でファイルへフォールバック）
-    let method = save_key_to_storage(&api_key, &provider, "keychain")?;
+    let method = save_key_to_storage(&api_key, &provider)?;
     // サイドカー（メモリ内キーストア）へ同期 — 実ポート（動的）へ push する
     push_api_key_to_sidecar(&api_key, sidecar.actual_port());
     Ok(SaveKeyResult { method })
 }
 
-/// API キーを読み込む（デスクトップ: OS キーチェーン → credentials.json）。
+/// API キーを読み込み、保存先とレガシー平文残存を返す（ADR-018）。
 ///
-/// 2026-08-12: 指定 storage_method で読めない場合、逆メソッドも試す。
-/// （save_api_key が file フォールバック時に storage_method を更新しないため、
-/// キーチェーン利用不可環境では credentials.json のキーが読み戻せないバグの修正）
+/// 挙動:
+///   1. keychain にキーがあればそれを返す（method = "keychain"）。ただし
+///      レガシー平文ファイルが残っていれば `legacy_plaintext = true` を返す
+///      （自動削除はしない — UI の明示削除導線に委ねる）。
+///   2. 無ければレガシー平文ファイルから読み、あれば自動移行する
+///      （① keychain へ保存 ② 読み戻して一致検証 ③ 一致したら平文を削除
+///        ④ キーを返す）。ファイルが空になったらファイル自体を削除する。
+///   3. 移行に失敗（キーチェーン不可等）した場合は平文を削除せず、キーは返し、
+///      `legacy_plaintext = true` で残存を伝える（アプリは使える状態を保つ）。
+///
+/// 判断ロジックは `resolve_api_key_info`（純粋関数）に切り出す。
+/// キーの値はログに出さない。
+#[tauri::command]
+pub fn load_api_key_info(provider: String) -> Result<LoadKeyInfo, String> {
+    let provider_for_keychain = provider.clone();
+    let provider_for_save = provider.clone();
+    let provider_for_read = provider.clone();
+    Ok(resolve_api_key_info(
+        || load_api_key_from_keychain(&provider_for_keychain),
+        || load_api_key_from_file().is_some(),
+        load_api_key_from_file,
+        |key| save_api_key_to_keychain(key, &provider_for_save),
+        || load_api_key_from_keychain(&provider_for_read),
+        delete_credentials_file,
+    ))
+}
+
+/// API キーを読み込む（既存互換: キー文字列のみを返す）。
+///
+/// 内部で `load_api_key_info` を呼ぶため、レガシー平文があれば自動移行される。
 #[tauri::command]
 pub fn load_api_key(provider: String) -> Result<Option<String>, String> {
-    let method = read_existing_config()
-        .map(|c| c.storage_method)
-        .filter(|m| !m.is_empty())
-        .unwrap_or_else(|| "keychain".to_string());
-    let key = load_key_from_storage(&provider, &method);
-    if key.is_some() {
-        return Ok(key);
-    }
-    let alt = if method == "keychain" { "file" } else { "keychain" };
-    Ok(load_key_from_storage(&provider, alt))
+    Ok(load_api_key_info(provider)?.key)
+}
+
+/// レガシー平文ファイル（credentials.json）を削除する（冪等）。
+///
+/// ADR-018: 平文の自動削除はデータ喪失リスクがあるため行わない。ユーザーが
+/// UI の削除導線から明示的に呼ぶ。ファイルが無ければ成功（冪等）。
+#[tauri::command]
+pub fn delete_legacy_plaintext_file() -> Result<(), String> {
+    delete_credentials_file();
+    Ok(())
 }
 
 /// API キーを削除する（keychain と credentials.json の両方）。
@@ -928,6 +1023,208 @@ mod tests {
     fn within_profile_empty_profile_is_rejected() {
         // プロファイル変数が空 = 判定不能 → 安全側（拒否）
         assert!(!is_within_profile("", "/tmp/x/credentials.json"));
+    }
+
+    // ── ADR-018: 平文廃止・自動移行・保存先解決 ──
+
+    #[test]
+    fn resolve_reports_keychain_with_leftover_plaintext() {
+        // キーチェーンにキーあり＋平文ファイルあり → keychain のまま legacy を警告
+        let info = resolve_api_key_info(
+            || Some("sk-keychain".to_string()),
+            || true,
+            || panic!("平文は読まない（キーチェーン優先）"),
+            |_| Ok(()),
+            || None,
+            || panic!("自動削除はしない"),
+        );
+        assert_eq!(info.key.as_deref(), Some("sk-keychain"));
+        assert_eq!(info.method.as_deref(), Some("keychain"));
+        assert!(
+            info.legacy_plaintext,
+            "キーチェーンにあっても平文残存は legacy_plaintext=true"
+        );
+    }
+
+    #[test]
+    fn resolve_reports_keychain_without_leftover_plaintext() {
+        // キーチェーンあり＋平文なし → legacy_plaintext=false
+        let info = resolve_api_key_info(
+            || Some("sk-keychain".to_string()),
+            || false,
+            || None,
+            |_| Ok(()),
+            || None,
+            || panic!("平文が無いので削除しない"),
+        );
+        assert_eq!(info.key.as_deref(), Some("sk-keychain"));
+        assert_eq!(info.method.as_deref(), Some("keychain"));
+        assert!(!info.legacy_plaintext);
+    }
+
+    #[test]
+    fn resolve_migrates_legacy_when_keychain_empty() {
+        // キーチェーンに無く平文あり → 移行成功で keychain / legacy=false
+        let keychain = std::cell::RefCell::new(None::<String>);
+        let deleted = std::cell::Cell::new(false);
+        let info = resolve_api_key_info(
+            || None,
+            || true,
+            || Some("sk-legacy".to_string()),
+            |key| {
+                *keychain.borrow_mut() = Some(key.to_string());
+                Ok(())
+            },
+            || keychain.borrow().clone(),
+            || deleted.set(true),
+        );
+        assert_eq!(info.key.as_deref(), Some("sk-legacy"));
+        assert_eq!(info.method.as_deref(), Some("keychain"));
+        assert!(!info.legacy_plaintext);
+        assert!(deleted.get());
+    }
+
+    #[test]
+    fn resolve_migration_failure_keeps_plaintext_warning() {
+        // キーチェーンに無く平文あり＋移行失敗 → method="file" / legacy=true
+        let info = resolve_api_key_info(
+            || None,
+            || true,
+            || Some("sk-legacy".to_string()),
+            |_| Err("keychain unavailable".to_string()),
+            || None,
+            || panic!("移行失敗時は削除しない"),
+        );
+        assert_eq!(info.key.as_deref(), Some("sk-legacy"));
+        assert_eq!(info.method.as_deref(), Some("file"));
+        assert!(info.legacy_plaintext);
+    }
+
+    #[test]
+    fn resolve_reports_nothing_when_no_key() {
+        let info = resolve_api_key_info(
+            || None,
+            || false,
+            || None,
+            |_| Ok(()),
+            || None,
+            || panic!("平文が無いので削除しない"),
+        );
+        assert!(info.key.is_none());
+        assert!(info.method.is_none());
+        assert!(!info.legacy_plaintext);
+    }
+
+    #[test]
+    fn delete_legacy_plaintext_file_is_idempotent() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("delete-legacy-idempotent");
+
+        // ファイルが無くても成功（冪等）
+        assert!(delete_legacy_plaintext_file().is_ok());
+        assert!(!credentials_file_path().unwrap().exists());
+
+        // 平文ファイルを作って削除 → 消える。続けて呼んでも成功（冪等）
+        let path = credentials_file_path().unwrap();
+        std::fs::write(&path, r#"{"api_key":"sk-legacy"}"#).unwrap();
+        assert!(path.exists());
+        assert!(delete_legacy_plaintext_file().is_ok());
+        assert!(!path.exists(), "平文ファイルは削除される");
+        assert!(delete_legacy_plaintext_file().is_ok());
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn save_to_storage_does_not_create_plaintext_file_when_keychain_fails() {
+        // キーチェーン不可時に平文ファイルが作られない（書き込み経路が無いこと）
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("no-plaintext-write");
+
+        let err = save_key_to_storage_with("sk-secret", "openai", |_, _| {
+            Err("keychain unavailable".to_string())
+        })
+        .unwrap_err();
+        assert!(
+            err.contains("OS キーチェーンに保存できませんでした"),
+            "UI に出せる日本語エラーであること: {err}"
+        );
+        assert!(
+            !credentials_file_path().unwrap().exists(),
+            "平文ファイル（credentials.json）が作られてはいけない"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn migration_success_removes_plaintext_and_returns_key() {
+        let keychain = std::cell::RefCell::new(None::<String>);
+        let deleted = std::cell::Cell::new(false);
+
+        let outcome = migrate_legacy_plaintext(
+            || Some("sk-legacy".to_string()),
+            |key| {
+                *keychain.borrow_mut() = Some(key.to_string());
+                Ok(())
+            },
+            || keychain.borrow().clone(),
+            || deleted.set(true),
+        );
+
+        assert_eq!(outcome.key.as_deref(), Some("sk-legacy"));
+        assert_eq!(outcome.method.as_deref(), Some("keychain"));
+        assert!(!outcome.legacy_plaintext);
+        assert!(deleted.get(), "移行成功時は平文を削除する");
+        assert_eq!(keychain.borrow().as_deref(), Some("sk-legacy"));
+    }
+
+    #[test]
+    fn migration_failure_keeps_plaintext_and_returns_key() {
+        let deleted = std::cell::Cell::new(false);
+
+        let outcome = migrate_legacy_plaintext(
+            || Some("sk-legacy".to_string()),
+            |_key| Err("keychain unavailable".to_string()),
+            || None,
+            || deleted.set(true),
+        );
+
+        assert_eq!(outcome.key.as_deref(), Some("sk-legacy"));
+        assert_eq!(outcome.method.as_deref(), Some("file"));
+        assert!(outcome.legacy_plaintext, "移行失敗は legacy_plaintext=true");
+        assert!(!deleted.get(), "移行失敗時は平文を削除しない");
+    }
+
+    #[test]
+    fn migration_mismatch_keeps_plaintext() {
+        // 読み戻し不一致（保存は成功したが検証できない）→ 平文は残す
+        let deleted = std::cell::Cell::new(false);
+
+        let outcome = migrate_legacy_plaintext(
+            || Some("sk-legacy".to_string()),
+            |_key| Ok(()),
+            || Some("different".to_string()),
+            || deleted.set(true),
+        );
+
+        assert_eq!(outcome.key.as_deref(), Some("sk-legacy"));
+        assert!(outcome.legacy_plaintext);
+        assert!(!deleted.get());
+    }
+
+    #[test]
+    fn migration_no_plaintext_returns_none() {
+        let outcome = migrate_legacy_plaintext(
+            || None,
+            |_key| Ok(()),
+            || None,
+            || panic!("平文が無い場合は削除しない"),
+        );
+
+        assert!(outcome.key.is_none());
+        assert!(outcome.method.is_none());
+        assert!(!outcome.legacy_plaintext);
     }
 
     #[test]

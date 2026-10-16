@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
 import { AiConfigDialog } from "./AiConfigDialog";
+import { hasApiKey } from "../../lib/storage";
 import type { AiConfig, ProviderKind } from "../../types";
 
 // ── Locale (real en bundle → expectations stay in sync with the shipped copy) ──
@@ -57,7 +58,10 @@ const mockStore = {
   aiConfig: null as AiConfig | null,
   setAiConfig: vi.fn().mockResolvedValue("browser"),
   addToast: vi.fn(),
-  apiKeyStorageMethod: "browser",
+  apiKeyStorageMethod: "browser" as "keychain" | "browser" | "session" | "",
+  apiKeyLegacyPlaintext: false,
+  reloadAiConfig: vi.fn().mockResolvedValue(undefined),
+  deleteLegacyPlaintextFile: vi.fn().mockResolvedValue(undefined),
 };
 
 vi.mock("../../store/useAppStore", () => ({
@@ -69,6 +73,8 @@ vi.mock("../../lib/storage", () => ({
   hasApiKey: vi.fn().mockResolvedValue(false),
   loadProviderConfig: vi.fn().mockResolvedValue(null),
 }));
+
+const hasApiKeyMock = vi.mocked(hasApiKey);
 
 // モデル一覧はフック単体のテスト（useModels.test.ts）の責務なので、
 // ここでは「一覧なし（手動入力）」の静的状態を返すだけにする。
@@ -143,10 +149,33 @@ async function clickSave(): Promise<void> {
   });
 }
 
+/** Web 同意チェックボックス（このタブのみではない方）を ON にする。 */
+async function checkWebConsent(container: HTMLElement): Promise<void> {
+  const checkbox = findInput(container, (i) => i.getAttribute("type") === "checkbox");
+  expect(checkbox, "consent checkbox should render").toBeDefined();
+  await act(async () => {
+    fireEvent.click(checkbox as HTMLInputElement);
+  });
+}
+
+/** 「このタブのみ（保存しない）」チェックボックス（2番目）を ON にする。 */
+async function checkTabOnly(container: HTMLElement): Promise<void> {
+  const checkboxes = inputsByPlaceholder(container).filter(
+    (i) => i.getAttribute("type") === "checkbox",
+  );
+  expect(checkboxes.length, "consent + tab-only checkboxes should render").toBe(2);
+  await act(async () => {
+    fireEvent.click(checkboxes[1]);
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mockStore.aiConfig = null;
   mockStore.setAiConfig.mockResolvedValue("browser");
+  mockStore.apiKeyStorageMethod = "browser";
+  mockStore.apiKeyLegacyPlaintext = false;
+  hasApiKeyMock.mockResolvedValue(false);
 });
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -385,6 +414,9 @@ describe("AiConfigDialog — save validation", () => {
         "test-model",
       );
 
+      // Web 同意（保存ボタン有効化）を ON にしてから検証する
+      await checkWebConsent(container);
+
       // リージョン / エンドポイントは意図的に未入力
       await clickSave();
 
@@ -402,10 +434,263 @@ describe("AiConfigDialog — save validation", () => {
         findInput(container, (i) => i.getAttribute("type") === "password"),
         "sk-test",
       );
+      await checkWebConsent(container);
       await clickSave();
 
     expect(screen.getByText(enT("ai.error.modelRequired"))).toBeInTheDocument();
     expect(mockStore.setAiConfig).not.toHaveBeenCalled();
+  });
+});
+
+// ── ADR-018: 保存先表示・レガシー警告・Web 同意・このタブのみ ────────────────
+
+describe("AiConfigDialog — 保存先表示と Web 保存モード", () => {
+  it("desktop: 保存済みキーの保存先をキーチェーンとして表示する", async () => {
+    hasApiKeyMock.mockResolvedValue(true);
+    mockStore.apiKeyStorageMethod = "keychain";
+    const w = window as unknown as Record<string, unknown>;
+    w.__DESKSPAWN_DESKTOP__ = true;
+
+    try {
+      await renderDialog();
+      expect(
+        screen.getByText((content) => content.includes(enT("ai.savedInKeychain"))),
+      ).toBeInTheDocument();
+    } finally {
+      delete w.__DESKSPAWN_DESKTOP__;
+    }
+  });
+
+  it("web: 保存済みキーの保存先をブラウザ（IndexedDB）として表示する", async () => {
+    hasApiKeyMock.mockResolvedValue(true);
+    mockStore.apiKeyStorageMethod = "browser";
+
+    await renderDialog();
+
+    expect(
+      screen.getByText((content) => content.includes(enT("ai.savedInBrowser"))),
+    ).toBeInTheDocument();
+  });
+
+  it("desktop: 保存先不明（''）＋キーありならキーチェーンとして表示する（このタブのみにしない）", async () => {
+    hasApiKeyMock.mockResolvedValue(true);
+    mockStore.apiKeyStorageMethod = "";
+    mockStore.apiKeyLegacyPlaintext = false;
+    const w = window as unknown as Record<string, unknown>;
+    w.__DESKSPAWN_DESKTOP__ = true;
+
+    try {
+      await renderDialog();
+      expect(
+        screen.getByText((content) => content.includes(enT("ai.savedInKeychain"))),
+      ).toBeInTheDocument();
+      expect(
+        screen.queryByText((content) => content.includes(enT("ai.savedInTabOnly"))),
+      ).not.toBeInTheDocument();
+    } finally {
+      delete w.__DESKSPAWN_DESKTOP__;
+    }
+  });
+
+  it("web: 保存先不明（''）＋キーありならブラウザとして表示する（このタブのみにしない）", async () => {
+    hasApiKeyMock.mockResolvedValue(true);
+    mockStore.apiKeyStorageMethod = "";
+    mockStore.apiKeyLegacyPlaintext = false;
+
+    await renderDialog();
+
+    expect(
+      screen.getByText((content) => content.includes(enT("ai.savedInBrowser"))),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText((content) => content.includes(enT("ai.savedInTabOnly"))),
+    ).not.toBeInTheDocument();
+  });
+
+  it("web: method='session' はこのタブのみとして表示する", async () => {
+    hasApiKeyMock.mockResolvedValue(true);
+    mockStore.apiKeyStorageMethod = "session";
+
+    await renderDialog();
+
+    expect(
+      screen.getByText((content) => content.includes(enT("ai.savedInTabOnly"))),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText((content) => content.includes(enT("ai.savedInBrowser"))),
+    ).not.toBeInTheDocument();
+  });
+
+  it("web: 「このタブのみ」は再オープンでリセットされ永続保存が既定に戻る", async () => {
+    const { container, rerender } = render(
+      <AiConfigDialog open={true} onOpenChange={onOpenChange} />,
+    );
+    await act(async () => {});
+    const select = getProviderSelect(container);
+    await selectProvider(select, "openai");
+    await checkTabOnly(container);
+
+    const checkboxes = () =>
+      inputsByPlaceholder(container).filter((i) => i.getAttribute("type") === "checkbox");
+    // このタブのみ選択中は同意チェックが隠れる（checkbox は 1 つ）
+    expect(checkboxes()).toHaveLength(1);
+
+    await act(async () => {
+      rerender(<AiConfigDialog open={false} onOpenChange={onOpenChange} />);
+    });
+    await act(async () => {
+      rerender(<AiConfigDialog open={true} onOpenChange={onOpenChange} />);
+    });
+    await act(async () => {});
+
+    // 開き直すと「このタブのみ」は解除され、同意チェックが再表示される
+    expect(checkboxes()).toHaveLength(2);
+  });
+
+  it("レガシー平文が残っている場合は警告バナーと再試行ボタンを出す", async () => {
+    mockStore.apiKeyLegacyPlaintext = true;
+
+    await renderDialog();
+
+    expect(
+      screen.getByText((content) =>
+        content.includes(enT("ai.legacyPlaintextWarning")),
+      ),
+    ).toBeInTheDocument();
+
+    const retry = screen.getByRole("button", { name: enT("ai.legacyPlaintextRetry") });
+    await act(async () => {
+      fireEvent.click(retry);
+    });
+    expect(mockStore.reloadAiConfig).toHaveBeenCalled();
+  });
+
+  it("desktop: 移行失敗（平文が保存先）のときは savedInLegacyFile を表示する", async () => {
+    hasApiKeyMock.mockResolvedValue(true);
+    mockStore.apiKeyStorageMethod = "";
+    mockStore.apiKeyLegacyPlaintext = true;
+    const w = window as unknown as Record<string, unknown>;
+    w.__DESKSPAWN_DESKTOP__ = true;
+
+    try {
+      await renderDialog();
+      expect(
+        screen.getByText((content) => content.includes(enT("ai.savedInLegacyFile"))),
+      ).toBeInTheDocument();
+      // 実際は平文で永続保存されているのに「このタブのみ」と誤表示しない
+      expect(
+        screen.queryByText((content) => content.includes(enT("ai.savedInTabOnly"))),
+      ).not.toBeInTheDocument();
+    } finally {
+      delete w.__DESKSPAWN_DESKTOP__;
+    }
+  });
+
+  it("desktop: キーチェーンにキーあり＋平文残存なら残存警告と削除ボタンを出す", async () => {
+    hasApiKeyMock.mockResolvedValue(true);
+    mockStore.apiKeyStorageMethod = "keychain";
+    mockStore.apiKeyLegacyPlaintext = true;
+    const w = window as unknown as Record<string, unknown>;
+    w.__DESKSPAWN_DESKTOP__ = true;
+
+    try {
+      await renderDialog();
+      expect(
+        screen.getByText((content) =>
+          content.includes(enT("ai.legacyPlaintextLeftoverWarning")),
+        ),
+      ).toBeInTheDocument();
+      // 移行失敗向けの再試行ボタンは出さない
+      expect(
+        screen.queryByRole("button", { name: enT("ai.legacyPlaintextRetry") }),
+      ).not.toBeInTheDocument();
+
+      const del = screen.getByRole("button", { name: enT("ai.legacyPlaintextDelete") });
+      await act(async () => {
+        fireEvent.click(del);
+      });
+      expect(mockStore.deleteLegacyPlaintextFile).toHaveBeenCalled();
+    } finally {
+      delete w.__DESKSPAWN_DESKTOP__;
+    }
+  });
+
+  it("desktop: securityNote は OS キーチェーン前提の文言になる", async () => {
+    const w = window as unknown as Record<string, unknown>;
+    w.__DESKSPAWN_DESKTOP__ = true;
+    try {
+      await renderDialog();
+      expect(screen.getByText(enT("ai.securityNoteDesktop"))).toBeInTheDocument();
+      expect(screen.queryByText(enT("ai.securityNote"))).not.toBeInTheDocument();
+    } finally {
+      delete w.__DESKSPAWN_DESKTOP__;
+    }
+  });
+
+  it("web: securityNote はブラウザ保存の文言のまま", async () => {
+    await renderDialog();
+    expect(screen.getByText(enT("ai.securityNote"))).toBeInTheDocument();
+    expect(screen.queryByText(enT("ai.securityNoteDesktop"))).not.toBeInTheDocument();
+  });
+
+  it("web: 新しいキーは同意チェックが無いと保存できない", async () => {
+    const { container } = await renderDialog();
+    const select = getProviderSelect(container);
+    await selectProvider(select, "openai");
+
+    await typeInto(
+      findInput(container, (i) => i.getAttribute("type") === "password"),
+      "sk-test",
+    );
+    await typeInto(
+      findInput(
+        container,
+        (i) => i.getAttribute("placeholder") === enT("ai.modelPlaceholderWithExample"),
+      ),
+      "gpt-4o",
+    );
+
+    const saveButton = screen.getByRole("button", { name: enT("common.save") });
+    expect(saveButton).toBeDisabled();
+
+    await checkWebConsent(container);
+    await clickSave();
+
+    expect(mockStore.setAiConfig).toHaveBeenCalledTimes(1);
+    expect(mockStore.setAiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai", apiKey: "sk-test" }),
+      { sessionOnly: false, consent: true },
+    );
+  });
+
+  it("web: 「このタブのみ」は saveApiKey を使わず sessionOnly で保存する", async () => {
+    const { container } = await renderDialog();
+    const select = getProviderSelect(container);
+    await selectProvider(select, "openai");
+
+    await typeInto(
+      findInput(container, (i) => i.getAttribute("type") === "password"),
+      "sk-session",
+    );
+    await typeInto(
+      findInput(
+        container,
+        (i) => i.getAttribute("placeholder") === enT("ai.modelPlaceholderWithExample"),
+      ),
+      "gpt-4o",
+    );
+
+    // このタブのみを選ぶと同意なしで保存ボタンが有効になる
+    await checkTabOnly(container);
+    const saveButton = screen.getByRole("button", { name: enT("common.save") });
+    expect(saveButton).not.toBeDisabled();
+
+    await clickSave();
+
+    expect(mockStore.setAiConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "openai", apiKey: "sk-session" }),
+      { sessionOnly: true, consent: false },
+    );
   });
 });
 
@@ -476,6 +761,7 @@ describe("AiConfigDialog — saving", () => {
         model: "qwen2.5-7b-instruct",
         customEndpoint: "http://192.168.1.50:1234/v1",
       }),
+      { sessionOnly: false, consent: false },
     );
     expect(mockStore.addToast).toHaveBeenCalledTimes(1);
     expect(onOpenChange).toHaveBeenCalledWith(false);
