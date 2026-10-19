@@ -370,7 +370,8 @@
       "title1": "Build Apps",
       "title2": "with AI, on Desktop",
       "subtitle": "Just describe what you want. AI generates your app as real files on disk and shows it in a local preview. Your data never leaves your computer.",
-      "downloadButton": "Download Desktop App",
+      "storeButton": "Get it from Microsoft Store",
+      "downloadButton": "Download from GitHub",
       "tryButton": "Try in Browser",
       "tryNote": "⚠️ The browser version is for evaluation only. Data is stored in your browser (IndexedDB), which is less secure than the desktop app."
     },
@@ -411,7 +412,8 @@
     "cta": {
       "title": "Ready to build your first app?",
       "subtitle": "Download and install, and you're ready in minutes.",
-      "downloadButton": "Download Desktop App",
+      "storeButton": "Get it from Microsoft Store",
+      "downloadButton": "Download from GitHub",
       "tryButton": "Try in Browser"
     },
     "footer": "DeskSpawn — Build apps with AI. No coding required."

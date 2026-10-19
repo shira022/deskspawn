@@ -23,6 +23,7 @@ import {
   Sun,
   Moon,
   Download,
+  Store,
   FolderOpen,
   MonitorPlay,
   KeyRound,
@@ -30,6 +31,8 @@ import {
   FlaskConical,
   AlertTriangle,
 } from "lucide-react";
+
+const MS_STORE_URL = "https://apps.microsoft.com/detail/9ntl90c2lxm1";
 
 // ── 言語切替 ──────────────────────────────────────────────────────────────────
 
@@ -508,6 +511,16 @@ export function LandingPage() {
             <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-4">
               <Button size="lg" asChild>
                 <a
+                  href={MS_STORE_URL}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <Store className="h-4 w-4 mr-2" />
+                  {t("landing.hero.storeButton")}
+                </a>
+              </Button>
+              <Button size="lg" variant="outline" asChild>
+                <a
                   href="https://github.com/shira022/deskspawn/releases"
                   target="_blank"
                   rel="noopener noreferrer"
@@ -634,6 +647,16 @@ export function LandingPage() {
         <p className="text-muted-foreground mt-2 mb-6">{t("landing.cta.subtitle")}</p>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
           <Button size="lg" asChild>
+            <a
+              href={MS_STORE_URL}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <Store className="h-4 w-4 mr-2" />
+              {t("landing.cta.storeButton")}
+            </a>
+          </Button>
+          <Button size="lg" variant="outline" asChild>
             <a
               href="https://github.com/shira022/deskspawn/releases"
               target="_blank"
