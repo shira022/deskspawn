@@ -21,6 +21,9 @@
     "@ai-sdk/google-vertex": "^5.0.107",
     "@ai-sdk/openai": "^3.0.68",
     "@ai-sdk/openai-compatible": "^2.0.48",
+    "@deskspawn/ai-core": "workspace:*",
+    "@deskspawn/shared": "workspace:*",
+    "@deskspawn/ui": "workspace:*",
     "@radix-ui/react-slot": "^1.4.0",
     "@webcontainer/api": "^1.6.4",
     "ai": "^6.0.198",
@@ -31,7 +34,7 @@
     "i18next": "^26.4.2",
     "i18next-browser-languagedetector": "^8.2.1",
     "jszip": "^3.10.2",
-    "lucide-react": "^0.468.0",
+    "lucide-react": "^1.59.0",
     "pixelmatch": "^7.2.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -41,14 +44,12 @@
     "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.7.0",
     "zod": "^4.6.5",
-    "zustand": "^5.0.15",
-    "@deskspawn/ai-core": "workspace:*",
-    "@deskspawn/shared": "workspace:*",
-    "@deskspawn/ui": "workspace:*"
+    "zustand": "^5.0.15"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@tailwindcss/vite": "^4.0.0",
+    "@tauri-apps/api": "^2.12.1",
     "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.3",
     "@testing-library/user-event": "^14.6.7",
@@ -68,7 +69,6 @@
     "typescript": "~5.6.3",
     "typescript-eslint": "^8.71.1",
     "vite": "^6.0.0",
-    "@tauri-apps/api": "^2.12.1",
     "vitest": "^4.1.9"
   }
 }
