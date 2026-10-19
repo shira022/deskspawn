@@ -19,7 +19,7 @@
     "@ai-sdk/azure": "^3.0.74",
     "@ai-sdk/google": "^3.0.80",
     "@ai-sdk/google-vertex": "^5.0.114",
-    "@ai-sdk/openai": "^4.0.97",
+    "@ai-sdk/openai": "^3.0.87",
     "@ai-sdk/openai-compatible": "^2.0.48",
     "@deskspawn/ai-core": "workspace:*",
     "@deskspawn/shared": "workspace:*",
