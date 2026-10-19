@@ -370,7 +370,8 @@
       "title1": "AIでアプリを作る。",
       "title2": "デスクトップで。",
       "subtitle": "チャットで伝えるだけ。AIが実ファイルのアプリを生成し、ローカルプレビューで即確認できます。データはすべてあなたのPCに留まります。",
-      "downloadButton": "デスクトップアプリをダウンロード",
+      "storeButton": "Microsoft Store で入手",
+      "downloadButton": "GitHub からダウンロード",
       "tryButton": "ブラウザで試す",
       "tryNote": "⚠️ ブラウザ版は体験用です。データはブラウザ内（IndexedDB）に保存されるため、デスクトップ版より安全性が劣ります。"
     },
@@ -411,7 +412,8 @@
     "cta": {
       "title": "さっそく始めてみませんか？",
       "subtitle": "ダウンロードしてインストールするだけ。数分で使い始められます。",
-      "downloadButton": "デスクトップアプリをダウンロード",
+      "storeButton": "Microsoft Store で入手",
+      "downloadButton": "GitHub からダウンロード",
       "tryButton": "ブラウザで試す"
     },
     "footer": "DeskSpawn — AI がアプリを作る。コードは不要です。"
