@@ -72,8 +72,19 @@ describe("LandingPage", () => {
     expect(screen.getByText("landing.footer")).toBeTruthy();
     // 外部リンクは新規タブで開く
     expect(screen.getByTitle("GitHub").getAttribute("target")).toBe("_blank");
+    // ヒーロー: Microsoft Store が主、GitHub Releases が副
+    expect(
+      screen.getByRole("link", { name: /landing.hero.storeButton/ }).getAttribute("href"),
+    ).toBe("https://apps.microsoft.com/detail/9ntl90c2lxm1");
     expect(
       screen.getByRole("link", { name: /landing.hero.downloadButton/ }).getAttribute("href"),
+    ).toBe("https://github.com/shira022/deskspawn/releases");
+    // CTA: 同じ並び
+    expect(
+      screen.getByRole("link", { name: /landing.cta.storeButton/ }).getAttribute("href"),
+    ).toBe("https://apps.microsoft.com/detail/9ntl90c2lxm1");
+    expect(
+      screen.getByRole("link", { name: /landing.cta.downloadButton/ }).getAttribute("href"),
     ).toBe("https://github.com/shira022/deskspawn/releases");
   });
 
