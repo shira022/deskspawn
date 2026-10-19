@@ -13,16 +13,16 @@
     "@ai-sdk/anthropic": "^3.0.81",
     "@ai-sdk/google": "^3.0.80",
     "@ai-sdk/mcp": "^1.0.46",
-    "@ai-sdk/openai": "^3.0.68",
+    "@ai-sdk/openai": "^4.0.95",
     "@ai-sdk/openai-compatible": "^2.0.48",
     "@deskspawn/ai-core": "workspace:*",
     "ai": "^6.0.198",
     "cors": "^2.8.6",
-    "express": "^5.2.1",
+    "express": "^5.3.0",
     "pixelmatch": "^7.2.0",
-    "puppeteer-core": "^25.12.0",
+    "puppeteer-core": "^25.14.0",
     "sharp": "^0.35.4",
-    "zod": "^4.6.5"
+    "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
