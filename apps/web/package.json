@@ -19,7 +19,7 @@
     "@ai-sdk/azure": "^3.0.74",
     "@ai-sdk/google": "^3.0.80",
     "@ai-sdk/google-vertex": "^5.0.107",
-    "@ai-sdk/openai": "^3.0.68",
+    "@ai-sdk/openai": "^4.0.95",
     "@ai-sdk/openai-compatible": "^2.0.48",
     "@radix-ui/react-slot": "^1.4.0",
     "@webcontainer/api": "^1.6.4",
