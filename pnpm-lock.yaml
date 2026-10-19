@@ -120,8 +120,8 @@ importers:
         specifier: ^3.0.80
         version: 3.0.99(zod@4.6.7)
       '@ai-sdk/mcp':
-        specifier: ^1.0.46
-        version: 1.0.66(zod@4.6.7)
+        specifier: ^2.0.79
+        version: 2.0.79(zod@4.6.7)
       '@ai-sdk/openai':
         specifier: ^4.0.95
         version: 4.0.97(zod@4.6.7)
@@ -579,9 +579,9 @@ packages:
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
-  '@ai-sdk/mcp@1.0.66':
-    resolution: {integrity: sha512-IRfN+1T3dkCWD2RcvupozEmqrglaq2cw5FJsBbT59qHIJ6+jZiWQ4yVk7zaRqfmV/HoQIWvXIvcrZrMCagpa9A==}
-    engines: {node: '>=18'}
+  '@ai-sdk/mcp@2.0.79':
+    resolution: {integrity: sha512-O9zog3guttyOnJMAmVv+rfs1GvWvz5whCe5ENXwULflKRIFXKCMlqsAY9mAY683OUjPRSzV0baB6MbYYqlXAEw==}
+    engines: {node: '>=22'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
 
@@ -611,12 +611,6 @@ packages:
 
   '@ai-sdk/provider-utils@4.0.40':
     resolution: {integrity: sha512-OL5IrpUm9Y8Dwy+w/vvFwPotS6m52O9W0op2oXgXdCROMJIBalBI0oro6OIBYkPxvm5Xg02GSkoQN25RlR0bnw==}
-    engines: {node: '>=18'}
-    peerDependencies:
-      zod: ^3.25.76 || ^4.1.8
-
-  '@ai-sdk/provider-utils@4.0.41':
-    resolution: {integrity: sha512-I7hhjfw01yEI8NkuAsT8Mv6xbWFr/lqLXMdaJQ2zWfXEpxog1eT7skDcv1+RY29/+5btzH8wD+vVvy48bk9oNQ==}
     engines: {node: '>=18'}
     peerDependencies:
       zod: ^3.25.76 || ^4.1.8
@@ -3963,10 +3957,11 @@ snapshots:
       '@ai-sdk/provider-utils': 5.0.61(zod@4.6.7)
       zod: 4.6.7
 
-  '@ai-sdk/mcp@1.0.66(zod@4.6.7)':
+  '@ai-sdk/mcp@2.0.79(zod@4.6.7)':
     dependencies:
-      '@ai-sdk/provider': 3.0.14
-      '@ai-sdk/provider-utils': 4.0.41(zod@4.6.7)
+      '@ai-sdk/provider': 4.0.30
+      '@ai-sdk/provider-utils': 5.0.63(zod@4.6.7)
+      cross-spawn: 7.0.6
       pkce-challenge: 5.0.1
       zod: 4.6.7
 
@@ -3999,14 +3994,6 @@ snapshots:
       '@ai-sdk/provider': 3.0.14
       '@standard-schema/spec': 1.1.0
       eventsource-parser: 3.1.0
-      zod: 4.6.7
-
-  '@ai-sdk/provider-utils@4.0.41(zod@4.6.7)':
-    dependencies:
-      '@ai-sdk/provider': 3.0.14
-      '@standard-schema/spec': 1.1.0
-      eventsource-parser: 3.1.0
-      undici: 7.29.1
       zod: 4.6.7
 
   '@ai-sdk/provider-utils@5.0.18(zod@4.6.7)':
