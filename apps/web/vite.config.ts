@@ -13,6 +13,47 @@ import type { Connect } from "vite";
 // the browser reads from OPFS. This middleware bridges the gap by letting the
 // browser fetch existing filesystem project files and write them to OPFS.
 
+function manualChunks(id: string): string | undefined {
+  if (!id.includes("node_modules")) return undefined;
+
+  if (id.includes("/node_modules/monaco-editor/")) return "editor";
+
+  if (
+    id.includes("/node_modules/react/") ||
+    id.includes("/node_modules/react-dom/") ||
+    id.includes("/node_modules/scheduler/")
+  ) {
+    return "react";
+  }
+
+  if (
+    id.includes("/node_modules/i18next/") ||
+    id.includes("/node_modules/react-i18next/") ||
+    id.includes("/node_modules/i18next-browser-languagedetector/")
+  ) {
+    return "i18n";
+  }
+
+  if (
+    id.includes("/node_modules/react-markdown/") ||
+    id.includes("/node_modules/remark-") ||
+    id.includes("/node_modules/rehype-") ||
+    id.includes("/node_modules/highlight.js/") ||
+    id.includes("/node_modules/shiki/")
+  ) {
+    return "markdown";
+  }
+
+  if (
+    id.includes("/node_modules/ai/") ||
+    id.includes("/node_modules/@ai-sdk/")
+  ) {
+    return "ai";
+  }
+
+  return "vendor";
+}
+
 const PROJECTS_DIR = path.resolve(__dirname, "projects");
 const WORKSPACE_DIR = path.resolve(__dirname, "workspace");
 
@@ -157,5 +198,10 @@ export default defineConfig({
   build: {
     target: "es2020",
     minify: "esbuild",
+    rollupOptions: {
+      output: {
+        manualChunks,
+      },
+    },
   },
 });
