@@ -54,8 +54,28 @@ Microsoft Store (MSIX) 版は `packaged` 判定で updater 自体をスキップ
 悪い面 / トレードオフ:
 
 - NSIS 版の自動更新は当分提供できない（手動ダウンロードでの更新になる）
-- プラグイン登録は残るため、`app.handle().updater()` は失敗し続ける。ログを
-  `debug` に落として通常運用では見えないようにする（別コミットで対応可）
 - Store 版と NSIS 版で更新経路が異なる設計（ADR-017）は維持される
+
+## 実装メモ（2026-10-23 追記・回帰と修正）
+
+当初の実装（#202）は「設定だけ外す」に留めたため、プラグイン登録が残った状態で
+Windows 実機が**起動直後に panic** した。
+
+```
+Failed to setup app: error encountered during setup hook: failed to initialize plugin `updater`:
+Error deserializing 'plugins.updater' within your Tauri configuration: invalid type: null, expected struct Config
+```
+
+`cargo check` / `cargo test` / vitest は全て緑のまま通過しており、CI では検出できなかった
+（プラグイン初期化は実行時にしか走らない）。最終的に #206 で以下まで削除した。
+
+- `tauri_plugin_updater::Builder` の登録と起動時 `handle.updater()` チェック
+- `tauri-plugin-updater` クレート（`Cargo.lock` から推移依存 286 行も消滅）
+- バイナリサイズ 23,332,864 B → 21,076,480 B（-2.26MB）
+- `is_packaged()` は再有効化用に `#[allow(dead_code)]` + テストごと保持
+
+**教訓**: Tauri のプラグイン設定を外すときは、登録側（Rust）も同時に外す。
+CI の Rust ジョブはプラグイン初期化を実行しないため、この種の回帰は
+実機起動（もしくは `tauri build` 後の起動確認）でしか検出できない。
 
 ---
