@@ -20,14 +20,25 @@ import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-const TAURI_CONF = join(
+const TAURI_DIR = join(
   dirname(fileURLToPath(import.meta.url)),
   '..',
-  'apps/desktop/src-tauri/tauri.conf.json',
+  'apps/desktop/src-tauri',
 );
+const TAURI_CONF = join(TAURI_DIR, 'tauri.conf.json');
+const CARGO_TOML = join(TAURI_DIR, 'Cargo.toml');
+const LIB_RS = join(TAURI_DIR, 'src/lib.rs');
 
 function readConf() {
   return JSON.parse(readFileSync(TAURI_CONF, 'utf8'));
+}
+
+function readCargoToml() {
+  return readFileSync(CARGO_TOML, 'utf8');
+}
+
+function readLibRs() {
+  return readFileSync(LIB_RS, 'utf8');
 }
 
 test('plugins.updater は設定されていない（未署名のため）', () => {
@@ -68,5 +79,51 @@ test('plugins.updater が存在する場合、更新が実際に動く構成に�
   assert.ok(
     updater.pubkey.length > 0,
     'plugins.updater.pubkey は非空であること',
+  );
+});
+
+test('plugins.updater が存在する場合、Rust 側の登録も存在する', () => {
+  const conf = readConf();
+  const updater = conf?.plugins?.updater;
+  if (updater === undefined) {
+    return;
+  }
+
+  assert.ok(
+    readCargoToml().includes('tauri-plugin-updater'),
+    'plugins.updater を設定するなら Cargo.toml に tauri-plugin-updater が必要' +
+      '（設定だけあってプラグインを登録できない状態になる）。',
+  );
+
+  assert.ok(
+    readLibRs().includes('tauri_plugin_updater'),
+    'plugins.updater を設定するなら lib.rs で tauri_plugin_updater を登録すること' +
+      '（登録が無いと更新機能が初期化されない）。',
+  );
+});
+
+test('plugins.updater が無い場合、Rust 側の登録も無い', () => {
+  const conf = readConf();
+  const updater = conf?.plugins?.updater;
+  if (updater !== undefined) {
+    return;
+  }
+
+  assert.ok(
+    !readCargoToml().includes('tauri-plugin-updater'),
+    'config が無いのに crate が残ると起動時 panic する（ADR-019）。' +
+      'Cargo.toml から tauri-plugin-updater を削除すること。',
+  );
+
+  const libRs = readLibRs();
+  assert.ok(
+    !libRs.includes('tauri_plugin_updater'),
+    'config が無いのに crate が残ると起動時 panic する（ADR-019）。' +
+      'lib.rs から tauri_plugin_updater を削除すること。',
+  );
+  assert.ok(
+    !libRs.includes('.updater()'),
+    'config が無いのに crate が残ると起動時 panic する（ADR-019）。' +
+      'lib.rs から .updater() の登録を削除すること。',
   );
 });
