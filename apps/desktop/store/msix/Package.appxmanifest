@@ -13,7 +13,7 @@
   <Identity
     Name="shira022.DeskSpawn"
     Publisher="CN=44EAA9A0-7A82-4923-8FB6-B9698B129FDB"
-    Version="0.5.0.0" />
+    Version="0.5.1.0" />
 
   <Properties>
     <DisplayName>DeskSpawn</DisplayName>
