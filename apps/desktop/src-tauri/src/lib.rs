@@ -202,7 +202,7 @@ pub fn run() {
                                 Err(e) => log::warn!("Update check failed: {}", e),
                             }
                         }
-                        Err(e) => log::warn!("Failed to initialize updater: {}", e),
+                        Err(e) => log::debug!("Failed to initialize updater: {}", e),
                     }
                 });
             }
