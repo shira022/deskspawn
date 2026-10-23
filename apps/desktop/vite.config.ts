@@ -5,6 +5,47 @@ import { defineConfig } from "vite";
 
 const host = process.env.TAURI_DEV_HOST;
 
+function manualChunks(id: string): string | undefined {
+  if (!id.includes("node_modules")) return undefined;
+
+  if (id.includes("/node_modules/monaco-editor/")) return "editor";
+
+  if (
+    id.includes("/node_modules/react/") ||
+    id.includes("/node_modules/react-dom/") ||
+    id.includes("/node_modules/scheduler/")
+  ) {
+    return "react";
+  }
+
+  if (
+    id.includes("/node_modules/i18next/") ||
+    id.includes("/node_modules/react-i18next/") ||
+    id.includes("/node_modules/i18next-browser-languagedetector/")
+  ) {
+    return "i18n";
+  }
+
+  if (
+    id.includes("/node_modules/react-markdown/") ||
+    id.includes("/node_modules/remark-") ||
+    id.includes("/node_modules/rehype-") ||
+    id.includes("/node_modules/highlight.js/") ||
+    id.includes("/node_modules/shiki/")
+  ) {
+    return "markdown";
+  }
+
+  if (
+    id.includes("/node_modules/ai/") ||
+    id.includes("/node_modules/@ai-sdk/")
+  ) {
+    return "ai";
+  }
+
+  return "vendor";
+}
+
 export default defineConfig({
   plugins: [
     react(),
@@ -48,5 +89,10 @@ export default defineConfig({
     target: process.env.TAURI_ENV_PLATFORM === "windows" ? "chrome105" : "safari14",
     minify: !process.env.TAURI_ENV_DEBUG ? "esbuild" : false,
     sourcemap: !!process.env.TAURI_ENV_DEBUG,
+    rollupOptions: {
+      output: {
+        manualChunks,
+      },
+    },
   },
 });
