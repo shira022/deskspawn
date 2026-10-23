@@ -16,7 +16,7 @@
     "@deskspawn/ai-core": "workspace:*",
     "@deskspawn/shared": "workspace:*",
     "@deskspawn/ui": "workspace:*",
-    "@tauri-apps/api": "^2.12.4",
+    "@tauri-apps/api": "~2.11.1",
     "flag-icons": "^7.6.0",
     "i18next": "^26.4.6",
     "i18next-browser-languagedetector": "^8.2.1",
