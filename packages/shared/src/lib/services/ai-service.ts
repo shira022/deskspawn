@@ -11,13 +11,29 @@ import type {
   ModelInfo,
   ProviderConfig,
 } from "@deskspawn/ai-core";
-import { getModel } from "../../engine/providers";
 import { getModelsForProvider } from "../../lib/models-fetcher";
+
+type ProvidersModule = typeof import("../../engine/providers");
+
+let providersPromise: Promise<ProvidersModule> | null = null;
+
+function loadProviders(): Promise<ProvidersModule> {
+  if (!providersPromise) {
+    providersPromise = import("../../engine/providers").catch((error) => {
+      providersPromise = null;
+      throw error;
+    });
+  }
+  return providersPromise;
+}
 
 export class WebAiService implements AiService {
   async generateText(params: GenerateTextParams): Promise<string> {
     const { messages, config, systemPrompt, maxSteps } = params;
-    const { generateText, stepCountIs } = await import("ai");
+    const [{ generateText, stepCountIs }, { getModel }] = await Promise.all([
+      import("ai"),
+      loadProviders(),
+    ]);
     const model = getModel(config as ProviderConfig);
 
     const result = await generateText({
@@ -36,7 +52,10 @@ export class WebAiService implements AiService {
     const { messages, config, systemPrompt, onChunk, onError, signal, tools, maxSteps } = params;
 
     try {
-      const { streamText, stepCountIs } = await import("ai");
+      const [{ streamText, stepCountIs }, { getModel }] = await Promise.all([
+        import("ai"),
+        loadProviders(),
+      ]);
       const model = getModel(config as ProviderConfig);
 
       const result = streamText({

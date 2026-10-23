@@ -12,22 +12,51 @@ import type { ChatMessage, StepLogEntry, TokenUsage, PipelineTierLevel } from ".
 import { providerLabels, providerNeedsApiKey } from "../lib/constants";
 import { isDesktopEnv } from "../lib/platform";
 import { newMessageId } from "../lib/ids";
-import { getModel } from "../engine/providers";
-import { runWithTriage, type QaVerdict } from "../engine/orchestrator";
-import { tools } from "../engine/tools";
-import {
-  readFile,
-  listFiles,
-  applyArtifact,
-  getErrors,
-  takeScreenshot,
-  createCheckpoint,
-} from "../engine/tool-executors";
-import { getMCPTools } from "../engine/mcp-client";
+import type { QaVerdict } from "../engine/orchestrator";
 import { loadApiKey } from "../lib/storage";
 import i18n from "../lib/i18n";
 import { calculateCost } from "../lib/cost";
-import { initMCPClients } from "../engine/mcp-client";
+
+// ── Lazy engine loading ───────────────────────────────────────────────────────
+
+type EngineModules = {
+  getModel: typeof import("../engine/providers").getModel;
+  runWithTriage: typeof import("../engine/orchestrator").runWithTriage;
+  tools: typeof import("../engine/tools").tools;
+  toolExecutors: typeof import("../engine/tool-executors");
+  mcpClient: typeof import("../engine/mcp-client");
+};
+
+let engineModulesPromise: Promise<EngineModules> | null = null;
+
+/**
+ * Load the AI engine only when generation starts so its provider SDKs stay out
+ * of the initial bundle. The promise is memoized; a failed load is cleared so
+ * a later attempt can retry.
+ */
+function loadEngineModules(): Promise<EngineModules> {
+  if (!engineModulesPromise) {
+    engineModulesPromise = Promise.all([
+      import("../engine/providers"),
+      import("../engine/orchestrator"),
+      import("../engine/tools"),
+      import("../engine/tool-executors"),
+      import("../engine/mcp-client"),
+    ])
+      .then(([providers, orchestrator, toolsModule, toolExecutors, mcpClient]) => ({
+        getModel: providers.getModel,
+        runWithTriage: orchestrator.runWithTriage,
+        tools: toolsModule.tools,
+        toolExecutors,
+        mcpClient,
+      }))
+      .catch((error) => {
+        engineModulesPromise = null;
+        throw error;
+      });
+  }
+  return engineModulesPromise;
+}
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -658,6 +687,29 @@ export function useChatStream(): UseChatStreamReturn {
         return;
       }
 
+      let engine: EngineModules;
+      try {
+        engine = await loadEngineModules();
+      } catch (e) {
+        console.error("[chat] Failed to load AI engine:", e);
+        setAgentStatus("error");
+        addMessage({
+          id: newMessageId("msg-err"),
+          role: "assistant",
+          content: i18n.t('chat.error.generic', {
+            errMsg: (e as { message?: string })?.message || String(e),
+            hint: getErrorHint(cfg.provider, cfg, e),
+          }),
+          timestamp: Date.now(),
+        });
+        generationActive.current = false;
+        onComplete?.();
+        return;
+      }
+
+      const { getModel, runWithTriage, tools, toolExecutors, mcpClient } = engine;
+      const { readFile, listFiles, applyArtifact, getErrors, takeScreenshot, createCheckpoint } = toolExecutors;
+
       // Set up abort controller
       const abortController = new AbortController();
       abortRef.current = abortController;
@@ -670,7 +722,7 @@ export function useChatStream(): UseChatStreamReturn {
 
       try {
         // Init MCP clients (may throw)
-        await initMCPClients();
+        await mcpClient.initMCPClients();
 
         // Provider-specific config validation (localized)
         const configIssue = getProviderConfigIssue(cfg, providerLabel);
@@ -798,7 +850,7 @@ export function useChatStream(): UseChatStreamReturn {
       };
 
       // Add MCP tools
-      const mcpTools = getMCPTools();
+      const mcpTools = mcpClient.getMCPTools();
       if (mcpTools) {
         Object.assign(allToolExecs, mcpTools);
       }
