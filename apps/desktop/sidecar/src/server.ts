@@ -1674,7 +1674,17 @@ const ALLOWED_UPSTREAM_PATHS = new Set([
  * - これは意図的なデザイン: カスタムエンドポイントへのプロキシは製品機能であり、
  *   接続先が安全であることをレイヤーごとに保証する
  */
-async function fetchUpstreamVerified(url: URL, init: RequestInit): Promise<Response> {
+/** 上流のレスポンスヘッダ受信までの上限（ボディ読み取りには適用しない）。 */
+const UPSTREAM_HEADER_TIMEOUT_MS = 30_000;
+/** SSE ストリームでチャンク間に許容する無通信時間。 */
+const SSE_IDLE_TIMEOUT_MS = 120_000;
+
+export async function fetchUpstreamVerified(
+  url: URL,
+  init: RequestInit,
+  controller: AbortController = new AbortController(),
+  headerTimeoutMs: number = UPSTREAM_HEADER_TIMEOUT_MS,
+): Promise<Response> {
   // 最終ゲート: この関数には検証済み URL しか渡らない設計だが、万一の経路追加に備えて
   // ここでも https / 非ローカルホストを再確認する（allow-list: 定数ホスト集合は無く、
   // 検証関数で絞り込まれた値のみを受け付ける）。
@@ -1693,8 +1703,50 @@ async function fetchUpstreamVerified(url: URL, init: RequestInit): Promise<Respo
   ) {
     throw new Error('blocked: local/private address');
   }
-  // codeql[js/request-forgery]
-  return fetch(url, { ...init, signal: AbortSignal.timeout(30_000) });
+  // ヘッダ受信までのタイムアウト。AbortSignal.timeout() はボディ読了まで
+  // タイマーが生き続け SSE を途中で切ってしまうため、fetch 解決後に解除する。
+  const headerTimer = setTimeout(
+    () => controller.abort(new Error('upstream headers timeout')),
+    headerTimeoutMs,
+  );
+  try {
+    // codeql[js/request-forgery]
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(headerTimer);
+  }
+}
+
+/**
+ * SSE ストリームをチャンク間のアイドルタイムアウト付きで転送する。
+ * 無通信が idleTimeoutMs を超えたら reader.cancel() して終了する。
+ */
+export async function pumpStreamWithIdleTimeout(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  onChunk: (value: Uint8Array) => void,
+  idleTimeoutMs: number = SSE_IDLE_TIMEOUT_MS,
+): Promise<void> {
+  let idleTimer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    for (;;) {
+      const idle = new Promise<'idle'>((resolve) => {
+        idleTimer = setTimeout(() => resolve('idle'), idleTimeoutMs);
+      });
+      const result = await Promise.race([reader.read(), idle]);
+      if (idleTimer !== undefined) {
+        clearTimeout(idleTimer);
+        idleTimer = undefined;
+      }
+      if (result === 'idle') {
+        await reader.cancel().catch(() => {});
+        return;
+      }
+      if (result.done) return;
+      onChunk(result.value);
+    }
+  } finally {
+    if (idleTimer !== undefined) clearTimeout(idleTimer);
+  }
 }
 
 app.use('/v1', async (req, res) => {
@@ -1748,7 +1800,8 @@ app.use('/v1', async (req, res) => {
       init.body = JSON.stringify(req.body ?? {});
     }
 
-    // リソース枯渇対策: 上流への接続・応答は 30 秒で打ち切る。
+    // リソース枯渇対策: 上流のヘッダ受信は 30 秒で打ち切る（ボディ読取は対象外）。
+    // ストリーミングの無通信は pumpStreamWithIdleTimeout のアイドルタイムアウトで監視する。
     // CodeQL taint 対応: fetch 直前にも URL をパースし直して https + 公開ホストを再確認する
     // （validateUpstreamUrl 経由の検証済み URL でも、転送先が最終的に安全であることを保証）。
     let finalUrl: URL;
@@ -1797,8 +1850,14 @@ app.use('/v1', async (req, res) => {
       res.status(400).json({ error: 'Invalid upstream endpoint', errorCode: 'INVALID_UPSTREAM' });
       return;
     }
+    // クライアント切断時は上流への通信も止める。正常終了時も res 'close' は
+    // 発火するため writableEnded で判定し、完了済みレスポンスは中断しない。
+    const upstreamController = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) upstreamController.abort();
+    });
     // codeql[js/request-forgery]
-    const upstreamRes = await fetchUpstreamVerified(rebuiltUrl, init);
+    const upstreamRes = await fetchUpstreamVerified(rebuiltUrl, init, upstreamController);
     res.status(upstreamRes.status);
 
     const contentType = upstreamRes.headers.get('content-type') || '';
@@ -1812,11 +1871,7 @@ app.use('/v1', async (req, res) => {
       res.setHeader('Connection', 'keep-alive');
       const reader = upstreamRes.body.getReader();
       try {
-        for (;;) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          res.write(value);
-        }
+        await pumpStreamWithIdleTimeout(reader, (value) => res.write(value));
       } finally {
         res.end();
       }
@@ -2193,14 +2248,17 @@ function startServer(port: number): Promise<void> {
   });
 }
 
-startServer(DESIRED_PORT).then(() => {
-  serverStarted = true;
-  // Initialise MCP clients (non-fatal if grep.app is unreachable)
-  initMCPClients();
-}).catch((err) => {
-  console.error('[sidecar] Failed to start HTTP server:', err);
-  process.exit(1);
-});
+// vitest からタイムアウト処理を単体テストできるよう、テスト実行時は自動起動しない。
+if (!process.env.VITEST) {
+  startServer(DESIRED_PORT).then(() => {
+    serverStarted = true;
+    // Initialise MCP clients (non-fatal if grep.app is unreachable)
+    initMCPClients();
+  }).catch((err) => {
+    console.error('[sidecar] Failed to start HTTP server:', err);
+    process.exit(1);
+  });
+}
 
 // ── Graceful shutdown ─────────────────────────────────────────────────────────
 // Tauri がアプリ終了時に sidecar を終了する際、プレビューの vite（detached で
@@ -2219,18 +2277,22 @@ function cleanupPreviewServers() {
   }
 }
 
-process.on('SIGTERM', () => {
-  console.log('[shutdown] SIGTERM received, cleaning up previews...');
-  cleanupPreviewServers();
-  closeMCPClients();
-  process.exit(0);
-});
-process.on('SIGINT', () => {
-  console.log('[shutdown] SIGINT received, cleaning up previews...');
-  cleanupPreviewServers();
-  closeMCPClients();
-  process.exit(0);
-});
-process.on('exit', () => {
-  cleanupPreviewServers();
-});
+// vitest ではサーバーを起動しないため、テストプロセスの終了時に
+// 実プロセスを kill しないようシャットダウンハンドラも登録しない。
+if (!process.env.VITEST) {
+  process.on('SIGTERM', () => {
+    console.log('[shutdown] SIGTERM received, cleaning up previews...');
+    cleanupPreviewServers();
+    closeMCPClients();
+    process.exit(0);
+  });
+  process.on('SIGINT', () => {
+    console.log('[shutdown] SIGINT received, cleaning up previews...');
+    cleanupPreviewServers();
+    closeMCPClients();
+    process.exit(0);
+  });
+  process.on('exit', () => {
+    cleanupPreviewServers();
+  });
+}
