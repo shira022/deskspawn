@@ -8,7 +8,6 @@ use commands::harness::AppState;
 use commands::sidecar::SidecarManager;
 use tauri::Manager;
 use tauri_plugin_dialog::DialogExt;
-use tauri_plugin_updater::UpdaterExt;
 
 /// `APPMODEL_ERROR_NO_PACKAGE`: `GetCurrentPackageFullName` の戻り値で
 /// 「パッケージ識別子なし（非パッケージ実行）」を意味する。
@@ -47,6 +46,8 @@ extern "system" {
 /// 想定外 rc は警告ログを出して非パッケージ扱い（fail-open: updater は有効のまま）。
 ///
 /// 非 Windows プラットフォームでは常に `false`。
+// Kept for the future updater re-enable (see docs/adr/019-updater-disabled-until-signing.md).
+#[allow(dead_code)]
 #[cfg(windows)]
 fn is_packaged() -> bool {
     // SAFETY: 第一引数は有効な stack 上の u32、第二引数は長さ 0 に対する
@@ -78,6 +79,8 @@ fn is_packaged() -> bool {
 }
 
 /// 非 Windows では常にパッケージ無し（NSIS 版 / 開発実行と同様に扱う）。
+// Kept for the future updater re-enable (see docs/adr/019-updater-disabled-until-signing.md).
+#[allow(dead_code)]
 #[cfg(not(windows))]
 fn is_packaged() -> bool {
     false
@@ -95,18 +98,6 @@ pub fn run() {
         .plugin(tauri_plugin_store::Builder::default().build())
         .setup(|app| {
             log::info!("DeskSpawn backend initializing...");
-
-            // MSIX (Microsoft Store) 版ではストアが更新を握るため updater を
-            // 無効化する。非パッケージ版（NSIS / 開発実行）は従来どおり有効。
-            // パッケージ検出時の info ログは is_packaged() 内で出力される。
-            #[cfg(desktop)]
-            let packaged = is_packaged();
-
-            // Register updater plugin (skipped for packaged builds)
-            #[cfg(desktop)]
-            if !packaged {
-                app.handle().plugin(tauri_plugin_updater::Builder::new().build())?;
-            }
 
             // Determine workspace path (home-based, stable — see engine/workspace)
             let workspace_path = engine::workspace::determine_workspace_path()
@@ -180,32 +171,6 @@ pub fn run() {
                 );
             }
             app.manage(sidecar_manager);
-
-            // Spawn update check in background (non-blocking, no dialog on startup).
-            // Packaged (Store/MSIX) builds skip it entirely so the updater
-            // endpoint is never contacted and the store keeps update ownership.
-            #[cfg(desktop)]
-            if !packaged {
-                let handle = app.handle().clone();
-                tauri::async_runtime::spawn(async move {
-                    match handle.updater() {
-                        Ok(updater) => {
-                            match updater.check().await {
-                                Ok(Some(update)) => {
-                                    log::info!(
-                                        "Update available: {} → {}",
-                                        update.current_version,
-                                        update.version
-                                    );
-                                }
-                                Ok(None) => log::info!("No updates available."),
-                                Err(e) => log::warn!("Update check failed: {}", e),
-                            }
-                        }
-                        Err(e) => log::debug!("Failed to initialize updater: {}", e),
-                    }
-                });
-            }
 
             log::info!("DeskSpawn backend ready.");
             Ok(())
