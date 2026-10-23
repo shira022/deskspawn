@@ -33,8 +33,6 @@ Each release is documented on **GitHub Releases**. See the full history at
 - ⬆️ `@ai-sdk/mcp` 2.x and the remaining non-major dependency updates.
 - 📦 MSIX manifest version bumped to `0.5.1.0` in lockstep.
 
-## Unreleased
-
 **API key storage — keychain only on desktop (ADR-018):**
 
 - 🔐 The desktop app **no longer writes API keys to a plain-text file**
@@ -62,6 +60,9 @@ Each release is documented on **GitHub Releases**. See the full history at
   fallback.
 - 📝 Privacy / security docs updated: desktop plaintext fallback is removed; the
   web demo documents consent-based IndexedDB storage.
+
+
+## v0.5.0 — 2026-10-15
 
 **Agent composition tiers (ADR-016):**
 

@@ -251,3 +251,47 @@ jobs:
           printf 'Uploading %d asset(s) to release %s:\n' "${#files[@]}" "$TAG"
           printf '  %s\n' "${files[@]}"
           gh release upload "$TAG" "${files[@]}" --clobber
+
+  # Post-build completeness gate (issue #175 follow-up).
+  #
+  # The `guard` job creates the release *before* the matrix jobs run, so a
+  # partially failed matrix (v0.5.0: Windows uploaded, Linux AppImage failed)
+  # still leaves a published release that looks complete until someone inspects
+  # the asset list. This job fails the run and flips the release back to draft
+  # when a platform's artefacts are missing, so a broken release is never
+  # silently presented as shippable.
+  verify-assets:
+    name: Verify release assets are complete
+    needs: [guard, build]
+    # Run even if a build job failed: that is exactly when we need to demote.
+    if: always() && needs.guard.outputs.tag != ''
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check assets and demote the release when incomplete
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.guard.outputs.tag }}
+          BUILD_RESULT: ${{ needs.build.result }}
+        run: |
+          set -euo pipefail
+          names="$(gh release view "$TAG" --json assets --jq '.assets[].name')"
+          printf 'Assets on %s:\n%s\n' "$TAG" "$names"
+
+          missing=()
+          require() {
+            if ! grep -qiE -- "$1" <<<"$names"; then missing+=("$2"); fi
+          }
+          require '\.msi$'                        'Windows MSI'
+          require '-setup\.exe$'                  'Windows NSIS setup.exe'
+          require '\.deb$'                        'Linux .deb'
+          require '\.AppImage$'                   'Linux .AppImage'
+
+          if [ "${#missing[@]}" -ne 0 ]; then
+            echo "::error::Release $TAG is missing: ${missing[*]} (build result: ${BUILD_RESULT})"
+            # Demote so the incomplete release is not advertised as a release.
+            gh release edit "$TAG" --draft || true
+            echo "::error::Release $TAG was converted to a draft. Fix the build and re-run this workflow (workflow_dispatch, tag=$TAG)."
+            exit 1
+          fi
+          echo "All expected platforms produced assets for $TAG."
