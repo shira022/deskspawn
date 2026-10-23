@@ -5,6 +5,34 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v0.5.1 — 2026-10-20
+
+**Release / build fixes:**
+
+- 🐧 **Linux AppImage builds again (#175).** Tauri's AppImage bundler runs
+  `linuxdeploy`, which ships as a FUSE2 AppImage; the CI image had no FUSE2, so
+  every release failed with `failed to run linuxdeploy` while deb/rpm/MSI/NSIS
+  succeeded. The Linux deps are now installed as `libfuse2t64` (with a
+  `libfuse2` fallback for older images) and the Tauri build runs with
+  `APPIMAGE_EXTRACT_AND_RUN=1`. A tag-less `AppImage verify` workflow was added
+  so the bundling path is proven on PRs instead of only at release time
+  (verified: a 120 MB `.AppImage` artifact is produced).
+- 🔒 **AI chat works again (#194).** `@ai-sdk/openai` 4.x emits model
+  specification **v4**, but the bundled `ai@6` only accepts **v3**, so every
+  generation died with `AI_UnsupportedModelVersionError` (0 input / 0 output
+  tokens). Pinned back to `^3.0.87`; verified on a real machine (65-step
+  generation, `getErrors: No errors found`). Unit tests could not catch this —
+  they mock the provider.
+- 🖥️ **`tauri build` no longer aborts on a version mismatch.** Dependabot's
+  non-major group bumped `@tauri-apps/api` to 2.12.x while the Rust crate stayed
+  at 2.11.5, which makes the Tauri CLI refuse to build. Pinned to `~2.11.1`.
+- 🎨 `lucide-react` 1.59: lucide 1.x dropped brand icons, so the GitHub mark on
+  the landing page is now a local inline SVG.
+- 🔗 The landing page download CTA now points at the Microsoft Store listing
+  (#97).
+- ⬆️ `@ai-sdk/mcp` 2.x and the remaining non-major dependency updates.
+- 📦 MSIX manifest version bumped to `0.5.1.0` in lockstep.
+
 ## Unreleased
 
 **API key storage — keychain only on desktop (ADR-018):**
