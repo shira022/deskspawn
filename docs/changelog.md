@@ -5,7 +5,63 @@ Each release is documented on **GitHub Releases**. See the full history at
 
 ---
 
+## v0.5.1 — 2026-10-20
+
+**Release / build fixes:**
+
+- 🐧 **Linux AppImage builds again (#175).** Tauri's AppImage bundler runs
+  `linuxdeploy`, which ships as a FUSE2 AppImage; the CI image had no FUSE2, so
+  every release failed with `failed to run linuxdeploy` while deb/rpm/MSI/NSIS
+  succeeded. The Linux deps are now installed as `libfuse2t64` (with a
+  `libfuse2` fallback for older images) and the Tauri build runs with
+  `APPIMAGE_EXTRACT_AND_RUN=1`. A tag-less `AppImage verify` workflow was added
+  so the bundling path is proven on PRs instead of only at release time
+  (verified: a 120 MB `.AppImage` artifact is produced).
+- 🔒 **AI chat works again (#194).** `@ai-sdk/openai` 4.x emits model
+  specification **v4**, but the bundled `ai@6` only accepts **v3**, so every
+  generation died with `AI_UnsupportedModelVersionError` (0 input / 0 output
+  tokens). Pinned back to `^3.0.87`; verified on a real machine (65-step
+  generation, `getErrors: No errors found`). Unit tests could not catch this —
+  they mock the provider.
+- 🖥️ **`tauri build` no longer aborts on a version mismatch.** Dependabot's
+  non-major group bumped `@tauri-apps/api` to 2.12.x while the Rust crate stayed
+  at 2.11.5, which makes the Tauri CLI refuse to build. Pinned to `~2.11.1`.
+- 🎨 `lucide-react` 1.59: lucide 1.x dropped brand icons, so the GitHub mark on
+  the landing page is now a local inline SVG.
+- 🔗 The landing page download CTA now points at the Microsoft Store listing
+  (#97).
+- ⬆️ `@ai-sdk/mcp` 2.x and the remaining non-major dependency updates.
+- 📦 MSIX manifest version bumped to `0.5.1.0` in lockstep.
+
 ## Unreleased
+
+**API key storage — keychain only on desktop (ADR-018):**
+
+- 🔐 The desktop app **no longer writes API keys to a plain-text file**
+  (`credentials.json`). If the OS keychain is unavailable, saving fails and the
+  dialog shows a clear error instead of silently falling back to plaintext.
+- 🔁 Legacy plaintext keys are **auto-migrated to the OS keychain** on read:
+  the app saves to the keychain, verifies by reading back, and deletes the
+  plaintext only after a successful round-trip. If migration fails the plaintext
+  is left untouched (no data loss) and the AI settings dialog shows a warning
+  banner with a retry action. If the key is already in the keychain but an old
+  plaintext file remains, the dialog warns and offers an explicit
+  **"delete plain-text file"** action (`delete_legacy_plaintext_file`); plaintext
+  is never auto-deleted (it may belong to another provider).
+- 🔎 `load_api_key_info` (`{ key, method, legacyPlaintext }`) lets the UI show the
+  real storage location and detect leftover plaintext without ever logging key
+  material. The saved-key badge distinguishes keychain / browser /
+  leftover-plaintext / this-tab-only.
+- 🖥️ **Fixed bug #172**: the saved-key badge now correctly shows the storage
+  location ("OS keychain" / "browser") after startup and reload; the stale
+  "file" label was removed.
+- 🌐 **Web (demo)**: storing a key in IndexedDB is plaintext, so it now requires
+  an explicit consent checkbox before saving; a "this tab only (do not save)"
+  mode keeps the key in memory and discards it on reload. The desktop
+  `save_api_key` error is no longer swallowed into a plaintext IndexedDB
+  fallback.
+- 📝 Privacy / security docs updated: desktop plaintext fallback is removed; the
+  web demo documents consent-based IndexedDB storage.
 
 **Agent composition tiers (ADR-016):**
 
@@ -40,6 +96,29 @@ Each release is documented on **GitHub Releases**. See the full history at
   unrequested WebSocket subprotocol, CVE-2026-19534; GHSA-w293-vg96-wgc3 —
   TLS certificate validation bypass, CVE-2026-84961; both high severity).
   Keeps the CI `npm-audit` gate green.
+
+**Microsoft Store distribution (ADR-017):**
+
+- 🏪 MSIX packaging is now reproducible from the repository.
+  `scripts/build-msix.mjs` stages the payload with an allow-list, derives the
+  MSIX 4-part version (`X.Y.Z.0`) from `package.json`, rewrites the manifest
+  identity version, and can run `winapp pack`.
+- 📦 The submitted manifest and tile assets now live in
+  `apps/desktop/store/msix/` (byte-identical to the shipped v0.5.0 package),
+  so a future submission no longer depends on a build machine.
+- 🔢 `scripts/set-version.py` and `scripts/check-versions.mjs` now cover the
+  appxmanifest version, so a version bump can no longer desynchronize the
+  Store package from the app.
+- 📖 Added `docs/store-update-runbook.md` (bump → build → stage/pack → verify
+  → Partner Center → publish), a Microsoft Store link in the README /
+  installation docs, and ignore rules for packaging and signing artifacts
+  (`*.msix`, `*.pfx`, `*.cer`, `*.p12`).
+- 🧭 `winapp pack` is now runnable from WSL: non-Windows hosts spawn
+  `winapp.exe` directly (resolved via the WSL interop PATH) and convert the stage
+  path (`/mnt/c/...` → `C:\...`) into Windows-form argv, and the
+  output `.msix` is pinned with `--output` inside the stage directory instead of
+  landing in the current directory (verified end-to-end: 85.9 MiB / 18 entries /
+  payload md5 matches the build artifacts).
 
 ---
 

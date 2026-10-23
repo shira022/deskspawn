@@ -13,6 +13,12 @@ src-tauri/gen/
 # Build artifacts
 .vite/
 *.tsbuildinfo
+*.msix
+
+# Signing artifacts (never commit: certificate / key material)
+*.pfx
+*.cer
+*.p12
 sidecar/dist/
 src-tauri/binaries/
 coverage/
@@ -33,6 +39,7 @@ workspace/
 !apps/web/public/favicon.png
 !apps/web/public/apple-touch-icon.png
 !apps/desktop/src-tauri/icons/*.png
+!apps/desktop/store/msix/Assets/*.png
 # Mobile icons not needed (Windows + Web only)
 apps/desktop/src-tauri/icons/android/
 apps/desktop/src-tauri/icons/ios/

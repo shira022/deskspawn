@@ -176,6 +176,12 @@ jobs:
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev \
             libappindicator3-dev librsvg2-dev patchelf \
             libsoup-3.0-dev libjavascriptcoregtk-4.1-dev
+          # Tauri's AppImage bundler runs `linuxdeploy`, which is itself shipped
+          # as a FUSE2 AppImage. Without FUSE2 it dies with "failed to run
+          # linuxdeploy" — exactly the v0.5.0 failure (issue #175). Ubuntu 24.04
+          # renamed the package to libfuse2t64, so try the new name first and
+          # fall back to the legacy one on older images.
+          sudo apt-get install -y libfuse2t64 || sudo apt-get install -y libfuse2
       # tauri-build's build script requires the frontendDist directory to exist,
       # so the frontend dist must be produced before the Rust build.
       - name: Build frontend dist
@@ -199,6 +205,10 @@ jobs:
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Belt and braces for #175: even with FUSE2 installed, extracting the
+          # linuxdeploy AppImage instead of mounting it avoids /dev/fuse
+          # restrictions on hosted runners and containerised environments.
+          APPIMAGE_EXTRACT_AND_RUN: 1
         run: |
           set -euo pipefail
           if [ -z "${TAURI_SIGNING_PRIVATE_KEY:-}" ]; then

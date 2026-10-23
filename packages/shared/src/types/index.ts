@@ -4,14 +4,30 @@
 
 import type { LanguageCode } from "../lib/languages";
 
-export type ProviderKind = "openai" | "anthropic" | "google" | "ollama" | "custom" | "amazon-bedrock" | "azure-openai" | "google-vertex";
+/** 対応 AI プロバイダー ID（aegis-agent の ProviderId と完全一致） */
+export type ProviderKind =
+  | "openai"
+  | "anthropic"
+  | "google"
+  | "ollama"
+  | "lm-studio"
+  | "aws-bedrock"
+  | "azure-foundry"
+  | "gcp-vertexai"
+  | "openai-compatible";
+
+/**
+ * プロバイダーのカテゴリ分組（aegis-agent の ProviderCategory と完全一致）。
+ * UI ではこの 3 グループの optgroup に分けて表示する。
+ */
+export type ProviderCategory = "cloud" | "local" | "compatible";
 
 export interface AiConfig {
   provider: ProviderKind;
   apiKey: string;
   model: string;
   customEndpoint?: string;
-  /** AWS region (for Amazon Bedrock) */
+  /** AWS region (for aws-bedrock) / GCP region (for gcp-vertexai) */
   region?: string;
   /** エージェントの最大ステップ数（動的ステップ管理のベース値として使用） */
   maxSteps?: number;
@@ -46,7 +62,7 @@ export interface ModelInfo {
   supportsImageInput: boolean;
   contextLimit: number;
   maxOutput: number;
-  /** Real pricing from models.dev — undefined for ollama/custom models */
+  /** Real pricing from models.dev — undefined for local/compatible models */
   cost?: ModelCost;
 }
 

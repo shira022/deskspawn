@@ -44,6 +44,40 @@ const PKG_JSONS = [
 const TAURI_CONF = 'apps/desktop/src-tauri/tauri.conf.json';
 const CARGO_TOML = 'apps/desktop/src-tauri/Cargo.toml';
 const CARGO_LOCK = 'apps/desktop/src-tauri/Cargo.lock';
+const APPX = 'apps/desktop/store/msix/Package.appxmanifest';
+
+/** Package.appxmanifest の最小 XML（Identity Version は 4桁 MSIX 形式） */
+function manifestXml(version) {
+  return [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    '<Package>',
+    '  <Identity',
+    '    Name="fixture.DeskSpawn"',
+    '    Publisher="CN=fixture"',
+    `    Version="${version}" />`,
+    '</Package>',
+    '',
+  ].join('\n');
+}
+
+/**
+ * コメントアウトされた旧 <Identity> を実体より前に置いた appxmanifest。
+ * realVersion が実体の Version、commentedVersion がコメント内の旧 Version。
+ * check-versions.mjs がコメントを無視して実体だけを見ていることの検証に使う。
+ */
+function manifestXmlWithCommentedIdentity(realVersion, commentedVersion = '9.9.9.9') {
+  return [
+    '<?xml version="1.0" encoding="utf-8"?>',
+    `<!-- <Identity Name="OLD.Name" Publisher="CN=OLD" Version="${commentedVersion}" /> -->`,
+    '<Package>',
+    '  <Identity',
+    '    Name="fixture.DeskSpawn"',
+    '    Publisher="CN=fixture"',
+    `    Version="${realVersion}" />`,
+    '</Package>',
+    '',
+  ].join('\n');
+}
 
 /** 全ファイルを version で揃えたフィクスチャを作る。overrides で意図的な不一致を注入 */
 function makeFixture(version, overrides = {}) {
@@ -56,8 +90,13 @@ function makeFixture(version, overrides = {}) {
   write(TAURI_CONF, JSON.stringify({ version }, null, 2));
   write(CARGO_TOML, `[package]\nname = "deskspawn-desktop"\nversion = "${version}"\n`);
   write(CARGO_LOCK, `name = "deskspawn-desktop"\nversion = "${version}"\n`);
+  write(APPX, manifestXml(`${version}.0`));
   for (const [rel, v] of Object.entries(overrides)) {
-    write(rel, JSON.stringify({ name: rel, version: v }, null, 2));
+    if (rel === APPX) {
+      write(rel, manifestXml(v));
+    } else {
+      write(rel, JSON.stringify({ name: rel, version: v }, null, 2));
+    }
   }
   return dir;
 }
@@ -95,11 +134,129 @@ test('tauri.conf.json の不一致も exit 1 で検出される', () => {
   }
 });
 
+test('appxmanifest (4桁) の不一致も exit 1 で検出される', () => {
+  const dir = makeFixture('9.9.9', { [APPX]: '9.9.8.0' });
+  try {
+    const r = runCheck(dir);
+    assert.equal(r.status, 1, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /FAIL/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('appxmanifest が 3桁 (末尾 .0 なし) なら exit 1 (FAIL)', () => {
+  const dir = makeFixture('9.9.9', { [APPX]: '9.9.9' });
+  try {
+    const r = runCheck(dir);
+    assert.equal(r.status, 1, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /FAIL/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('appxmanifest が 4桁 .0 なら exit 0 (PASS)', () => {
+  const dir = makeFixture('9.9.9', { [APPX]: '9.9.9.0' });
+  try {
+    const r = runCheck(dir);
+    assert.equal(r.status, 0, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /PASS/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('appxmanifest の 4桁目が 0 以外なら exit 1 (FAIL)', () => {
+  const dir = makeFixture('9.9.9', { [APPX]: '9.9.9.5' });
+  try {
+    const r = runCheck(dir);
+    assert.equal(r.status, 1, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /FAIL/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('コメントアウトされた旧 <Identity> を無視し、実体が一致なら exit 0 (PASS)', () => {
+  const dir = makeFixture('9.9.9');
+  try {
+    // コメント内に旧 9.9.9.9 を置き、実体は期待値どおり 9.9.9.0 にする。
+    // マスクできていれば実体だけを見て PASS するはず。
+    writeFileSync(join(dir, APPX), manifestXmlWithCommentedIdentity('9.9.9.0'));
+    const r = runCheck(dir);
+    assert.equal(r.status, 0, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /PASS/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('コメント内の旧 <Identity> は一致でも、実体がずれていれば exit 1 (FAIL)', () => {
+  const dir = makeFixture('9.9.9');
+  try {
+    // コメント内は一致値 9.9.9.9 だが、実体は 9.9.8.0 で不一致。
+    writeFileSync(join(dir, APPX), manifestXmlWithCommentedIdentity('9.9.8.0'));
+    const r = runCheck(dir);
+    assert.equal(r.status, 1, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /FAIL/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('明示期待値が 3桁でも appxmanifest (4桁 .0) を一致とみなす', () => {
+  const dir = makeFixture('9.9.9');
+  try {
+    const r = runCheck(dir, '9.9.9');
+    assert.equal(r.status, 0, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /PASS/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test('明示期待値と不一致の場合は exit 1', () => {
   const dir = makeFixture('9.9.9');
   try {
     const r = runCheck(dir, '0.4.2');
     assert.equal(r.status, 1, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('非 appx ターゲットが 4桁 (0.5.0.0) なら exit 1 (FAIL)', () => {
+  const dir = makeFixture('0.5.0', { 'package.json': '0.5.0.0' });
+  try {
+    const r = runCheck(dir);
+    assert.equal(r.status, 1, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /FAIL/);
+    assert.match(r.stdout, /3桁 SemVer/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('非 appx ターゲットが 2桁 (0.5) なら exit 1 (FAIL)', () => {
+  const dir = makeFixture('0.5.0', { 'package.json': '0.5' });
+  try {
+    const r = runCheck(dir);
+    assert.equal(r.status, 1, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /FAIL/);
+    assert.match(r.stdout, /3桁 SemVer/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test('明示期待値が 4桁 (0.5.0.0) なら exit 1 (FAIL)', () => {
+  const dir = makeFixture('0.5.0');
+  try {
+    const r = runCheck(dir, '0.5.0.0');
+    assert.equal(r.status, 1, `stdout:\n${r.stdout}\nstderr:\n${r.stderr}`);
+    assert.match(r.stdout, /FAIL/);
+    assert.match(r.stdout, /3桁 SemVer/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

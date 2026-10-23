@@ -11,11 +11,11 @@
  *    モデル一覧取得とAI応答まで検証する。APIキーが必要。
  *
  * ── 環境変数 (すべて省略可) ─────────────────────────────────────────
- *   DESKSPAWN_E2E_PROVIDER  プロバイダーID (default: custom)
- *   DESKSPAWN_E2E_ENDPOINT  エンドポイントURL (custom/ollama/azure/anthropic)
+ *   DESKSPAWN_E2E_PROVIDER  プロバイダーID (default: openai-compatible)
+ *   DESKSPAWN_E2E_ENDPOINT  エンドポイントURL (openai-compatible/ollama/lm-studio/azure/anthropic)
  *                           (default: http://127.0.0.1:9/v1 — 破棄ポートで意図的に繋がらない)
  *   DESKSPAWN_E2E_MODEL     モデルID (default: e2e-model)
- *   DESKSPAWN_E2E_REGION    AWSリージョン (amazon-bedrock のみ, default: us-east-1)
+ *   DESKSPAWN_E2E_REGION    リージョン (aws-bedrock/gcp-vertexai, default: us-east-1)
  *   DESKSPAWN_API_KEY       APIキー (ダミーモードでは不要)
  *   DESKSPAWN_E2E_REAL=1    実APIモードを有効化
  *   CDP_URL                 WebView2 CDP エンドポイント (default: http://172.28.208.1:9222)
@@ -48,7 +48,7 @@ const SHOT_DIR = path.join(__dirname, 'screenshots');
 const CDP_URL = process.env.CDP_URL || 'http://172.28.208.1:9222';
 
 // ── E2E設定 (すべて環境変数から。未設定ならダミー値でUIフローのみ検証) ──
-const PROVIDER = process.env.DESKSPAWN_E2E_PROVIDER || 'custom';
+const PROVIDER = process.env.DESKSPAWN_E2E_PROVIDER || 'openai-compatible';
 const ENDPOINT = process.env.DESKSPAWN_E2E_ENDPOINT || 'http://127.0.0.1:9/v1';
 const MODEL = process.env.DESKSPAWN_E2E_MODEL || 'e2e-model';
 const REGION = process.env.DESKSPAWN_E2E_REGION || 'us-east-1';
@@ -58,9 +58,17 @@ const REAL_API = process.env.DESKSPAWN_E2E_REAL === '1';
 const DUMMY_KEY = 'sk-e2e-dummy-key';
 
 /** エンドポイント入力欄が表示されるプロバイダー (AiConfigDialog の表示条件と一致) */
-const NEEDS_ENDPOINT = ['custom', 'anthropic', 'azure-openai', 'ollama'].includes(PROVIDER);
-/** APIキー入力欄が表示されるプロバイダー (ollama 以外すべて) */
-const NEEDS_API_KEY = PROVIDER !== 'ollama';
+const NEEDS_ENDPOINT = ['openai-compatible', 'anthropic', 'azure-foundry', 'ollama', 'lm-studio'].includes(PROVIDER);
+/** APIキー入力欄が表示されるプロバイダー (ローカル: ollama / lm-studio は不要) */
+const NEEDS_API_KEY = PROVIDER !== 'ollama' && PROVIDER !== 'lm-studio';
+
+/**
+ * リージョン入力欄のプレースホルダ。
+ * aws-bedrock は `ai.regionPlaceholder`（例: us-east-1 / e.g. us-east-1）、
+ * gcp-vertexai は `ai.gcpRegionPlaceholder`（例: us-central1 / e.g. us-central1）と
+ * 別キーのため両方を含める。ja/en どちらでも値部分（us-east-1 / us-central1）は共通。
+ */
+const REGION_PLACEHOLDER = /us-east-1|us-central1|リージョン/;
 
 let browser: Browser;
 let page: Page;
@@ -389,6 +397,59 @@ test('02: AI設定フロー — プロバイダーを保存しツールバーに
 
   // プロバイダー選択 (ネイティブselect)
   const providerSelect = page.locator('select').first();
+  await expect(providerSelect).toBeVisible();
+
+  // ── optgroup 3グループ + 9プロバイダーの実機アサーション ─────────────────
+  // 期待値は packages/shared/src/lib/constants.ts の実値（providerCategoryLabels /
+  // providerLabels / providerCategories）と一致させるハードコード。
+  // optgroup label と option テキストはどちらも constants の英語リテラルで
+  // i18n (t()) 経由しないため、ja/en 表示言語のどちらでも同じ値になる
+  // （AiConfigDialog.tsx の <optgroup label={group.label}> / {providerLabels[id]} 参照）。
+  const EXPECTED_GROUP_LABELS = ['Cloud', 'Local', 'OpenAI Compatible'];
+  const EXPECTED_GROUP_PROVIDERS = [
+    ['openai', 'anthropic', 'google', 'aws-bedrock', 'azure-foundry', 'gcp-vertexai'],
+    ['ollama', 'lm-studio'],
+    ['openai-compatible'],
+  ];
+  const EXPECTED_PROVIDER_LABELS: Record<string, string> = {
+    openai: 'OpenAI',
+    anthropic: 'Anthropic',
+    google: 'Google',
+    'aws-bedrock': 'AWS Bedrock',
+    'azure-foundry': 'Azure Foundry',
+    'gcp-vertexai': 'Google Cloud (Vertex AI)',
+    ollama: 'Ollama (Local)',
+    'lm-studio': 'LM Studio (Local)',
+    'openai-compatible': 'Custom (OpenAI Compatible)',
+  };
+
+  const groupEls = providerSelect.locator('optgroup');
+  await expect(groupEls).toHaveCount(EXPECTED_GROUP_LABELS.length);
+  const groupLabels = await groupEls.evaluateAll((els) =>
+    els.map((el) => el.getAttribute('label')),
+  );
+  expect(groupLabels).toEqual(EXPECTED_GROUP_LABELS);
+
+  const optionEls = providerSelect.locator('option');
+  await expect(optionEls).toHaveCount(9);
+  const optionData = await optionEls.evaluateAll((els) =>
+    els.map((el) => ({
+      value: (el as HTMLOptionElement).value,
+      text: (el.textContent || '').trim(),
+      disabled: (el as HTMLOptionElement).disabled,
+      group: el.parentElement?.getAttribute('label') ?? null,
+    })),
+  );
+  expect(optionData.map((o) => o.value)).toEqual(EXPECTED_GROUP_PROVIDERS.flat());
+  for (const [idx, ids] of EXPECTED_GROUP_PROVIDERS.entries()) {
+    expect(optionData.filter((o) => o.group === EXPECTED_GROUP_LABELS[idx]).map((o) => o.value)).toEqual(ids);
+  }
+  for (const opt of optionData) {
+    expect(opt.text, `${opt.value} label`).toBe(EXPECTED_PROVIDER_LABELS[opt.value]);
+    expect(opt.disabled, `${opt.value} disabled`).toBe(false);
+    expect(opt.group, `${opt.value} group`).not.toBeNull();
+  }
+
   await providerSelect.selectOption({ value: PROVIDER });
 
   // エンドポイント入力 (表示されるプロバイダーのみ)
@@ -407,9 +468,9 @@ test('02: AI設定フロー — プロバイダーを保存しツールバーに
     await keyInput.fill(REAL_API ? API_KEY : DUMMY_KEY);
   }
 
-  // AWSリージョン (amazon-bedrock のみ)
-  if (PROVIDER === 'amazon-bedrock') {
-    const regionInput = page.getByPlaceholder(/us-east-1|リージョン/).first();
+  // リージョン (aws-bedrock / gcp-vertexai)
+  if (PROVIDER === 'aws-bedrock' || PROVIDER === 'gcp-vertexai') {
+    const regionInput = page.getByPlaceholder(REGION_PLACEHOLDER).first();
     await regionInput.fill(REGION);
   }
 
@@ -468,8 +529,10 @@ test('03: アプリ生成 — ToDoアプリを英語で作成してプレビュ�
   }
 
   // プレビューエリアにアプリが表示されることを確認
-  // ローカルサーバー（Local :5174）に接続済み
-  await expect(page.getByText(/Local/)).toBeVisible({ timeout: 15_000 });
+  // ローカルサーバー（Local :5174）に接続済み。
+  // 新規アプリの初回は bun install 等で 16〜20秒かかる実績 (2026-10-05 実機) のため
+  // 15秒ではボーダー（2回失敗・キャッシュ温効後16.8秒で僅かに PASS）→ 60秒に緩和。
+  await expect(page.getByText(/Local/)).toBeVisible({ timeout: 60_000 });
   // チャットにAI応答があることを確認（メッセージ数が増加）
   await expect(page.locator('[id^="chat-msg-"]')).toHaveCount(msgCountBefore + 2, {
     timeout: 30_000,

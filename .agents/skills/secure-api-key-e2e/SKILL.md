@@ -123,7 +123,7 @@ git status --short | grep -i '\.env'
 
 - **verify-generate-app.mjs の `--cleanup` で `window` を Node コンテキストから参照しない**（実績 2026-08-22: `ReferenceError: window is not defined` で cleanup が常に失敗していた — 握りつぶされて `cleanedUp: false` になるだけ）。`__TAURI_INTERNALS__`・`__DESKSPAWN_SIDECAR_PORT__` は必ず `page.evaluate` 内で参照する
 - `pnpm test:e2e`（real でない方）は web.spec.ts も実行し、CDP サーバー不在で失敗する → **実API は必ず `pnpm test:e2e:real`**。
-- credentials.json（file フォールバック）は**ユーザープロファイル内のみ**保存。プロファイル外は拒否（ADR-015）。
+- 平文ファイル（credentials.json）への**書き込みは廃止**（ADR-018）。既存の平文キーは読み取り時に OS キーチェーンへ自動移行され、移行に失敗した場合のみ平文が残る（挙動は変化しない）。**キーチェーンが利用できない環境では保存自体がエラー**になる。残存平文は UI の「平文ファイルを削除」から明示削除できる。
 - trace が `retain-on-failure` のままだと失敗時にキー/プロンプトが残る → 実API 時は config が自動オフにするが、手動実行する場合は `--trace off` を付ける。
 - **多重起動禁止**: deskspawn-desktop を2つ以上起動すると、プレビュー（サイドカー）が競合し
   「Project has no package.json」等の誤エラーになる。必ず `Get-Process deskspawn-desktop` で
@@ -158,9 +158,11 @@ git status --short | grep -i '\.env'
 
 | プロバイダー | endpoint | 備考 |
 |---|---|---|
-| openai / anthropic | ❌ 不要 | provider + api_key + model のみ |
-| custom / azure-openai / ollama | ✅ 必須 | ollama は api_key 不要 |
-| amazon-bedrock | ❌ 不要 | **region** 必須 |
+| openai / anthropic / google | ❌ 不要 | provider + api_key + model のみ |
+| openai-compatible | ✅ 必須 | api_key も必須 |
+| azure-foundry | ✅ 必須 | api_key も必須 |
+| ollama / lm-studio | 任意 | api_key 不要（既定 localhost:11434 / 1234/v1） |
+| aws-bedrock / gcp-vertexai | ❌ 不要 | **region** 必須 |
 
 ## 参照
 

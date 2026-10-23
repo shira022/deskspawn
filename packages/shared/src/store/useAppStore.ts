@@ -38,13 +38,14 @@ import type {
   TriageState,
 } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
-import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, saveCurrentAppId, loadCurrentAppId, saveSettingsDesktop, loadSettingsDesktop, listApps, type ApiKeyStorageMethod } from "../lib/storage";
+import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKeyInfo, setSessionApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, saveCurrentAppId, loadCurrentAppId, saveSettingsDesktop, loadSettingsDesktop, listApps, deleteLegacyPlaintextFile as removeLegacyPlaintextFile, type ApiKeyStorageMethod } from "../lib/storage";
 import { setAppId, listCheckpoints as engineListCheckpoints, persistChatHistory, loadChatHistory } from "../engine/tool-executors";
 import { setModelCostCache, clearModelCostCache } from "../lib/cost";
 import { getModelsForProvider } from "../lib/models-fetcher";
 import { seedAppFromFilesystem, seedAppFromWorkspace, hasAppFiles } from "../lib/seed-app";
 import i18n from "../lib/i18n";
 import { isDesktopEnv } from "../lib/platform";
+import { isProviderKind } from "../lib/constants";
 
 // ── Sidecar config sync (デスクトップのみ) ─────────────────────────────────────
 //
@@ -92,8 +93,26 @@ interface Store {
   aiConfig: AiConfig | null;
   /** APIキーの実際の保存先（M2: UI表示用）。"" は未保存 */
   apiKeyStorageMethod: ApiKeyStorageMethod;
-  setAiConfig: (config: AiConfig) => Promise<ApiKeyStorageMethod>;
+  /**
+   * 移行に失敗したレガシー平文キーがディスクに残っているか（ADR-018）。
+   * true のとき UI は警告バナーと再試行導線を出す。
+   */
+  apiKeyLegacyPlaintext: boolean;
+  /**
+   * AI 設定を保存する。`opts.sessionOnly`（Web の「このタブのみ」）の場合は
+   * 永続保存せずメモリにのみ保持する。Web で永続保存する場合は
+   * `opts.consent`（平文保存への同意）が必須。
+   */
+  setAiConfig: (
+    config: AiConfig,
+    opts?: { sessionOnly?: boolean; consent?: boolean },
+  ) => Promise<ApiKeyStorageMethod>;
   reloadAiConfig: () => Promise<void>;
+  /**
+   * デスクトップ: レガシー平文ファイル（credentials.json）を削除する（冪等）。
+   * 成功後に `apiKeyLegacyPlaintext` を false へ更新する。
+   */
+  deleteLegacyPlaintextFile: () => Promise<void>;
 
   // Chat
   messages: ChatMessage[];
@@ -221,12 +240,18 @@ export const useAppStore = create<Store>((set, get) => ({
         // Load AI config from per-provider storage
         const lastProvider = await loadLastProvider();
         if (lastProvider) {
-          const storedCfg = await loadProviderConfig(lastProvider);
-          const key = await loadApiKey(lastProvider);
+          // 旧 ID（custom / amazon-bedrock 等）や未知の値は既知 9 種に無いので
+          // openai にフォールバックする（移行はしない・表示側ガードと同一方針）。
+          // 設定・APIキー・モデル一覧はサニタイズ後のキーで読み直す。
+          const provider = isProviderKind(lastProvider) ? lastProvider : "openai";
+          const storedCfg = await loadProviderConfig(provider);
+          // 保存先（keychain/browser）とレガシー平文残存も復元する（bug #172）
+          const keyInfo = await loadApiKeyInfo(provider);
+          const key = keyInfo.key;
           if (storedCfg && storedCfg.model) {
             set({
               aiConfig: {
-                provider: lastProvider as any,
+                provider,
                 model: storedCfg.model,
                 customEndpoint: storedCfg.customEndpoint,
                 region: storedCfg.region,
@@ -235,6 +260,8 @@ export const useAppStore = create<Store>((set, get) => ({
                 apiKeyConfigured: !!key,
               } as AiConfig,
               phase: "main",
+              apiKeyStorageMethod: keyInfo.method,
+              apiKeyLegacyPlaintext: keyInfo.legacyPlaintext,
             });
 
             // サイドカーへ上流設定を同期（デスクトップのみ・NO_UPSTREAM防止）
@@ -244,9 +271,14 @@ export const useAppStore = create<Store>((set, get) => ({
             });
 
             // Pre-populate model cost cache from models.dev
-            if (lastProvider !== "ollama" && lastProvider !== "custom") {
+            // (ローカル/互換プロバイダーは価格情報を持たないため対象外)
+            if (
+              provider !== "ollama" &&
+              provider !== "lm-studio" &&
+              provider !== "openai-compatible"
+            ) {
               try {
-                const models = await getModelsForProvider(lastProvider);
+                const models = await getModelsForProvider(provider);
                 if (models.length > 0) {
                   clearModelCostCache();
                   setModelCostCache(models);
@@ -295,7 +327,16 @@ export const useAppStore = create<Store>((set, get) => ({
   // ── AI Config ──────────────────────────────────────────────────────
   aiConfig: null,
   apiKeyStorageMethod: "",
-  setAiConfig: async (aiConfig) => {
+  apiKeyLegacyPlaintext: false,
+  setAiConfig: async (aiConfig, opts) => {
+    const sessionOnly = !!opts?.sessionOnly && !isDesktopEnv();
+    // defense-in-depth: Web で新しいキーを永続保存するには同意が必須。
+    // UI（AiConfigDialog）の保存ボタン無効化だけに依存せず、保存経路の
+    // 入口で必ず拒否する（IndexedDB の平文を同意なしに書かせない）。
+    if (!isDesktopEnv() && !sessionOnly && aiConfig.apiKey && !opts?.consent) {
+      throw new Error("Consent is required to store the API key in the browser");
+    }
+
     // Save per-provider config (everything except apiKey)
     await saveProviderConfig(aiConfig.provider, {
       model: aiConfig.model,
@@ -305,10 +346,28 @@ export const useAppStore = create<Store>((set, get) => ({
     });
 
     // Save/delete API key
+    const hasNewKey = !!aiConfig.apiKey;
+    // キー未入力かつ「未設定」への更新 = 明示削除
+    const isDelete = !hasNewKey && aiConfig.apiKeyConfigured === false;
+    // キー操作（保存 or 削除）が有ったか。無い呼び出し（モデル/プロバイダ変更だけ
+    // の保存）では保存先・レガシー平文フラグを上書きしない（中B: 平文が残って
+    // いても警告が消える／中A: "" 上書きでキーチェーンが「このタブのみ」に見える）。
+    const keyOperation = hasNewKey || isDelete;
+
     let storageMethod: ApiKeyStorageMethod = "";
-    if (aiConfig.apiKey) {
-      storageMethod = await saveApiKey(aiConfig.provider, aiConfig.apiKey);
-    } else if (aiConfig.apiKeyConfigured === false) {
+    if (hasNewKey) {
+      if (sessionOnly) {
+        // Web「このタブのみ」: 永続保存しない（メモリ保持のみ）
+        setSessionApiKey(aiConfig.provider, aiConfig.apiKey);
+        storageMethod = "";
+      } else {
+        // 保存失敗（キーチェーン不可等）は握りつぶさず呼び出し側（UI）へ伝える。
+        // Web の永続保存は saveApiKey 側でも同意を検証する（defense-in-depth）。
+        storageMethod = await saveApiKey(aiConfig.provider, aiConfig.apiKey, {
+          consent: opts?.consent,
+        });
+      }
+    } else if (isDelete) {
       await deleteApiKey(aiConfig.provider);
     }
 
@@ -319,14 +378,26 @@ export const useAppStore = create<Store>((set, get) => ({
     const configured =
       aiConfig.apiKeyConfigured ?? (await hasApiKey(aiConfig.provider));
 
-    set({
+    const nextState: Partial<Store> = {
       aiConfig: {
         ...aiConfig,
         apiKey: "",
         apiKeyConfigured: configured,
       },
-      apiKeyStorageMethod: storageMethod,
-    });
+    };
+
+    if (keyOperation) {
+      // 保存/削除後は保存結果から推測せず、loadApiKeyInfo で保存先とレガシー
+      // 平文残存の真値を実測して反映する（中A/中B）。読み取りのみで再帰・
+      // 二重保存は起こらない。
+      const keyInfo = await loadApiKeyInfo(aiConfig.provider);
+      nextState.apiKeyStorageMethod = keyInfo.method;
+      nextState.apiKeyLegacyPlaintext = keyInfo.legacyPlaintext;
+    }
+    // keyOperation が false のときは既存の apiKeyStorageMethod /
+    // apiKeyLegacyPlaintext を保持する。
+
+    set(nextState);
 
     // サイドカーへ上流設定を同期（デスクトップのみ・NO_UPSTREAM防止）
     await pushAiConfigToSidecar({
@@ -340,12 +411,15 @@ export const useAppStore = create<Store>((set, get) => ({
   reloadAiConfig: async () => {
     const lastProvider = await loadLastProvider();
     if (!lastProvider) return;
-    const cfg = await loadProviderConfig(lastProvider);
+    // initialize と同一のガード: 旧 ID・未知の値は openai にフォールバック。
+    const provider = isProviderKind(lastProvider) ? lastProvider : "openai";
+    const cfg = await loadProviderConfig(provider);
     if (cfg && cfg.model) {
-      const key = await loadApiKey(lastProvider);
+      const keyInfo = await loadApiKeyInfo(provider);
+      const key = keyInfo.key;
       set({
         aiConfig: {
-          provider: lastProvider as any,
+          provider,
           model: cfg.model,
           customEndpoint: cfg.customEndpoint,
           region: cfg.region,
@@ -353,6 +427,8 @@ export const useAppStore = create<Store>((set, get) => ({
           apiKey: "",
           apiKeyConfigured: !!key,
         } as AiConfig,
+        apiKeyStorageMethod: keyInfo.method,
+        apiKeyLegacyPlaintext: keyInfo.legacyPlaintext,
       });
 
       // サイドカーへ上流設定を同期（デスクトップのみ・NO_UPSTREAM防止）
@@ -361,6 +437,12 @@ export const useAppStore = create<Store>((set, get) => ({
         customEndpoint: cfg.customEndpoint,
       });
     }
+  },
+
+  /** レガシー平文ファイルを削除し、残存フラグを解消する（冪等）。 */
+  deleteLegacyPlaintextFile: async () => {
+    await removeLegacyPlaintextFile();
+    set({ apiKeyLegacyPlaintext: false });
   },
 
   // ── Chat ───────────────────────────────────────────────────────────

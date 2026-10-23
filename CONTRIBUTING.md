@@ -118,10 +118,10 @@ All settings are injected via environment variables (no provider/model is hardco
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
-| `DESKSPAWN_E2E_PROVIDER` | `custom` | Provider ID (`custom`, `openai`, `anthropic`, `ollama`, `azure-openai`, `amazon-bedrock`, …) |
-| `DESKSPAWN_E2E_ENDPOINT` | `http://127.0.0.1:9/v1` | Endpoint URL (custom/anthropic/azure/ollama) — discard port, intentionally unreachable |
+| `DESKSPAWN_E2E_PROVIDER` | `openai-compatible` | Provider ID (`openai-compatible`, `openai`, `anthropic`, `ollama`, `lm-studio`, `azure-foundry`, `aws-bedrock`, …) |
+| `DESKSPAWN_E2E_ENDPOINT` | `http://127.0.0.1:9/v1` | Endpoint URL (openai-compatible/anthropic/azure-foundry/ollama/lm-studio) — discard port, intentionally unreachable |
 | `DESKSPAWN_E2E_MODEL` | `e2e-model` | Model ID to save |
-| `DESKSPAWN_E2E_REGION` | `us-east-1` | AWS region (amazon-bedrock only) |
+| `DESKSPAWN_E2E_REGION` | `us-east-1` | Region (aws-bedrock / gcp-vertexai) |
 | `DESKSPAWN_API_KEY` | *(none)* | Real API key (real-API mode only) |
 | `DESKSPAWN_E2E_REAL` | *(unset)* | Set to `1` to enable real-API verification |
 | `CDP_URL` | `http://172.28.208.1:9222` | WebView2 CDP endpoint |
@@ -151,8 +151,10 @@ pnpm test:e2e
 >
 > **Leak-mitigation is automatic:** `playwright.config.ts` disables trace when
 > `DESKSPAWN_E2E_REAL=1`, and `pnpm test:e2e:real` cleans `test-results/` and
-> `playwright-report/` afterwards. credentials.json (file fallback) only ever
-> lives under the user profile.
+> `playwright-report/` afterwards. Plain-text writes to `credentials.json` are
+> removed (ADR-018): existing plain-text keys are auto-migrated to the OS
+> keychain on read, and if the keychain is unavailable the save fails with an
+> error instead of falling back to a plain-text file.
 >
 > Prefer `pnpm test:e2e:real` (desktop-only + cleanup) over the raw command
 > above, since `pnpm test:e2e` also targets the web suite which needs a live

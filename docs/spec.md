@@ -130,8 +130,8 @@ agent composition:
 | L4 | Thorough | planner, coder, verifier, visual_qa | 1 | yes | adds visual QA |
 | L5 | Maximum | planner, coder, verifier, visual_qa | 2 | yes | full + max 2 fix loops |
 
-- **Multi-provider**: OpenAI, Anthropic, Gemini, Bedrock, Azure, Vertex,
-  Ollama, any OpenAI-compatible endpoint
+- **Multi-provider**: OpenAI, Anthropic, Gemini, AWS Bedrock, Azure Foundry,
+  Google Cloud (Vertex AI), Ollama, LM Studio, any OpenAI-compatible endpoint
 - **Manual tier override**: a compact control near the chat input offers
   `Auto` + `Minimal`–`Maximum` (default `Auto`); the UI shows only the
   friendly display names. Selecting a tier skips the triage LLM call and runs

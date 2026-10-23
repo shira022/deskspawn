@@ -74,7 +74,7 @@ additional host access.
 
 | Data | Desktop (main product) | Web demo (evaluation only) |
 |------|------------------------|----------------------------|
-| AI API keys | **OS keychain** (Windows Credential Manager) via Rust IPC. Fallback when the keychain is unavailable: `credentials.json` under the user profile (`~/deskspawn/config/credentials.json`, file mode 600). The path is verified to stay inside `HOME`/`USERPROFILE`; writes outside are refused. | IndexedDB. Same-origin isolation, but browser extensions run outside that sandbox. |
+| AI API keys | **OS keychain** (Windows Credential Manager) via Rust IPC. There is **no plain-text fallback**: if the keychain is unavailable the save fails and the UI reports it. Legacy plaintext keys (from `~/deskspawn/config/credentials.json`, file mode 600) are auto-migrated to the keychain on read; if migration fails the plaintext is kept and the UI warns (the path is still verified to stay inside `HOME`/`USERPROFILE`). | IndexedDB in plain text, after an explicit consent checkbox (a "this tab only" in-memory mode skips persistence). Same-origin isolation, but browser extensions run outside that sandbox. |
 | Generated app source | Real files under `~/deskspawn/apps/<app-id>/` | IndexedDB / OPFS |
 | Chat history | SQLite `chat.db` per app (Rust-managed; ADR-013 v2 schema: `client_id` UNIQUE + `payload` JSON) | IndexedDB |
 | Settings & AI provider config | JSON files under `~/deskspawn/config/` (keys in OS keychain, see above) | LocalStorage / IndexedDB |
@@ -95,7 +95,7 @@ additional host access.
 | **Malicious AI-generated code** | Generated code runs **on the user's host** (local Vite dev server / Bun tooling). Script execution is restricted to an **allowlist** (dev scripts are template-fixed values only), and the **first preview requires a confirmation dialog**. The code itself is **not isolated by an OS-level sandbox** — treat it as untrusted and review before use. On desktop the preview uses an iframe `sandbox` attribute; on web it runs in WebContainer — both prevent access to the host origin's storage. |
 | **API key exfiltration via supply chain** | No backend to exfiltrate to. The sidecar proxies only the user-configured upstream; arbitrary `x-upstream` forwarding is rejected (SSRF guard). |
 | **Sidecar abused by other local processes** | Listens on loopback only, requires a token (401 without it), grants no CORS to foreign origins. |
-| **Plaintext key fallback (`credentials.json`)** | Used only when the OS keychain is unavailable; file mode 600; confined to the user profile (writes outside are refused). |
+| **Legacy plaintext key (`credentials.json`)** | Plaintext writes are **removed**: the desktop app only writes keys to the OS keychain. Any legacy plaintext key is auto-migrated to the keychain on read and deleted only after a verified round-trip; if migration fails it is left in place (never silently deleted) and the UI warns. File mode 600; confined to the user profile. |
 | **WebView2 CDP port** | The remote-debugging port (`--remote-debugging-port=9222`) is **never enabled by default** — it is a dev/E2E-only flag (`WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS`). When enabled, WebView2 binds loopback (`::1`) and any local CDP client can control the app. Never enable it in production. |
 | **Cross-origin data leakage (web demo)** | `Cross-Origin-Opener-Policy: same-origin` + `Cross-Origin-Embedder-Policy: credentialless` isolate the browsing context. |
 | **Clickjacking** | `frame-ancestors 'none'` in CSP prevents embedding. |
@@ -118,12 +118,15 @@ DeskSpawn uses automated dependency management via Dependabot. Security audits (
 
 ## Security Best Practices for DeskSpawn
 
-- **API Keys**: On desktop, keys are stored in the **OS keychain** (Windows
-  Credential Manager); `credentials.json` is a plaintext fallback confined to
-  your user profile. Keys are never sent to any server other than the AI
-  provider you configure — and on desktop they travel via the local sidecar
-  proxy, not directly from the app. Do not share sessions or profiles on
-  untrusted machines.
+- **API Keys**: On desktop, keys are stored **only in the OS keychain** (Windows
+  Credential Manager) — there is no plain-text fallback. Legacy plaintext keys
+  are auto-migrated to the keychain on read (deleted only after a verified
+  round-trip; otherwise kept with a UI warning). On the web demo, keys are saved
+  in plain text in IndexedDB only after you tick the consent checkbox, or you can
+  choose "this tab only" to keep them in memory. Keys are never sent to any server
+  other than the AI provider you configure — and on desktop they travel via the
+  local sidecar proxy, not directly from the app. Do not share sessions or
+  profiles on untrusted machines.
 - **Generated Applications**: Review AI-generated code before distribution.
   Treat it as you would code from a junior developer.
 - **CSP**: The web demo deployment includes a Content Security Policy. If you

@@ -287,7 +287,8 @@ Feature: AI settings
     And the provider select shows the saved provider (e.g. openai)
     And the model field shows the saved model
     And (desktop) the description mentions the sidecar proxy
-    And the API key is shown as stored in the OS keychain (not as plaintext)
+    And the API key is shown as stored in the OS keychain (not as plaintext, no "file" label)
+    And if a legacy plaintext key could not be migrated, a warning banner with a retry action is shown
     When the user clicks キャンセル
     Then the dialog closes without changing anything
 ```
@@ -304,6 +305,11 @@ Test notes:
 - `providerKeyConfigured` shows a "saved in keychain" badge and a "変更" button
   instead of a password input; click 変更 to reveal the input when testing the
   key field.
+- On the web build, saving a new key requires ticking the plaintext-consent
+  checkbox (the save button is disabled until then); the "このタブのみ（保存しない）"
+  mode skips persistence and keeps the key in memory for the tab.
+- The desktop app never writes a plaintext fallback: if the OS keychain is
+  unavailable, saving fails and the error is surfaced in the dialog.
 - Saving is **not** required for verification — never overwrite the user's
   real keychain config during tests.
 
@@ -470,8 +476,8 @@ the key.
   (key/prompt never written to `trace.zip`).
 - `pnpm test:e2e:real` runs the suite then cleans `test-results/` and
   `playwright-report/` via `scripts/clean-test-results.mjs`.
-- credentials.json (file fallback) only ever lives under the user profile;
-  writing outside it is refused.
+- Desktop never writes a plaintext fallback; legacy `credentials.json` (if any)
+  is auto-migrated to the keychain and only ever lived under the user profile.
 
 **Run**
 ```bash
