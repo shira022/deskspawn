@@ -132,3 +132,6 @@ jobs:
           node-version: 22
       - run: corepack enable && pnpm install --frozen-lockfile
       - run: pnpm audit --prod --audit-level=high
+      # dev 依存（vite / vitest / happy-dom 等）の High も塞ぐ。
+      # 2026-10-24 の週次監査で、--prod だけでは dev の High 3件が素通りしていた。
+      - run: pnpm audit --dev --audit-level=high
