@@ -7,7 +7,6 @@ mod models;
 use commands::harness::AppState;
 use commands::sidecar::SidecarManager;
 use tauri::Manager;
-use tauri_plugin_dialog::DialogExt;
 
 /// `APPMODEL_ERROR_NO_PACKAGE`: `GetCurrentPackageFullName` の戻り値で
 /// 「パッケージ識別子なし（非パッケージ実行）」を意味する。
