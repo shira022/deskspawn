@@ -31,3 +31,6 @@ overrides:
   # High (監査対応): sharp < 0.35.5 に GHSA-wq5f-xc86-pv6w / CVE-2026-96889（first patched: 0.35.5）
   # sidecar の直接依存。package.json の pnpm.overrides と同内容を維持すること（上記の過渡期仕様）。
   sharp: ^0.35.5
+  # High (監査対応): source-map-js < 1.2.2 に信頼できない source map 経由のイベントループ DoS（first patched: 1.2.2）
+  # @tailwindcss/vite / postcss 経由で 1.2.1 が残存。package.json の pnpm.overrides と同内容を維持すること（上記の過渡期仕様）。
+  source-map-js: 1.2.2
