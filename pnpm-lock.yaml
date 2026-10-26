@@ -143,8 +143,8 @@ importers:
         specifier: ^5.3.0
         version: 5.3.0
       pixelmatch:
-        specifier: ^7.2.0
-        version: 7.2.0
+        specifier: ^8.0.0
+        version: 8.0.0
       puppeteer-core:
         specifier: ^25.14.0
         version: 25.14.0(yauzl@2.10.0)
@@ -240,8 +240,8 @@ importers:
         specifier: ^1.59.0
         version: 1.59.0(@types/react@18.3.31)(react@18.3.1)
       pixelmatch:
-        specifier: ^7.2.0
-        version: 7.2.0
+        specifier: ^8.0.0
+        version: 8.0.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -424,8 +424,8 @@ importers:
         specifier: ^0.468.0
         version: 0.468.0(react@18.3.1)
       pixelmatch:
-        specifier: ^7.2.0
-        version: 7.2.0
+        specifier: ^8.0.0
+        version: 8.0.0
       react:
         specifier: ^18.3.1
         version: 18.3.1
@@ -3150,6 +3150,7 @@ packages:
   node-domexception@1.0.0:
     resolution: {integrity: sha512-/jKZoMpw0F8GRwl4/eLROPA3cfcXtLApP0QzLmUT/HuPCZWyB7IY9ZrMeKw2O/nFIqPQB3PVM9aYm0F312AXDQ==}
     engines: {node: '>=10.5.0'}
+    deprecated: Use your platform's native DOMException instead
 
   node-fetch@3.3.2:
     resolution: {integrity: sha512-dRB78srN/l6gqWulah9SrxeYnxeddIG30+GOqK/9OlLVyLg3HPnr6SqOWTWOXKRwC2eGYCkZ59NNuSgvSrpgOA==}
@@ -3237,8 +3238,8 @@ packages:
     resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
     engines: {node: '>=12'}
 
-  pixelmatch@7.2.0:
-    resolution: {integrity: sha512-xhcb4yHu9sM/G7foGzoLtXYcC0zHEaOXXjRKhGup0fw78Nf2Tkiapv4EQyMzrbcmQPsllAI7DbFY2UT7PlI9Pg==}
+  pixelmatch@8.0.0:
+    resolution: {integrity: sha512-cIqOLfh5k52us715qf3B3+kTOxZv+WDv77HN7xokLScYQGYQHi4m/ynoDIPpvF2LvCyUJGyvzY64i0QCXtzu1g==}
     hasBin: true
 
   pkce-challenge@5.0.1:
@@ -6666,7 +6667,7 @@ snapshots:
 
   picomatch@4.0.7: {}
 
-  pixelmatch@7.2.0:
+  pixelmatch@8.0.0:
     dependencies:
       pngjs: 7.0.0
 
