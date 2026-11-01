@@ -17,3 +17,47 @@ updates:
         update-types:
           - "minor"
           - "patch"
+    # 手動で保留している更新。各項目の「解除条件」を満たしたらその行を削除する。
+    # 保留の実測根拠は各Issue/PRに残している。
+    ignore:
+      # Tauri の npm パッケージと Rust クレートは同一 minor が必須。
+      # minor 更新を止めて patch のみ許可する。解除条件: tauri クレートを 2.12 以上へ更新したとき。
+      - dependency-name: "@tauri-apps/api"
+        update-types:
+          - "version-update:semver-minor"
+      # @ai-sdk/openai 4.x は ai 6 と非互換（モデル仕様 v4 / v3 の不一致）。
+      # 解除条件: ai v7 系へ移行したとき。
+      - dependency-name: "@ai-sdk/openai"
+        versions:
+          - "4.x"
+      # @ai-sdk/google 4系も ai のメジャー移行とセット。
+      - dependency-name: "@ai-sdk/google"
+        versions:
+          - "4.x"
+      # React 19 は vite 7 / @vitejs/plugin-react 6 が前提。
+      # 解除条件: React 19 移行を完了したとき。
+      - dependency-name: "react"
+        versions:
+          - "19.x"
+      - dependency-name: "react-dom"
+        versions:
+          - "19.x"
+      - dependency-name: "@types/react"
+        versions:
+          - "19.x"
+      - dependency-name: "@types/react-dom"
+        versions:
+          - "19.x"
+      # vite 8 は rolldown ベースで本リポジトリのビルドが失敗する。
+      # 解除条件: vite 7 系へ移行し、8 系でビルドが通ることを確認したとき。
+      - dependency-name: "vite"
+        versions:
+          - "8.x"
+      # vitest 5 は上流（jest-dom 側）の対応待ち。
+      - dependency-name: "vitest"
+        versions:
+          - "5.x"
+      # TypeScript 7 は型マッチャ周辺の移行が必要。
+      - dependency-name: "typescript"
+        versions:
+          - "7.x"
