@@ -183,6 +183,45 @@ https://storeedgefd.dsx.mp.microsoft.com/v9.0/products/<ProductId>?market=JP&loc
 
 ---
 
+## 9. CLI（`msstore`）で提出する — 準備と現状
+
+Partner Center の画面操作の代わりに、Microsoft 公式の **Microsoft Store Developer CLI（`msstore`）** で
+提出を作れる。`microsoft/msstore-cli`（MIT・Windows/Linux/macOS）で、公式 GitHub Action
+`microsoft/microsoft-store-apppublisher@v1.4` により CI からも実行できる。
+
+> ⚠️ 旧 `microsoft/store-submission@v1` は**廃止・アーカイブ済み**。古い記事のレシピは使わない。
+
+### できること / 制約
+
+| 項目 | 内容 |
+|---|---|
+| 提出 | `msstore publish <path> -i <msix> -id <productId> [-nc]`（`-nc` = draft のまま commit しない） |
+| メタデータ | `submission get` → JSON 編集 → `submission updateMetadata`（MSIX では `update` と等価） |
+| 状態確認 | `submission status` / `submission poll` / `submission get` |
+| 限定公開 | `flights`（パッケージフライト） |
+| 初回公開 | **API 不可**（Partner Center で完了済み。0.5.0 で満たしている） |
+| 対象製品 | **無料製品のみ**（有料は将来対応）。DeskSpawn は無料で該当 |
+| 混在禁止 | API で作った提出を Partner Center で編集すると commit できなくなる（以後 CLI 一本にする） |
+| 署名 | 提出 MSIX は**無署名でよい**（Store が再署名）。`build-msix.mjs --pack --no-sign` と整合 |
+
+### 初回だけ必要な準備（人手）
+
+1. Partner Center に **Entra ID テナントを関連付け**（未関連なら作成。無料）
+2. Entra 管理センターで**アプリ登録** → 「証明書とシークレット」でクライアントシークレット発行
+3. Partner Center の User management > Microsoft Entra applications に 1 のアプリを追加し **Manager ロール**を付与
+4. 次の 4 値を GitHub の repository secrets に登録する（画面操作または `gh secret set`）:
+   `MSSTORE_TENANT_ID` / `MSSTORE_SELLER_ID` / `MSSTORE_CLIENT_ID` / `MSSTORE_CLIENT_SECRET`
+   - クライアントシークレットは**有効期限がある**。期限日を控えてローテーションする（既定 90 日を推奨）
+5. 資格情報の確認は `.github/workflows/store-diagnostics.yml`（**read-only**）を手動実行:
+   `msstore apps list` と `submission get` の JSON が artifact に出れば疎通完了
+
+### 現状（未検証を含む）
+
+- ✅ アプリは既に公開済み（Store product ID `9NTL90C2LXM1`・Publisher `shira022`）なので API 提出の前提は満たしている
+- ⚠️ **未検証**: `winapp pack` が作る無署名 `.msix` を `msstore publish` がそのまま受理するか
+- ⚠️ **未検証**: WSL / Linux からの `publish`（CI か Windows ホストで実行する前提で設計する）
+- ⚠️ CLI はドキュメント上 "(preview)" 表記。破壊的変更の可能性を前提に、提出は draft 止め＋人が commit する運用にする
+
 ## 注意（事故りやすい点）
 
 - **`*.pfx`（署名証明書）は絶対にコミットしない**。`*.msix` も生成物なのでコミットしない（`.gitignore` 済み）。

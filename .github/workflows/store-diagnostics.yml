@@ -1,0 +1,132 @@
+# DeskSpawn — Microsoft Store 診断（read-only）
+#
+# 目的: Partner Center の状態を「読むだけ」で確認する。提出・変更・commit は一切しない。
+#   1. Entra ID アプリの資格情報（repository secrets）が通るかの検証
+#   2. 現在の提出（draft / published）とパッケージ一覧の取得
+#   3. リリースノート注入に使う submission JSON の実物を artifact として保存
+#
+# 必要な repository secrets（Settings > Secrets and variables > Actions）:
+#   MSSTORE_TENANT_ID / MSSTORE_SELLER_ID / MSSTORE_CLIENT_ID / MSSTORE_CLIENT_SECRET
+#
+# 認証の前提（初回のみ・人手で行う）:
+#   Partner Center アカウントに Entra ID テナントを関連付け → Entra アプリを登録 →
+#   Partner Center の User management > Microsoft Entra applications で Manager ロールを付与。
+#   手順の詳細は docs/store-update-runbook.md を参照。
+#
+# 注意: このワークフローは読み取り専用。Store への提出は別ワークフロー（未作成）で行う。
+
+name: Store Diagnostics (read-only)
+
+on:
+  workflow_dispatch:
+    inputs:
+      product_id:
+        description: 'Store product ID (既定は DeskSpawn)'
+        required: false
+        default: '9NTL90C2LXM1'
+        type: string
+      query:
+        description: '実行する読み取りクエリ'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - apps
+          - submission
+          - status
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Read-only store diagnostics
+    runs-on: windows-latest
+    steps:
+      - name: Verify credentials are configured
+        shell: pwsh
+        env:
+          TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+        run: |
+          $missing = @()
+          foreach ($name in 'TENANT_ID', 'SELLER_ID', 'CLIENT_ID', 'CLIENT_SECRET') {
+            if ([string]::IsNullOrWhiteSpace((Get-Item "env:$name").Value)) { $missing += $name }
+          }
+          if ($missing.Count -gt 0) {
+            Write-Error ("Missing repository secrets: " + ($missing -join ', ') + ". See the header of this workflow file.")
+            exit 1
+          }
+          Write-Output 'All four store secrets are present.'
+
+      - name: Install Microsoft Store Developer CLI
+        uses: microsoft/microsoft-store-apppublisher@v1.4
+
+      - name: Configure msstore (credentials stay in the runner)
+        shell: pwsh
+        env:
+          TENANT_ID: ${{ secrets.MSSTORE_TENANT_ID }}
+          SELLER_ID: ${{ secrets.MSSTORE_SELLER_ID }}
+          CLIENT_ID: ${{ secrets.MSSTORE_CLIENT_ID }}
+          CLIENT_SECRET: ${{ secrets.MSSTORE_CLIENT_SECRET }}
+        run: |
+          msstore reconfigure --tenantId $env:TENANT_ID --sellerId $env:SELLER_ID `
+            --clientId $env:CLIENT_ID --clientSecret $env:CLIENT_SECRET
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error 'msstore reconfigure failed. Check the Entra app role (Manager) and the tenant association.'
+            exit 1
+          }
+
+      - name: Run read-only queries
+        shell: pwsh
+        env:
+          PRODUCT_ID: ${{ inputs.product_id }}
+          QUERY: ${{ inputs.query }}
+        run: |
+          New-Item -ItemType Directory -Path store-diag -Force | Out-Null
+
+          if ($env:QUERY -in @('all', 'apps')) {
+            # 人間向け出力は stderr に出るため 2>&1 でまとめて保存する。
+            msstore apps list 2>&1 | Tee-Object -FilePath store-diag/apps.txt
+          }
+
+          if ($env:QUERY -in @('all', 'submission')) {
+            # 機械可読 JSON は stdout に出る（リリースノート注入の下調べ）。
+            msstore submission get $env:PRODUCT_ID > store-diag/submission.json
+            $json = Get-Item store-diag/submission.json
+            Write-Output ("submission.json: " + $json.Length + " bytes")
+            if ($json.Length -eq 0) {
+              Write-Error 'submission get returned nothing (auth or product ID problem).'
+              exit 1
+            }
+          }
+
+          if ($env:QUERY -in @('all', 'status')) {
+            msstore submission status $env:PRODUCT_ID 2>&1 | Tee-Object -FilePath store-diag/status.txt
+          }
+
+      - name: Summarize
+        if: always()
+        shell: pwsh
+        run: |
+          if (Test-Path store-diag/submission.json) {
+            $sub = Get-Content store-diag/submission.json -Raw | ConvertFrom-Json
+            $lines = @(
+              "submission id: $($sub.id)",
+              "status: $($sub.status)",
+              "packages: $($sub.applicationPackages.Count)",
+              "languages: $($sub.listings.PSObject.Properties.Name -join ', ')"
+            )
+            $lines | Tee-Object -FilePath store-diag/summary.txt
+          }
+
+      - name: Upload diagnostics
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: store-diag
+          path: store-diag/
+          if-no-files-found: warn
