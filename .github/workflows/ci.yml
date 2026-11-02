@@ -122,6 +122,7 @@ jobs:
         with:
           node-version: 22
       - run: node scripts/check-versions.mjs
+      - run: node scripts/check-tauri-api-versions.mjs
 
   npm-audit:
     runs-on: ubuntu-latest
