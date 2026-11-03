@@ -10,6 +10,8 @@
  */
 
 import { registerWebServices } from "@deskspawn/shared/lib/services/index";
+import { registerRuntimeEnvProvider } from "@deskspawn/shared/lib/runtime-env";
+import { desktopRuntimeEnvProvider } from "./runtime-env-provider";
 
 /**
  * Register desktop services.
@@ -22,5 +24,6 @@ import { registerWebServices } from "@deskspawn/shared/lib/services/index";
  */
 export function registerDesktopServices(): void {
   (window as unknown as { __DESKSPAWN_DESKTOP__?: boolean }).__DESKSPAWN_DESKTOP__ = true;
+  registerRuntimeEnvProvider(desktopRuntimeEnvProvider);
   registerWebServices();
 }
