@@ -83,6 +83,15 @@ impl SidecarManager {
         let token = crate::engine::security::init_auth_token();
         let sidecar = sidecar.env("DESKSPAWN_AUTH_TOKEN", token);
 
+        // Pass the resolved Bun runtime (env, bundled, PATH, home) to the
+        // sidecar so previews work without a system-wide Bun install. When
+        // nothing is found, leave it unset and let the sidecar fall back.
+        let sidecar = if let Some(bun_path) = crate::engine::bun::resolve_bun_path() {
+            sidecar.env("BUN_PATH", bun_path.to_string_lossy().to_string())
+        } else {
+            sidecar
+        };
+
         let (mut rx, child) = sidecar
             .spawn()
             .map_err(|e| format!("Failed to spawn sidecar: {}", e))?;

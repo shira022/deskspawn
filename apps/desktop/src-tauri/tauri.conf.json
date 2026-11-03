@@ -29,7 +29,8 @@
     "active": true,
     "targets": "all",
     "externalBin": [
-      "binaries/deskspawn-sidecar"
+      "binaries/deskspawn-sidecar",
+      "binaries/bun"
     ],
     "icon": [
       "icons/32x32.png",

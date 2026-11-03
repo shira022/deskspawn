@@ -45,7 +45,9 @@ let workspaceDevActualPort = WORKSPACE_DEV_PORT;
  * 環境非依存の解決順:
  *   1. process.env.BUN_PATH（明示指定があれば最優先。配布時の同梱bun切替にも使用）
  *   2. PATH 探索（Windows: `where bun` / Unix: `which bun`）
- *   3. ~/dev/tools/bun/bun-windows-x64/bun.exe（os.homedir() ベースの既定レイアウト）
+ *   3. ~/.bun/bin/bun（Windows は bun.exe）
+ *   4. %LOCALAPPDATA%\Microsoft\WinGet\Links\bun.exe（Windows のみ）
+ *   5. ~/dev/tools/bun/bun-windows-x64/bun.exe（os.homedir() ベースの既定レイアウト）
  * 全て見つからなければ null を返す（呼び出し側で明示的エラーにする）。
  */
 function resolveBunPath(): string | null {
@@ -63,7 +65,27 @@ function resolveBunPath(): string | null {
     // PATH 探索に失敗してもフォールバックへ進む
   }
 
-  const homeFallback = path.join(os.homedir(), 'dev', 'tools', 'bun', 'bun-windows-x64', 'bun.exe');
+  const home = os.homedir();
+  const homeBun = path.join(
+    home,
+    '.bun',
+    'bin',
+    process.platform === 'win32' ? 'bun.exe' : 'bun',
+  );
+  if (fs.existsSync(homeBun)) return homeBun;
+
+  if (process.platform === 'win32' && process.env.LOCALAPPDATA) {
+    const wingetBun = path.join(
+      process.env.LOCALAPPDATA,
+      'Microsoft',
+      'WinGet',
+      'Links',
+      'bun.exe',
+    );
+    if (fs.existsSync(wingetBun)) return wingetBun;
+  }
+
+  const homeFallback = path.join(home, 'dev', 'tools', 'bun', 'bun-windows-x64', 'bun.exe');
   if (fs.existsSync(homeFallback)) return homeFallback;
 
   return null;
