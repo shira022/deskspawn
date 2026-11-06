@@ -23,7 +23,6 @@ export function ChatPanel() {
   const currentCheckpointIndex = useAppStore((s) => s.currentCheckpointIndex);
   const agentStatus = useAppStore((s) => s.agentStatus);
   const saveFailed = useAppStore((s) => s.saveFailed);
-  const configRecovered = useAppStore((s) => s.configRecovered);
   const aiConfig = useAppStore((s) => s.aiConfig);
   const currentAppId = useAppStore((s) => s.currentAppId);
   const apps = useAppStore((s) => s.apps);
@@ -598,13 +597,6 @@ export function ChatPanel() {
                   )}
                 </div>
               ))}
-
-              {configRecovered && (
-                <div className="mx-4 mb-2 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
-                  {t("chat.error.configRecoveredBanner")}
-                </div>
-              )}
 
               {saveFailed && (
                 <div className="mx-4 mb-2 flex items-center gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
