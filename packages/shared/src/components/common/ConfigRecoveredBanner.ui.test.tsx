@@ -61,6 +61,14 @@ describe("ConfigRecoveredBanner", () => {
     expect(screen.getByText(enT("chat.error.configRecoveredBanner"))).toBeInTheDocument();
   });
 
+  it("renders above full-screen overlays with a z-[10000] class", () => {
+    mockStore.configRecovered = true;
+
+    const { container } = render(<ConfigRecoveredBanner />);
+
+    expect(container.firstElementChild).toHaveClass("z-[10000]");
+  });
+
   it("renders nothing when configRecovered is false", () => {
     mockStore.configRecovered = false;
 
