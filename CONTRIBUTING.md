@@ -83,6 +83,12 @@ first — the Rust build script fails without them:
 > 💡 `scripts/bootstrap.ps1` / `scripts/bootstrap.sh` automate all of the above,
 > including choosing between the pnpm and the cargo-override path.
 
+When building the desktop app, also run `node scripts/fetch-bun.mjs` (or
+`pnpm exec node scripts/fetch-bun.mjs`) before the Tauri build. It downloads the
+pinned Bun runtime into `apps/desktop/src-tauri/binaries/bun-<target-triple>`,
+which is bundled as `externalBin` so previews do not require a system-wide Bun
+install; the step is idempotent and skips the download when already up to date.
+
 #### E2E modes (e2e/desktop.spec.ts)
 
 > ⚠️ **WARNING: `pnpm test:e2e` deletes real data.** The suite runs the Rust

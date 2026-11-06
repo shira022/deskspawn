@@ -437,6 +437,21 @@ build_tauri_override() {
   fi
 }
 
+# Download the pinned Bun runtime bundled as `binaries/bun-<triple>` (externalBin).
+# Idempotent: scripts/fetch-bun.mjs skips the download when it is up to date.
+fetch_bundled_bun() {
+  cd "$REPO_DIR"
+  if have node; then
+    log "Fetching bundled bun runtime (node scripts/fetch-bun.mjs)."
+    node scripts/fetch-bun.mjs || die "Failed to fetch the bundled bun runtime. Re-run: node scripts/fetch-bun.mjs"
+  elif have bun; then
+    log "Fetching bundled bun runtime (bun scripts/fetch-bun.mjs)."
+    bun scripts/fetch-bun.mjs || die "Failed to fetch the bundled bun runtime. Re-run: bun scripts/fetch-bun.mjs"
+  else
+    die "Cannot fetch the bundled bun runtime: node (or bun) is required. Install Node.js 20+ and re-run."
+  fi
+}
+
 build_tauri() {
   if [ "$BUILD_PATH" = "pnpm" ]; then
     cd "$REPO_DIR"
@@ -508,6 +523,7 @@ main() {
     exit 0
   fi
 
+  fetch_bundled_bun
   build_tauri
 
   print_summary
