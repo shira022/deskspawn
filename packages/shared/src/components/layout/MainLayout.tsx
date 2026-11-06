@@ -50,6 +50,7 @@ import {
 } from "../../lib/constants";
 import { loadProviderConfig } from "../../lib/storage";
 import { LanguageSelectScreen } from "../onboarding/LanguageSelectScreen";
+import { EnvCheckScreen } from "../onboarding/EnvCheckScreen";
 import { useModels } from "../../hooks/useModels";
 
 const layoutIcons: Record<string, React.ReactNode> = {
@@ -204,6 +205,7 @@ export function MainLayout() {
   // BootSequence が言語選択を済ませてからここに来るため、この分岐はデス
   // クトップ専用に実質作用する — F0 / docs/user-flow-spec.md）。
   const languageUnset = useAppStore((s) => s.languageUnset);
+  const [runtimeEnvReady, setRuntimeEnvReady] = useState(!isDesktopEnv());
 
   if (languageUnset) {
     return (
@@ -216,6 +218,10 @@ export function MainLayout() {
         }}
       />
     );
+  }
+
+  if (isDesktopEnv() && !runtimeEnvReady) {
+    return <EnvCheckScreen onReady={() => setRuntimeEnvReady(true)} />;
   }
 
   return (
