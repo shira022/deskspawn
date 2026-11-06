@@ -1059,10 +1059,15 @@ mod tests {
 
         // 先頭に UTF-8 BOM があるだけの正当な JSON は読める（退避しない）。
         let path = config_file_path().unwrap();
-        std::fs::write(&path, "\u{feff}{\"provider\":\"openai\"}").unwrap();
+        let mut config = AiConfig::default();
+        config.provider = "openai".to_string();
+        config.model = "gpt-test".to_string();
+        let json = serde_json::to_string(&config).unwrap();
+        std::fs::write(&path, format!("\u{feff}{json}")).unwrap();
 
         let config = read_existing_config().expect("BOM 付き config.json はパースできる");
         assert_eq!(config.provider, "openai");
+        assert_eq!(config.model, "gpt-test");
 
         // 元ファイルはその場所に残り、退避ファイルも作られない。
         assert!(path.exists(), "BOM 付き config.json は退避されない");
