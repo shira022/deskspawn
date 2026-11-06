@@ -146,19 +146,6 @@ impl Default for AiConfig {
 
 // ── Environment Check ─────────────────────────────────────────────────────────
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvCheckItem {
-    pub name: String,
-    pub description: String,
-    pub check_command: String,
-    pub status: String,
-    pub download_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub winget_package: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub size_mb: Option<u32>,
-}
-
 /// Result of winget availability check.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WingetStatus {

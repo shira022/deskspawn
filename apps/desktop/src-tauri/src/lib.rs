@@ -205,9 +205,11 @@ pub fn run() {
             commands::apps::export_app_zip,
             commands::apps::import_app_zip,
             // Environment check commands
-            commands::env_check::check_environment,
             commands::env_check::check_winget,
             commands::env_check::open_url,
+            // Runtime prerequisite commands
+            commands::runtime_env::check_runtime_env,
+            commands::runtime_env::install_runtime_prerequisite,
             // AI config commands
             commands::ai_config::save_ai_config,
             commands::ai_config::load_ai_config,
