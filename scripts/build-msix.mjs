@@ -56,6 +56,10 @@ const SIDECAR_EXE = join(
   REPO_ROOT,
   'apps/desktop/src-tauri/binaries/deskspawn-sidecar-x86_64-pc-windows-msvc.exe',
 );
+const BUN_EXE = join(
+  REPO_ROOT,
+  'apps/desktop/src-tauri/binaries/bun-x86_64-pc-windows-msvc.exe',
+);
 
 /** ステージングにコピーしてよいトップレベルエントリの許可リスト。 */
 export const STAGE_ENTRIES = [MANIFEST, 'Assets'];
@@ -428,6 +432,11 @@ function main(argv) {
       src: SIDECAR_EXE,
       dests: ['deskspawn-sidecar.exe', 'deskspawn-sidecar-x86_64-pc-windows-msvc.exe'],
       hint: 'bun scripts/build-sidecar.mjs',
+    },
+    {
+      src: BUN_EXE,
+      dests: ['bun.exe'],
+      hint: 'node scripts/fetch-bun.mjs',
     },
   ];
 

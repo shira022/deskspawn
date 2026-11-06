@@ -47,9 +47,10 @@ const ALLOWED_NPX_TOOLS: &[&str] = &[
 
 /// Check whether a command string is in the allowlist.
 ///
-/// Security: `npx <任意パッケージ>` による任意コード実行を防ぐため、
-/// npx の直後のパッケージ名を ALLOWED_NPX_TOOLS で検証する。
-/// （npm install / npm run は --ignore-scripts 付与 or 生成アプリの scripts 実行のため許可）
+/// Security: `npx <任意パッケージ>` / `bun x <任意パッケージ>` による任意コード
+/// 実行を防ぐため、直後のパッケージ名を ALLOWED_NPX_TOOLS で検証する。
+/// （npm install / npm run / bun install / bun run は --ignore-scripts 付与 or
+/// 生成アプリの scripts 実行のため許可）
 pub fn is_command_allowed(command: &str) -> bool {
     let trimmed = command.trim();
     if trimmed.starts_with("npm install") {
@@ -59,15 +60,24 @@ pub fn is_command_allowed(command: &str) -> bool {
         return true;
     }
     if let Some(rest) = trimmed.strip_prefix("npx ") {
-        return is_npx_package_allowed(rest);
+        return is_package_run_allowed(rest);
+    }
+    if trimmed.starts_with("bun install") {
+        return true;
+    }
+    if trimmed.starts_with("bun run") {
+        return true;
+    }
+    if let Some(rest) = trimmed.strip_prefix("bun x ") {
+        return is_package_run_allowed(rest);
     }
     false
 }
 
-/// npx の引数部分から実行対象パッケージ名を抽出して検証する。
+/// npx / bun x の引数部分から実行対象パッケージ名を抽出して検証する。
 /// 例: "tsc --noEmit" → "tsc" / "-y tsc" → "tsc" / "evil-pkg" → 拒否
-fn is_npx_package_allowed(npx_args: &str) -> bool {
-    for tok in npx_args.split_whitespace() {
+fn is_package_run_allowed(run_args: &str) -> bool {
+    for tok in run_args.split_whitespace() {
         if tok.starts_with('-') {
             continue; // フラグ（-y, --yes 等）はスキップ
         }
@@ -173,16 +183,24 @@ pub fn is_package_allowed(pkg_name: &str) -> bool {
     allowed_packages.contains(&pkg_name)
 }
 
-/// Sanitize npm install command by adding --ignore-scripts.
+/// Sanitize `npm install` / `bun install` by adding --ignore-scripts.
+///
+/// postinstall 等のライフサイクルスクリプト経由の任意コード実行を防ぐため、
+/// 両パッケージマネージャーで `--ignore-scripts` を強制する。
 pub fn sanitize_npm_install(command: &str) -> String {
     let trimmed = command.trim();
-    if trimmed.starts_with("npm install") && !trimmed.contains("--ignore-scripts") {
+    if trimmed.contains("--ignore-scripts") {
+        return command.to_string();
+    }
+    if trimmed.starts_with("npm install") {
         // Insert --ignore-scripts after the install subcommand
         let rest = trimmed.trim_start_matches("npm install");
-        format!("npm install {} --ignore-scripts", rest.trim())
-    } else {
-        command.to_string()
+        return format!("npm install {} --ignore-scripts", rest.trim());
     }
+    if let Some(rest) = trimmed.strip_prefix("bun install") {
+        return format!("bun install {} --ignore-scripts", rest.trim());
+    }
+    command.to_string()
 }
 
 /// package.json の `scripts.dev` が生成アプリのテンプレート期待値（"vite"）と
@@ -217,7 +235,7 @@ pub fn validate_package_json_scripts(json_str: &str) -> Result<(), String> {
     }
 }
 
-/// `npm run <script>` コマンドの実行可否を判定する（Critical-1・案C）。
+/// `npm run <script>` / `bun run <script>` コマンドの実行可否を判定する（Critical-1・案C）。
 ///
 /// - `dev` : workspace/package.json の scripts.dev が "vite" の場合のみ許可
 ///   （改竄された scripts.dev による RCE 経路の遮断）
@@ -225,10 +243,9 @@ pub fn validate_package_json_scripts(json_str: &str) -> Result<(), String> {
 /// - それ以外のスクリプト名 : 拒否（独自スクリプト実行を塞ぐ。書き込み自体は許可＝案C）
 /// - package.json が無い / 読めない / 不正 JSON : 安全側で false
 pub fn is_npm_run_allowed(command: &str, workspace: &Path) -> bool {
-    let trimmed = command.trim();
-    let rest = match trimmed.strip_prefix("npm run") {
-        Some(r) if r.starts_with(' ') => r.trim_start(),
-        _ => return false,
+    let rest = match strip_run_subcommand(command) {
+        Some(r) => r,
+        None => return false,
     };
     let script = rest.split_whitespace().next().unwrap_or("");
     if script == "build" || script == "preview" {
@@ -243,6 +260,19 @@ pub fn is_npm_run_allowed(command: &str, workspace: &Path) -> bool {
         Err(_) => return false,
     };
     validate_package_json_scripts(&content).is_ok()
+}
+
+/// `npm run` / `bun run` のサブコマンド以降を返す。該当しなければ None。
+fn strip_run_subcommand(command: &str) -> Option<&str> {
+    let trimmed = command.trim();
+    for prefix in ["npm run", "bun run"] {
+        if let Some(rest) = trimmed.strip_prefix(prefix) {
+            if rest.starts_with(' ') {
+                return Some(rest.trim_start());
+            }
+        }
+    }
+    None
 }
 
 /// Forbidden TypeScript/JavaScript API patterns.
@@ -306,6 +336,22 @@ mod tests {
         assert!(!is_command_allowed("sudo apt install"));
         assert!(!is_command_allowed("cargo check"));
         assert!(!is_command_allowed("sqlx migrate run"));
+    }
+
+    #[test]
+    fn test_bun_command_allowed() {
+        assert!(is_command_allowed("bun install"));
+        assert!(is_command_allowed("bun install react"));
+        assert!(is_command_allowed("bun run dev"));
+        assert!(is_command_allowed("bun run build"));
+        assert!(is_command_allowed("bun x tsc --noEmit"));
+        assert!(is_command_allowed("bun x -y tsc"));
+        assert!(is_command_allowed("bun x tsc@5.4.2 --noEmit"));
+        assert!(!is_command_allowed("bun x evil-pkg"));
+        assert!(!is_command_allowed("bun x @scope/evil-pkg"));
+        assert!(!is_command_allowed("bun x"));
+        assert!(!is_command_allowed("bun add left-pad"));
+        assert!(!is_command_allowed("bun remove left-pad"));
     }
 
     #[test]
@@ -425,5 +471,50 @@ mod tests {
         assert!(!is_npm_run_allowed("npm run --", &dir));
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_is_bun_run_allowed() {
+        let dir = std::env::temp_dir().join(format!("ds-sec-bunrun-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // build / preview は package.json 無しでも許可
+        assert!(is_npm_run_allowed("bun run build", &dir));
+        assert!(is_npm_run_allowed("bun run preview", &dir));
+
+        // dev = "vite" → 許可
+        std::fs::write(dir.join("package.json"), r#"{"scripts": {"dev": "vite"}}"#).unwrap();
+        assert!(is_npm_run_allowed("bun run dev", &dir));
+
+        // dev を改竄 → 拒否
+        std::fs::write(
+            dir.join("package.json"),
+            r#"{"scripts": {"dev": "node -e 'require(\"child_process\").execSync(\"calc\")'"}}"#,
+        )
+        .unwrap();
+        assert!(!is_npm_run_allowed("bun run dev", &dir));
+
+        // 独自スクリプト名は拒否
+        assert!(!is_npm_run_allowed("bun run postinstall", &dir));
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_sanitize_npm_install_bun() {
+        // bun install にも --ignore-scripts を付与
+        let sanitized = sanitize_npm_install("bun install react");
+        assert!(sanitized.contains("--ignore-scripts"), "got: {}", sanitized);
+
+        // 既に付与済みなら二重付与しない
+        let already = "bun install --ignore-scripts react";
+        assert_eq!(sanitize_npm_install(already), already);
+
+        // 既存 npm 挙動は不変
+        let npm = sanitize_npm_install("npm install react");
+        assert!(npm.contains("--ignore-scripts"), "got: {}", npm);
+        let npm_already = "npm install --ignore-scripts react";
+        assert_eq!(sanitize_npm_install(npm_already), npm_already);
     }
 }
