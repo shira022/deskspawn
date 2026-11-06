@@ -11,7 +11,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -42,6 +42,7 @@ const STAGE_DIR = join(REPO, 'apps/desktop/src-tauri/target/msix-stage');
 const PAYLOAD_PATHS = [
   join(REPO, 'apps/desktop/src-tauri/target/release/deskspawn-desktop.exe'),
   join(REPO, 'apps/desktop/src-tauri/binaries/deskspawn-sidecar-x86_64-pc-windows-msvc.exe'),
+  join(REPO, 'apps/desktop/src-tauri/binaries/bun-x86_64-pc-windows-msvc.exe'),
 ];
 
 test('toAppxVersion: 3桁 SemVer は .0 を付与する', () => {
@@ -565,9 +566,10 @@ test('pack 早期検証: Windows から見えない場所では旧ステージ�
       ].join('\n'),
     );
 
-    // 必須ペイロード2種のダミー（中身は空でよい）。
+    // 必須ペイロード3種のダミー（中身は空でよい）。
     write('apps/desktop/src-tauri/target/release/deskspawn-desktop.exe', '');
     write('apps/desktop/src-tauri/binaries/deskspawn-sidecar-x86_64-pc-windows-msvc.exe', '');
+    write('apps/desktop/src-tauri/binaries/bun-x86_64-pc-windows-msvc.exe', '');
 
     // 旧ステージの代役。早期検証で pack 不可と判明すれば rmSync より前に exit 1 し残る。
     const stageDir = join(root, 'apps/desktop/src-tauri/target/msix-stage');
@@ -586,6 +588,52 @@ test('pack 早期検証: Windows から見えない場所では旧ステージ�
       'pack 不可で失敗する場合、旧ステージを削除してはならない（rmSync より前に exit 1）',
     );
     assert.match(result.stderr, /Windows から見える場所/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('bun.exe をステージし、欠落時は fetch-bun のヒント付きで exit 1 する', () => {
+  const root = mkdtempSync(join(tmpdir(), 'deskspawn-bun-stage-'));
+  const write = (rel, content) => {
+    mkdirSync(join(root, dirname(rel)), { recursive: true });
+    writeFileSync(join(root, rel), content);
+  };
+  const bunSrc = join(root, 'apps/desktop/src-tauri/binaries/bun-x86_64-pc-windows-msvc.exe');
+  try {
+    mkdirSync(join(root, 'scripts', 'lib'), { recursive: true });
+    copyFileSync(SCRIPT, join(root, 'scripts', 'build-msix.mjs'));
+    copyFileSync(XML_COMMENTS_SRC, join(root, 'scripts', 'lib', 'xml-comments.mjs'));
+
+    write('package.json', JSON.stringify({ name: 'fixture', version: '1.2.3' }, null, 2));
+    write(
+      'apps/desktop/store/msix/Package.appxmanifest',
+      [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<Package>',
+        '  <Identity Name="example.App" Publisher="CN=example" Version="1.2.3.0" />',
+        '</Package>',
+        '',
+      ].join('\n'),
+    );
+
+    write('apps/desktop/src-tauri/target/release/deskspawn-desktop.exe', 'desktop');
+    write('apps/desktop/src-tauri/binaries/deskspawn-sidecar-x86_64-pc-windows-msvc.exe', 'sidecar');
+    write('apps/desktop/src-tauri/binaries/bun-x86_64-pc-windows-msvc.exe', 'bundled bun');
+
+    const script = join(root, 'scripts', 'build-msix.mjs');
+    const stagedBun = join(root, 'apps/desktop/src-tauri/target/msix-stage/bun.exe');
+
+    const ok = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(ok.status, 0, `stdout:\n${ok.stdout}\nstderr:\n${ok.stderr}`);
+    assert.ok(existsSync(stagedBun), 'ステージ先に bun.exe が存在すること');
+    assert.equal(readFileSync(stagedBun, 'utf8'), 'bundled bun', 'bun.exe の内容がソースと一致すること');
+
+    rmSync(bunSrc);
+    const missing = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(missing.status, 1, `stdout:\n${missing.stdout}\nstderr:\n${missing.stderr}`);
+    assert.match(missing.stderr, /fetch-bun/, '欠落時のヒントに fetch-bun を含めること');
+    assert.ok(existsSync(stagedBun), 'ペイロード欠落時は旧ステージを破壊しないこと');
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

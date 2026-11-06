@@ -376,12 +376,14 @@ fn execute_shell_action(
         ));
     }
 
-    // Critical-1: npm run はスクリプト名 + package.json scripts.dev を検証する。
-    // （is_command_allowed は "npm run" で始まれば true のまま — 実行可否の厳格化はここ）
+    // Critical-1: npm run / bun run はスクリプト名 + package.json scripts.dev を検証する。
+    // （is_command_allowed は "npm run" / "bun run" で始まれば true のまま — 実行可否の厳格化はここ）
     let trimmed = command.trim();
-    if trimmed.starts_with("npm run") && !security::is_npm_run_allowed(command, workspace) {
+    if (trimmed.starts_with("npm run") || trimmed.starts_with("bun run"))
+        && !security::is_npm_run_allowed(command, workspace)
+    {
         return Err(format!(
-            "Command not allowed: {}. npm run is limited to dev (scripts.dev must be \"vite\"), build, preview.",
+            "Command not allowed: {}. npm run / bun run is limited to dev (scripts.dev must be \"vite\"), build, preview.",
             command
         ));
     }
