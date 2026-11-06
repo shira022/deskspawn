@@ -430,7 +430,9 @@ function main(argv) {
     },
     {
       src: SIDECAR_EXE,
-      dests: ['deskspawn-sidecar.exe', 'deskspawn-sidecar-x86_64-pc-windows-msvc.exe'],
+      // 本体は ShellExt::sidecar("deskspawn-sidecar") で generic 名しか参照しない。
+      // triple 名を同梱すると同じバイナリが約96MB二重に入るためコピーしない。
+      dests: ['deskspawn-sidecar.exe'],
       hint: 'bun scripts/build-sidecar.mjs',
     },
     {

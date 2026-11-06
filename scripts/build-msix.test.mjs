@@ -638,3 +638,51 @@ test('bun.exe をステージし、欠落時は fetch-bun のヒント付きで 
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+test('sidecar は generic 名のみをステージし triple 名は同梱しない', () => {
+  const root = mkdtempSync(join(tmpdir(), 'deskspawn-sidecar-stage-'));
+  const write = (rel, content) => {
+    mkdirSync(join(root, dirname(rel)), { recursive: true });
+    writeFileSync(join(root, rel), content);
+  };
+  try {
+    mkdirSync(join(root, 'scripts', 'lib'), { recursive: true });
+    copyFileSync(SCRIPT, join(root, 'scripts', 'build-msix.mjs'));
+    copyFileSync(XML_COMMENTS_SRC, join(root, 'scripts', 'lib', 'xml-comments.mjs'));
+
+    write('package.json', JSON.stringify({ name: 'fixture', version: '1.2.3' }, null, 2));
+    write(
+      'apps/desktop/store/msix/Package.appxmanifest',
+      [
+        '<?xml version="1.0" encoding="utf-8"?>',
+        '<Package>',
+        '  <Identity Name="example.App" Publisher="CN=example" Version="1.2.3.0" />',
+        '</Package>',
+        '',
+      ].join('\n'),
+    );
+
+    write('apps/desktop/src-tauri/target/release/deskspawn-desktop.exe', 'desktop');
+    // ソースは triple 名（Tauri の sidecar ビルド成果物）だが、ステージ先は generic 名のみ。
+    write('apps/desktop/src-tauri/binaries/deskspawn-sidecar-x86_64-pc-windows-msvc.exe', 'sidecar');
+    write('apps/desktop/src-tauri/binaries/bun-x86_64-pc-windows-msvc.exe', 'bun');
+
+    const script = join(root, 'scripts', 'build-msix.mjs');
+    const stageDir = join(root, 'apps/desktop/src-tauri/target/msix-stage');
+
+    const result = spawnSync(process.execPath, [script], { encoding: 'utf8', timeout: 30_000 });
+    assert.equal(result.status, 0, `stdout:\n${result.stdout}\nstderr:\n${result.stderr}`);
+
+    const generic = join(stageDir, 'deskspawn-sidecar.exe');
+    const triple = join(stageDir, 'deskspawn-sidecar-x86_64-pc-windows-msvc.exe');
+    assert.ok(existsSync(generic), 'generic 名の sidecar がステージされること');
+    assert.equal(readFileSync(generic, 'utf8'), 'sidecar', 'generic 名の内容がソースと一致すること');
+    assert.equal(
+      existsSync(triple),
+      false,
+      'triple 名の sidecar は二重同梱しない（generic 名のみ）',
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
