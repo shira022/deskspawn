@@ -317,14 +317,34 @@ fn delete_key_from_storage(provider: &str, method: &str) {
     }
 }
 
+/// JSON パースに失敗した config.json を退避し、呼び出し側へは `None` を返す。
+/// 退避に失敗しても起動は既定値で継続する（致命にしない）。
+fn parse_config_or_quarantine(path: &std::path::Path, content: &str) -> Option<AiConfig> {
+    // UTF-8 BOM は正当な（読める）設定として扱う。serde_json は先頭の BOM を
+    // 受け付けないため、パース前に落とす（BOM 以外の破損のみ退避対象）。
+    let normalized = content.trim_start_matches('\u{feff}').trim_start();
+    match serde_json::from_str::<AiConfig>(normalized) {
+        Ok(config) => Some(config),
+        Err(e) => {
+            // 監査方針: パスはログに出さない（ホーム配下の絶対パスを残さない）。
+            log::warn!("Failed to parse config.json: {}", e);
+            crate::models::config::quarantine_corrupt_config(path);
+            None
+        }
+    }
+}
+
 /// Read existing AiConfig from disk (returns None if no config exists).
+///
+/// 壊れた JSON の場合は `config.json.corrupt-<UNIX秒>` へ退避した上で `None`
+/// を返す（呼び出し元は既定値で起動を継続する）。
 pub fn read_existing_config() -> Option<AiConfig> {
     let path = config_file_path().ok()?;
     if !path.exists() {
         return None;
     }
     let content = fs::read_to_string(&path).ok()?;
-    serde_json::from_str(&content).ok()
+    parse_config_or_quarantine(&path, &content)
 }
 
 /// Write the AI config to disk with restrictive permissions (Unix only).
@@ -636,8 +656,8 @@ pub fn load_ai_config() -> Result<Option<AiConfig>, String> {
     let content = fs::read_to_string(&path)
         .map_err(|e| format!("Failed to read config file: {}", e))?;
 
-    let mut config: AiConfig = serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse config file: {}", e))?;
+    let mut config: AiConfig = parse_config_or_quarantine(&path, &content)
+        .ok_or_else(|| "Failed to parse config file".to_string())?;
 
     // 監査指摘対応 (2026-08-27): レガシー平文 api_key が config.json に残っている場合、
     // フロントへ返す前に空化する（キーの実体は keychain / credentials.json 側が本命。
@@ -861,6 +881,25 @@ pub fn load_settings() -> Result<Option<AppSettings>, String> {
     Ok(read_existing_config().and_then(|c| c.settings))
 }
 
+/// 壊れた config.json を退避して初期化したかの状態。
+///
+/// `backup_file` は**ファイル名のみ**（絶対パスをフロントへ漏らさない）。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConfigHealth {
+    pub recovered: bool,
+    pub backup_file: Option<String>,
+}
+
+/// 起動時の config.json 復旧状態を返す（フロントは一度だけバナー表示する）。
+#[tauri::command]
+pub fn config_health() -> ConfigHealth {
+    ConfigHealth {
+        recovered: crate::models::config::config_recovered(),
+        backup_file: crate::models::config::config_backup_file(),
+    }
+}
+
 /// TEST ONLY: 現在の keyring service 名を返す（E2E のキーチェーン分離ガード用）。
 /// E2E が本番キーチェーンを汚さないよう、アプリが
 /// `DESKSPAWN_KEYCHAIN_SERVICE=com.deskspawn.e2e` 付きで起動されているかを
@@ -969,6 +1008,96 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         std::env::set_var("DESKSPAWN_ROOT", &tmp);
         tmp
+    }
+
+    #[test]
+    fn corrupt_config_returns_defaults_and_is_quarantined() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("corrupt-config");
+        crate::models::config::reset_config_recovery_for_test();
+
+        // BOM 付き・途中で切れた不正 JSON を実ユーザー領域ではなく一時 root に置く。
+        let path = config_file_path().unwrap();
+        std::fs::write(&path, "\u{feff}{ \"provider\": \"openai\", ").unwrap();
+
+        // パース失敗 → None（呼び出し側は既定値で継続する）
+        assert!(read_existing_config().is_none());
+        assert!(load_settings().unwrap().is_none());
+        let defaults = read_existing_config().unwrap_or_default();
+        assert_eq!(defaults.provider, "");
+        assert!(defaults.settings.is_none());
+        assert!(defaults.current_app.is_none());
+
+        // 元ファイルは消え、`.corrupt-` がちょうど 1 つできる
+        assert!(!path.exists(), "壊れた config.json は退避される");
+        let corrupt: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert_eq!(corrupt.len(), 1, ".corrupt- ファイルは 1 つ");
+
+        // プロセス内フラグとバックアップ名（ファイル名のみ）
+        assert!(
+            crate::models::config::config_recovered(),
+            "破損検知フラグが立つ"
+        );
+        let backup = crate::models::config::config_backup_file().expect("backup file");
+        assert!(
+            !backup.contains('/') && !backup.contains('\\'),
+            "返すのはファイル名のみ: {backup}"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn bom_only_config_is_parsed_not_quarantined() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("bom-only-config");
+        crate::models::config::reset_config_recovery_for_test();
+
+        // 先頭に UTF-8 BOM があるだけの正当な JSON は読める（退避しない）。
+        let path = config_file_path().unwrap();
+        std::fs::write(&path, "\u{feff}{\"provider\":\"openai\"}").unwrap();
+
+        let config = read_existing_config().expect("BOM 付き config.json はパースできる");
+        assert_eq!(config.provider, "openai");
+
+        // 元ファイルはその場所に残り、退避ファイルも作られない。
+        assert!(path.exists(), "BOM 付き config.json は退避されない");
+        let corrupt: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .collect();
+        assert!(corrupt.is_empty(), ".corrupt- ファイルは作られない");
+        assert!(
+            !crate::models::config::config_recovered(),
+            "破損検知フラグは立たない"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn corrupt_config_is_still_quarantined() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        let tmp = test_root("corrupt-still-quarantined");
+        crate::models::config::reset_config_recovery_for_test();
+
+        // BOM を落としても壊れている JSON は従来どおり退避される。
+        let path = config_file_path().unwrap();
+        std::fs::write(&path, "\u{feff}{ \"provider\": \"openai\", ").unwrap();
+
+        assert!(read_existing_config().is_none());
+        assert!(!path.exists(), "壊れた config.json は退避される");
+        assert!(
+            crate::models::config::config_recovered(),
+            "破損検知フラグが立つ"
+        );
+
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     // ── is_within_profile（credentials.json プロファイル内ガード）──
