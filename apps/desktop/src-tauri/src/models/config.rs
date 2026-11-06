@@ -1,5 +1,8 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 
 /// Default storage method when none is specified (backward compat).
 fn default_storage_method() -> String {
@@ -144,6 +147,81 @@ impl Default for AiConfig {
     }
 }
 
+// ── Corrupt config recovery ──────────────────────────────────────────────────
+
+/// 破損した config.json を退避したか（プロセス内フラグ）。
+/// 1 回の起動で「退避した」ことをフロントへ 1 度だけ知らせるために使う。
+static CONFIG_RECOVERED: AtomicBool = AtomicBool::new(false);
+
+/// 退避処理を試みたか（パース失敗ごとに何度も rename しない）。
+static CONFIG_QUARANTINE_ATTEMPTED: AtomicBool = AtomicBool::new(false);
+
+/// 退避先ファイル名（**絶対パスは保持しない**）。
+static CONFIG_BACKUP_FILE: Mutex<Option<String>> = Mutex::new(None);
+
+/// 破損した config.json を退避したか。
+pub fn config_recovered() -> bool {
+    CONFIG_RECOVERED.load(Ordering::SeqCst)
+}
+
+/// 退避先ファイルのファイル名（例: `config.json.corrupt-1720000000`）。
+pub fn config_backup_file() -> Option<String> {
+    CONFIG_BACKUP_FILE
+        .lock()
+        .ok()
+        .and_then(|guard| guard.clone())
+}
+
+/// 壊れた config.json を同ディレクトリへ `config.json.corrupt-<UNIX秒>` として
+/// **リネーム（移動）** して退避する。コピーしない。
+///
+/// - 1 回だけ試みる（失敗しても致命でない。起動は既定値で継続する）。
+/// - ログにはパスを出さない（既存方針）。
+/// - 戻り値は退避先のファイル名（失敗時 None）。
+pub fn quarantine_corrupt_config(path: &Path) -> Option<String> {
+    if CONFIG_QUARANTINE_ATTEMPTED.swap(true, Ordering::SeqCst) {
+        return None;
+    }
+
+    // パースに失敗した事実は、退避の成否に関わらず記録する。
+    CONFIG_RECOVERED.store(true, Ordering::SeqCst);
+
+    let Some(file_name) = path.file_name() else {
+        log::warn!("Corrupt config.json could not be moved aside: invalid path");
+        return None;
+    };
+    let ts = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let backup_name = format!("{}.corrupt-{}", file_name.to_string_lossy(), ts);
+    let backup_path = path.with_file_name(&backup_name);
+
+    match std::fs::rename(path, &backup_path) {
+        Ok(()) => {
+            if let Ok(mut slot) = CONFIG_BACKUP_FILE.lock() {
+                *slot = Some(backup_name.clone());
+            }
+            log::warn!("Corrupt config.json was moved aside (backup created)");
+            Some(backup_name)
+        }
+        Err(e) => {
+            log::warn!("Corrupt config.json could not be moved aside: {}", e);
+            None
+        }
+    }
+}
+
+/// テスト専用: プロセス内フラグを初期化する。
+#[cfg(test)]
+pub fn reset_config_recovery_for_test() {
+    CONFIG_RECOVERED.store(false, Ordering::SeqCst);
+    CONFIG_QUARANTINE_ATTEMPTED.store(false, Ordering::SeqCst);
+    if let Ok(mut slot) = CONFIG_BACKUP_FILE.lock() {
+        *slot = None;
+    }
+}
+
 // ── Environment Check ─────────────────────────────────────────────────────────
 
 /// Result of winget availability check.
@@ -240,6 +318,40 @@ mod tests {
     use super::*;
 
     #[test]
+    fn corrupt_config_is_renamed_once_and_flag_is_set() {
+        let _guard = crate::engine::workspace::test_env_lock();
+        reset_config_recovery_for_test();
+
+        let tmp =
+            std::env::temp_dir().join(format!("deskspawn-config-corrupt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        let path = tmp.join("config.json");
+        // BOM 付き・途中で切れた不正 JSON
+        std::fs::write(&path, "\u{feff}{ \"provider\": ").unwrap();
+
+        let backup = quarantine_corrupt_config(&path).expect("backup file name");
+        assert!(!path.exists(), "壊れた config.json は元の場所から消える");
+        assert!(config_recovered(), "破損検知フラグが立つ");
+        assert_eq!(config_backup_file().as_deref(), Some(backup.as_str()));
+        assert!(
+            backup.starts_with("config.json.corrupt-"),
+            "退避名は config.json.corrupt-<UNIX秒>: {backup}"
+        );
+
+        // 2 回目は何も作らない（1 回だけ）
+        assert!(quarantine_corrupt_config(&path).is_none());
+        let corrupt_count = std::fs::read_dir(&tmp)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .count();
+        assert_eq!(corrupt_count, 1, ".corrupt- ファイルは 1 つだけ");
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
     fn ai_config_roundtrip_uses_camel_case_and_preserves_fields() {
         let mut providers = HashMap::new();
         providers.insert(
@@ -275,7 +387,10 @@ mod tests {
         assert!(json.contains("\"storageMethod\""), "json: {json}");
         assert!(json.contains("\"customEndpoint\""), "json: {json}");
         assert!(json.contains("\"currentApp\""), "json: {json}");
-        assert!(!json.contains("api_key"), "no legacy snake_case key: {json}");
+        assert!(
+            !json.contains("api_key"),
+            "no legacy snake_case key: {json}"
+        );
 
         let back: AiConfig = serde_json::from_str(&json).unwrap();
         assert_eq!(back.provider, "openai");
@@ -369,5 +484,3 @@ mod tests {
         assert!(s.simple_mode); // default_simple_mode
     }
 }
-
-

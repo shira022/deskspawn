@@ -227,6 +227,7 @@ pub fn run() {
             commands::ai_config::load_current_app,
             commands::ai_config::save_settings,
             commands::ai_config::load_settings,
+            commands::ai_config::config_health,
             commands::ai_config::reset_app_data,
             commands::ai_config::get_keyring_service,
             // Sidecar management commands

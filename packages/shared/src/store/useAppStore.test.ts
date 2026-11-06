@@ -41,6 +41,7 @@ vi.mock("../lib/storage", () => {
     loadLastProvider: vi.fn().mockResolvedValue(null),
     saveCurrentAppId: vi.fn().mockResolvedValue(undefined),
     loadCurrentAppId: vi.fn().mockResolvedValue(null),
+    loadConfigHealth: vi.fn().mockResolvedValue({ recovered: false }),
     saveSettingsDesktop: vi.fn().mockResolvedValue(undefined),
     loadSettingsDesktop: vi.fn().mockResolvedValue({
       theme: "system",
@@ -171,6 +172,10 @@ describe("useAppStore — initial state", () => {
 
   it("initialized is false", () => {
     expect(useAppStore.getState().initialized).toBe(false);
+  });
+
+  it("configRecovered is false by default", () => {
+    expect(useAppStore.getState().configRecovered).toBe(false);
   });
 
   it("settings have default values", () => {
@@ -661,9 +666,11 @@ describe("useAppStore — initialize()", () => {
     expect(useAppStore.getState().apps).toEqual(storedApps);
   });
 
-  it("loads current app and fetches checkpoints", async () => {
+  it("loads current app and fetches checkpoints when the app still exists", async () => {
     mockStorageFns.loadLastProvider.mockResolvedValue(null);
-    mockStorageFns.listApps.mockResolvedValue([]);
+    mockStorageFns.listApps.mockResolvedValue([
+      { id: "app-loaded", name: "Loaded", createdAt: "2025-01-01", updatedAt: "2025-01-02" },
+    ]);
     mockStorageFns.loadCurrentAppId.mockResolvedValue("app-loaded");
 
     await useAppStore.getState().initialize();
@@ -671,6 +678,45 @@ describe("useAppStore — initialize()", () => {
     expect(useAppStore.getState().currentAppId).toBe("app-loaded");
     expect(mockEngineFns.setAppId).toHaveBeenCalledWith("app-loaded");
     expect(mockEngineFns.listCheckpoints).toHaveBeenCalledWith("app-loaded");
+    expect(mockStorageFns.saveCurrentAppId).not.toHaveBeenCalledWith(null);
+  });
+
+  it("restores currentAppId when loadCurrentAppId points at an existing app", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue(null);
+    mockStorageFns.listApps.mockResolvedValue([
+      { id: "app-1", name: "App 1", createdAt: "2025-01-01", updatedAt: "2025-01-02" },
+    ]);
+    mockStorageFns.loadCurrentAppId.mockResolvedValue("app-1");
+
+    await useAppStore.getState().initialize();
+
+    expect(useAppStore.getState().currentAppId).toBe("app-1");
+  });
+
+  it("self-heals a ghost currentApp when no app exists", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue(null);
+    mockStorageFns.listApps.mockResolvedValue([]);
+    mockStorageFns.loadCurrentAppId.mockResolvedValue("app-ghost");
+
+    await useAppStore.getState().initialize();
+
+    expect(useAppStore.getState().currentAppId).toBeNull();
+    expect(mockStorageFns.saveCurrentAppId).toHaveBeenCalledWith(null);
+    expect(mockEngineFns.setAppId).not.toHaveBeenCalled();
+    expect(mockEngineFns.listCheckpoints).not.toHaveBeenCalled();
+  });
+
+  it("sets configRecovered from config health", async () => {
+    mockStorageFns.loadLastProvider.mockResolvedValue(null);
+    mockStorageFns.listApps.mockResolvedValue([]);
+    mockStorageFns.loadConfigHealth.mockResolvedValue({
+      recovered: true,
+      backupFile: "config.json.corrupt-123",
+    });
+
+    await useAppStore.getState().initialize();
+
+    expect(useAppStore.getState().configRecovered).toBe(true);
   });
 
   it("handles initialization failure gracefully", async () => {

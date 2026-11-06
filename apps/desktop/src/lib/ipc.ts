@@ -31,3 +31,28 @@ export async function getSidecarPort(): Promise<number> {
     return 3009;
   }
 }
+
+// ── Config Health ─────────────────────────────────────────────────────────
+
+export interface ConfigHealth {
+  recovered: boolean;
+  backupFile?: string | null;
+}
+
+/**
+ * 起動時に壊れた config.json を退避したかを取得する。
+ * `backupFile` はファイル名のみ（絶対パスは含まない）。
+ * Tauri が使えない環境では no-op。
+ */
+export async function getConfigHealth(): Promise<ConfigHealth> {
+  if (!(await ensureTauri())) return { recovered: false };
+  try {
+    const health = await tauriApi!.invoke<ConfigHealth>("config_health");
+    return {
+      recovered: !!health?.recovered,
+      backupFile: health?.backupFile ?? null,
+    };
+  } catch {
+    return { recovered: false };
+  }
+}
