@@ -3,7 +3,7 @@
  * Provides a REST API for the frontend (WebView) to manage projects, previews,
  * checkpoints, installs, and the /v1 OpenAI-compatible proxy.
  */
-import express from 'express';
+import express, { type Express } from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -243,6 +243,209 @@ function validateUpstreamUrl(raw: string): { ok: boolean; error?: string; url?: 
   return { ok: true, url: url.origin + url.pathname };
 }
 
+// ── ローカルモデル取得（Ollama / LM Studio）─────────────────────────────────
+// デスクトップ（WebView2 / tauri.localhost オリジン）から localhost の
+// Ollama / LM Studio を直接 fetch すると CORS でブロックされる。サイドカー
+// （bun）経由で取得すればブラウザの CORS 制約を受けない。
+//
+// 注意: /v1 プロキシ用の validateUpstreamUrl（https のみ・localhost 拒否）とは
+// 用途が異なるため、ローカル用の検証関数を別に用意する。こちらは http を許可し、
+// ループバック / プライベートIP のみを許可する（クラウドメタデータ等は明示拒否）。
+
+export type LocalModelProvider = 'ollama' | 'lm-studio';
+
+const LOCAL_MODEL_DEFAULT_ENDPOINTS: Record<LocalModelProvider, string> = {
+  ollama: 'http://localhost:11434',
+  'lm-studio': 'http://localhost:1234/v1',
+};
+
+/** ループバック（127.0.0.0/8）またはプライベートIPv4（RFC1918）か。 */
+function isLoopbackOrPrivateIPv4(host: string): boolean {
+  const parts = host.split('.').map(Number);
+  if (parts.length !== 4 || parts.some((p) => Number.isNaN(p) || p < 0 || p > 255)) return false;
+  const [a, b] = parts;
+  if (a === 127) return true; // 127.0.0.0/8
+  if (a === 10) return true; // 10.0.0.0/8
+  if (a === 172 && b >= 16 && b <= 31) return true; // 172.16.0.0/12
+  if (a === 192 && b === 168) return true; // 192.168.0.0/16
+  return false;
+}
+
+/** クラウドメタデータ等、明示的に拒否するホスト。 */
+const BLOCKED_LOCAL_HOSTS = new Set([
+  '169.254.169.254',
+  '100.100.100.200',
+  '0.0.0.0',
+  'metadata.google.internal',
+]);
+
+/**
+ * ローカルモデル取得用エンドポイントを検証する（SSRF対策）。
+ * - スキームは http: / https: のみ
+ * - ユーザー情報（user:pass@）を含めない
+ * - ホストはループバック（localhost / 127.0.0.0/8 / ::1）または
+ *   プライベートIPv4（10/8, 172.16/12, 192.168/16）のみ
+ * - クラウドメタデータ（169.254.169.254 等）は明示的に拒否
+ * WHATWG URL は変形IPv4（10進/16進）を正規化するため、正規化後の hostname を検査する。
+ */
+export function validateLocalEndpoint(raw: string): { ok: boolean; error?: string; url?: string } {
+  if (typeof raw !== 'string' || !raw.trim()) {
+    return { ok: false, error: 'URL が指定されていません' };
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { ok: false, error: 'URL を解析できません' };
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    return { ok: false, error: 'http または https の URL のみ許可されます' };
+  }
+  if (url.username || url.password) {
+    return { ok: false, error: 'URL にユーザー情報を含めることはできません' };
+  }
+  let host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase(); // IPv6 の [] を除去
+  if (host.endsWith('.')) host = host.slice(0, -1); // 末尾ドット形式（FQDN IP）対策
+  if (!host) {
+    return { ok: false, error: 'ホスト名が指定されていません' };
+  }
+  if (BLOCKED_LOCAL_HOSTS.has(host)) {
+    return { ok: false, error: 'このホストへの接続は許可されません' };
+  }
+  const v6 = parseIPv6Groups(host);
+  if (v6) {
+    // ::1（ループバック）のみ許可。IPv4射影は埋め込みIPv4を検査する。
+    const isLoopbackV6 = v6.every((g, i) => (i === 7 ? g === 1 : g === 0));
+    if (isLoopbackV6) {
+      return { ok: true, url: `${url.origin}${url.pathname}`.replace(/\/+$/, '') };
+    }
+    const isMapped =
+      v6[0] === 0 && v6[1] === 0 && v6[2] === 0 && v6[3] === 0 && v6[4] === 0 && v6[5] === 0xffff;
+    if (isMapped) {
+      const ipv4 = `${(v6[6] >> 8) & 0xff}.${v6[6] & 0xff}.${(v6[7] >> 8) & 0xff}.${v6[7] & 0xff}`;
+      if (isLoopbackOrPrivateIPv4(ipv4)) {
+        return { ok: true, url: `${url.origin}${url.pathname}`.replace(/\/+$/, '') };
+      }
+    }
+    return { ok: false, error: 'ローカルまたはプライベートアドレスのみ許可されます' };
+  }
+  if (host === 'localhost') {
+    return { ok: true, url: `${url.origin}${url.pathname}`.replace(/\/+$/, '') };
+  }
+  if (!isLoopbackOrPrivateIPv4(host)) {
+    return { ok: false, error: 'ローカルまたはプライベートアドレスのみ許可されます' };
+  }
+  return { ok: true, url: `${url.origin}${url.pathname}`.replace(/\/+$/, '') };
+}
+
+/** 上流レスポンスを最大 maxBytes まで読み取り、超過時は打ち切ってエラーにする。 */
+async function readCappedText(res: Response, maxBytes: number): Promise<string> {
+  if (!res.body) {
+    const text = await res.text();
+    if (new TextEncoder().encode(text).length > maxBytes) {
+      throw new Error('upstream response too large');
+    }
+    return text;
+  }
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error('upstream response too large');
+    }
+    chunks.push(value);
+  }
+  const merged = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    merged.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(merged);
+}
+
+/** provider に応じた上流モデル一覧 URL を組み立てる。 */
+function buildLocalModelsUrl(provider: LocalModelProvider, base: string): string {
+  const trimmed = base.replace(/\/+$/, '');
+  if (provider === 'ollama') {
+    return trimmed.endsWith('/api/tags') ? trimmed : `${trimmed}/api/tags`;
+  }
+  // lm-studio の既定 base は .../v1。既に /v1 で終わる場合は /models のみ付与する。
+  return /\/v1$/i.test(trimmed) ? `${trimmed}/models` : `${trimmed}/v1/models`;
+}
+
+export type LocalModelsResult =
+  | { ok: true; models: string[] }
+  | {
+      ok: false;
+      status: number;
+      error: string;
+      errorCode: 'INVALID_LOCAL_ENDPOINT' | 'LOCAL_UPSTREAM_FAILED';
+    };
+
+const LOCAL_MODELS_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Ollama / LM Studio からモデル一覧を取得する。
+ * エンドポイント不正は 400、上流の失敗は 502 を表す結果を返す。
+ */
+export async function fetchLocalModels(
+  provider: LocalModelProvider,
+  endpoint?: string,
+): Promise<LocalModelsResult> {
+  const raw =
+    typeof endpoint === 'string' && endpoint.trim()
+      ? endpoint
+      : LOCAL_MODEL_DEFAULT_ENDPOINTS[provider];
+  const check = validateLocalEndpoint(raw);
+  if (!check.ok || !check.url) {
+    return {
+      ok: false,
+      status: 400,
+      error: check.error || 'Invalid local endpoint',
+      errorCode: 'INVALID_LOCAL_ENDPOINT',
+    };
+  }
+  const target = buildLocalModelsUrl(provider, check.url);
+  try {
+    // codeql[js/request-forgery]
+    const upstream = await fetch(target, {
+      method: 'GET',
+      redirect: 'manual',
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!upstream.ok) {
+      return {
+        ok: false,
+        status: 502,
+        error: `Local upstream responded with ${upstream.status}`,
+        errorCode: 'LOCAL_UPSTREAM_FAILED',
+      };
+    }
+    const text = await readCappedText(upstream, LOCAL_MODELS_MAX_BYTES);
+    const data = JSON.parse(text) as { models?: unknown; data?: unknown };
+    const rawModels = provider === 'ollama' ? data.models : data.data;
+    const items = Array.isArray(rawModels) ? (rawModels as Array<Record<string, unknown>>) : [];
+    const models = items
+      .map((m) => (provider === 'ollama' ? m?.name : m?.id))
+      .filter((v): v is string => typeof v === 'string' && v.length > 0);
+    return { ok: true, models };
+  } catch (e) {
+    return {
+      ok: false,
+      status: 502,
+      error: e instanceof Error ? e.message : 'Local upstream request failed',
+      errorCode: 'LOCAL_UPSTREAM_FAILED',
+    };
+  }
+}
+
 /**
  * package.json の scripts.dev が "vite" と完全一致する場合のみ許可する
  * （Critical-1 実行時ブロック: AI が scripts.dev を任意コードに書き換えても
@@ -282,7 +485,7 @@ function validateDevScript(dir: string): { ok: boolean; error?: string } {
   return { ok: true };
 }
 
-const app = express();
+export const app: Express = express();
 
 // ── H1: 認証トークン ──────────────────────────────────────────────────────────
 // Rust が起動時に生成し DESKSPAWN_AUTH_TOKEN で渡す。外部オリジン（任意の
@@ -1659,6 +1862,26 @@ app.post('/api/config', (req, res) => {
   }
 });
 
+// ── ローカルモデル一覧（Ollama / LM Studio）─────────────────────────────────
+// WebView からの CORS 制約を避けるため、サイドカーがローカルサーバーへ中継する。
+app.post('/api/local-models', async (req, res) => {
+  const provider = req.body?.provider;
+  if (provider !== 'ollama' && provider !== 'lm-studio') {
+    res.status(400).json({
+      error: 'provider must be "ollama" or "lm-studio"',
+      errorCode: 'INVALID_LOCAL_ENDPOINT',
+    });
+    return;
+  }
+  const endpoint = typeof req.body?.endpoint === 'string' ? req.body.endpoint : undefined;
+  const result = await fetchLocalModels(provider, endpoint);
+  if (!result.ok) {
+    res.status(result.status).json({ error: result.error, errorCode: result.errorCode });
+    return;
+  }
+  res.json({ models: result.models });
+});
+
 // ── OpenAI互換プロキシ (/v1/*) ──────────────────────────────────────────────
 // デスクトップ(WebView2)からはCORSで直接呼べないカスタムエンドポイントを中継する。
 // フロントエンドは baseURL=http://localhost:<sidecar待受ポート>/v1 を指定する
@@ -1701,6 +1924,31 @@ const UPSTREAM_HEADER_TIMEOUT_MS = 30_000;
 /** SSE ストリームでチャンク間に許容する無通信時間。 */
 const SSE_IDLE_TIMEOUT_MS = 120_000;
 
+/**
+ * fetch を「ヘッダ受信まで」のタイムアウト付きで実行する共通ヘルパー。
+ * AbortSignal.timeout() はボディ読了までタイマーが生き続け SSE を途中で切ってしまうため、
+ * fetch が解決した時点でタイマーを解除する（ボディ読取には適用しない）。
+ *
+ * /v1（公開 https 上流）と /local/v1（ローカル上流）の両プロキシで共有する。
+ */
+async function fetchWithHeaderTimeout(
+  url: URL,
+  init: RequestInit,
+  controller: AbortController = new AbortController(),
+  headerTimeoutMs: number = UPSTREAM_HEADER_TIMEOUT_MS,
+): Promise<Response> {
+  const headerTimer = setTimeout(
+    () => controller.abort(new Error('upstream headers timeout')),
+    headerTimeoutMs,
+  );
+  try {
+    // codeql[js/request-forgery]
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(headerTimer);
+  }
+}
+
 export async function fetchUpstreamVerified(
   url: URL,
   init: RequestInit,
@@ -1725,18 +1973,7 @@ export async function fetchUpstreamVerified(
   ) {
     throw new Error('blocked: local/private address');
   }
-  // ヘッダ受信までのタイムアウト。AbortSignal.timeout() はボディ読了まで
-  // タイマーが生き続け SSE を途中で切ってしまうため、fetch 解決後に解除する。
-  const headerTimer = setTimeout(
-    () => controller.abort(new Error('upstream headers timeout')),
-    headerTimeoutMs,
-  );
-  try {
-    // codeql[js/request-forgery]
-    return await fetch(url, { ...init, signal: controller.signal });
-  } finally {
-    clearTimeout(headerTimer);
-  }
+  return fetchWithHeaderTimeout(url, init, controller, headerTimeoutMs);
 }
 
 /**
@@ -1768,6 +2005,39 @@ export async function pumpStreamWithIdleTimeout(
     }
   } finally {
     if (idleTimer !== undefined) clearTimeout(idleTimer);
+  }
+}
+
+/**
+ * 上流レスポンスをクライアントへ中継する共通ヘルパー。
+ * SSE（text/event-stream）は pumpStreamWithIdleTimeout で逐次転送し、
+ * それ以外はボディをそのまま送る。/(local)v1 の両プロキシで共有する。
+ */
+async function relayUpstreamResponse(
+  req: express.Request,
+  res: express.Response,
+  upstreamRes: Response,
+): Promise<void> {
+  res.status(upstreamRes.status);
+  const contentType = upstreamRes.headers.get('content-type') || '';
+  const isStream =
+    contentType.includes('text/event-stream') ||
+    String(req.headers.accept || '').includes('text/event-stream');
+
+  if (isStream && upstreamRes.body) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+    const reader = upstreamRes.body.getReader();
+    try {
+      await pumpStreamWithIdleTimeout(reader, (value) => res.write(value));
+    } finally {
+      res.end();
+    }
+  } else {
+    const text = await upstreamRes.text();
+    if (contentType) res.setHeader('Content-Type', contentType);
+    res.send(text);
   }
 }
 
@@ -1880,32 +2150,92 @@ app.use('/v1', async (req, res) => {
     });
     // codeql[js/request-forgery]
     const upstreamRes = await fetchUpstreamVerified(rebuiltUrl, init, upstreamController);
-    res.status(upstreamRes.status);
-
-    const contentType = upstreamRes.headers.get('content-type') || '';
-    const isStream =
-      contentType.includes('text/event-stream') ||
-      String(req.headers.accept || '').includes('text/event-stream');
-
-    if (isStream && upstreamRes.body) {
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      const reader = upstreamRes.body.getReader();
-      try {
-        await pumpStreamWithIdleTimeout(reader, (value) => res.write(value));
-      } finally {
-        res.end();
-      }
-    } else {
-      const text = await upstreamRes.text();
-      if (contentType) res.setHeader('Content-Type', contentType);
-      res.send(text);
-    }
+    await relayUpstreamResponse(req, res, upstreamRes);
   } catch (error: any) {
     console.error('[proxy] error:', error?.message || error);
     if (!res.headersSent) {
       res.status(502).json({ error: `Proxy error: ${error?.message || error}`, errorCode: 'PROXY_ERROR' });
+    } else {
+      res.end();
+    }
+  }
+});
+
+// ── ローカル専用プロキシ (/local/v1/*) ──────────────────────────────────────
+// デスクトップ(WebView2 / tauri.localhost)から Ollama / LM Studio を直接 fetch
+// すると CORS でブロックされるため、サイドカーが中継する。
+// 上流は毎回リクエストヘッダ x-local-endpoint で受け取り、validateLocalEndpoint
+// （ループバック / プライベートIPのみ・メタデータ拒否・http(s)限定）で検証する。
+// 転送パスは OpenAI 互換の最小許可リストのみ。
+const ALLOWED_LOCAL_UPSTREAM_PATHS = new Set([
+  '/models',
+  '/chat/completions',
+  '/completions',
+]);
+
+app.use('/local/v1', async (req, res) => {
+  try {
+    const rawEndpoint = getHeader(req, 'x-local-endpoint');
+    if (!rawEndpoint) {
+      res.status(400).json({
+        error: 'x-local-endpoint header is required',
+        errorCode: 'INVALID_LOCAL_ENDPOINT',
+      });
+      return;
+    }
+    // ローカル用の検証を毎回通す（ヘッダはクライアント制御下のため）。
+    const endpointCheck = validateLocalEndpoint(rawEndpoint);
+    if (!endpointCheck.ok || !endpointCheck.url) {
+      res.status(400).json({
+        error: endpointCheck.error || 'Invalid local endpoint',
+        errorCode: 'INVALID_LOCAL_ENDPOINT',
+      });
+      return;
+    }
+    const path = req.path; // /local/v1 マウント内ではプレフィックス除去済み
+    if (!ALLOWED_LOCAL_UPSTREAM_PATHS.has(path)) {
+      res.status(400).json({
+        error: 'Invalid upstream path',
+        errorCode: 'INVALID_UPSTREAM_PATH',
+      });
+      return;
+    }
+    // クエリ文字列はそのまま上流へ転送する。
+    const queryIndex = req.originalUrl.indexOf('?');
+    const query = queryIndex === -1 ? '' : req.originalUrl.slice(queryIndex);
+
+    // 検証済み URL から転送先を組み立てる（ホストは validateLocalEndpoint 通過済み）。
+    const targetUrl = new URL(endpointCheck.url);
+    const basePath = targetUrl.pathname.replace(/\/+$/, '');
+    targetUrl.pathname = `${basePath}${path}`;
+    targetUrl.search = query;
+
+    const headers: Record<string, string> = {};
+    if (typeof req.headers['content-type'] === 'string') {
+      headers['Content-Type'] = req.headers['content-type'];
+    }
+    if (typeof req.headers.accept === 'string') headers['Accept'] = req.headers.accept;
+    const authorization = getHeader(req, 'authorization');
+    if (authorization) headers['Authorization'] = authorization;
+
+    const init: RequestInit = { method: req.method, headers };
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      init.body = JSON.stringify(req.body ?? {});
+    }
+
+    const upstreamController = new AbortController();
+    res.on('close', () => {
+      if (!res.writableEnded) upstreamController.abort();
+    });
+    const upstreamRes = await fetchWithHeaderTimeout(targetUrl, init, upstreamController);
+    await relayUpstreamResponse(req, res, upstreamRes);
+  } catch (error: any) {
+    console.error('[local-proxy] error:', error?.message || error);
+    if (!res.headersSent) {
+      res.status(502).json({
+        error: `Local proxy error: ${error?.message || error}`,
+        errorCode: 'LOCAL_UPSTREAM_FAILED',
+      });
     } else {
       res.end();
     }

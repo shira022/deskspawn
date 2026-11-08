@@ -173,6 +173,53 @@ async function fetchModelsFromModelsDev(provider: string): Promise<ModelInfo[]> 
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
+// ─── Local providers (Ollama / LM Studio) ─────────────────────────────────────
+
+type LocalModelProvider = "ollama" | "lm-studio";
+
+const LOCAL_MODEL_DEFAULT_ENDPOINTS: Record<LocalModelProvider, string> = {
+  ollama: "http://localhost:11434",
+  "lm-studio": "http://localhost:1234/v1",
+};
+
+/** ローカルモデル ID を ModelInfo に変換する（全ローカルモデル共通の既定値）。 */
+function toLocalModelInfo(id: string): ModelInfo {
+  return {
+    id,
+    name: id,
+    supportsReasoning: false,
+    supportsToolCall: true,
+    supportsImageInput: false,
+    contextLimit: 8192,
+    maxOutput: 4096,
+  };
+}
+
+/**
+ * サイドカー経由で Ollama / LM Studio のモデル一覧を取得する（デスクトップ専用）。
+ * WebView2 から localhost を直接 fetch すると CORS でブロックされるため、
+ * サイドカーの /api/local-models に中継させる。エラーは握り潰さず throw する。
+ */
+async function fetchLocalModelsViaSidecar(
+  provider: LocalModelProvider,
+  endpoint: string,
+): Promise<ModelInfo[]> {
+  const res = await sidecarFetch("/api/local-models", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ provider, endpoint }),
+    signal: AbortSignal.timeout(10_000),
+  });
+  if (!res.ok) {
+    throw new Error(`Local models fetch failed: ${res.status}`);
+  }
+  const data = (await res.json()) as { models?: string[] };
+  return (data.models ?? []).map(toLocalModelInfo);
+}
+
 // ─── Ollama ────────────────────────────────────────────────────────────────────
 
 interface OllamaModel {
@@ -186,20 +233,25 @@ interface OllamaTagsResponse {
 }
 
 async function fetchOllamaModels(endpoint: string): Promise<ModelInfo[]> {
-  const base = endpoint || "http://localhost:11434";
+  const base = endpoint || LOCAL_MODEL_DEFAULT_ENDPOINTS.ollama;
+  if (isDesktopEnv()) {
+    return fetchLocalModelsViaSidecar("ollama", base);
+  }
   const url = `${base.replace(/\/+$/, "")}/api/tags`;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Ollama /api/tags failed: ${res.status}`);
   const data = (await res.json()) as OllamaTagsResponse;
-  return (data.models ?? []).map((m) => ({
-    id: m.name,
-    name: m.name,
-    supportsReasoning: false,
-    supportsToolCall: true,
-    supportsImageInput: false,
-    contextLimit: 8192,
-    maxOutput: 4096,
-  }));
+  return (data.models ?? []).map((m) => toLocalModelInfo(m.name));
+}
+
+// ─── LM Studio ─────────────────────────────────────────────────────────────────
+
+async function fetchLmStudioModels(endpoint: string): Promise<ModelInfo[]> {
+  const base = endpoint || LOCAL_MODEL_DEFAULT_ENDPOINTS["lm-studio"];
+  if (isDesktopEnv()) {
+    return fetchLocalModelsViaSidecar("lm-studio", base);
+  }
+  return fetchCustomModels(base, "");
 }
 
 // ─── Custom (OpenAI-compatible) ─────────────────────────────────────────────────
@@ -291,10 +343,10 @@ export async function getModelsForProvider(
     case "azure-foundry":
       return [];
     case "ollama":
-      return fetchOllamaModels(endpoint ?? "http://localhost:11434");
+      return fetchOllamaModels(endpoint ?? LOCAL_MODEL_DEFAULT_ENDPOINTS.ollama);
     case "lm-studio":
       // ローカルの LM Studio サーバーが読み込んでいるモデル一覧を取得する
-      return fetchCustomModels(endpoint ?? "http://localhost:1234/v1", "");
+      return fetchLmStudioModels(endpoint ?? LOCAL_MODEL_DEFAULT_ENDPOINTS["lm-studio"]);
     case "openai-compatible": {
       if (!endpoint) throw new Error("customEndpoint is required for openai-compatible provider");
       return fetchCustomModels(endpoint, apiKey ?? "");

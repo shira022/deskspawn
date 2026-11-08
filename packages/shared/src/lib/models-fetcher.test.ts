@@ -819,7 +819,10 @@ describe("getModelsForProvider", () => {
       desktopMocks.sidecarFetch.mockResolvedValue(createJsonResponse(CUSTOM_RESPONSE));
 
       const { getModelsForProvider } = await getModule();
-      const models = await getModelsForProvider("lm-studio");
+      const models = await getModelsForProvider(
+        "openai-compatible",
+        "https://up.example.com/v1",
+      );
 
       // ② invoke が reject しても握りつぶして続行する
       expect(models.map((m) => m.id)).toEqual(["my-custom-model", "another-model"]);
@@ -829,11 +832,106 @@ describe("getModelsForProvider", () => {
         { headers: Record<string, string>; signal: AbortSignal },
       ];
       expect(path).toBe("/v1/models");
-      // ④ apiKey なし（lm-studio は平文ローカル）→ Authorization なし
+      // ④ apiKey なし → Authorization なし
       expect(init.headers).toEqual({ Accept: "application/json" });
       expect(init.headers.Authorization).toBeUndefined();
       expect(init.signal).toBeInstanceOf(AbortSignal);
       expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("fetches ollama models through the sidecar /api/local-models endpoint", async () => {
+      desktopMocks.sidecarFetch.mockResolvedValue(
+        createJsonResponse({ models: ["llama3:latest", "mistral:latest"] }),
+      );
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider("ollama");
+
+      expect(models.map((m) => m.id)).toEqual(["llama3:latest", "mistral:latest"]);
+      expect(models[0]).toMatchObject({
+        supportsToolCall: true,
+        supportsImageInput: false,
+        contextLimit: 8192,
+        maxOutput: 4096,
+      });
+      expect(desktopMocks.sidecarFetch).toHaveBeenCalledTimes(1);
+      const [path, init] = desktopMocks.sidecarFetch.mock.calls[0] as [
+        string,
+        { method: string; body: string; headers: Record<string, string>; signal: AbortSignal },
+      ];
+      expect(path).toBe("/api/local-models");
+      expect(init.method).toBe("POST");
+      expect(init.headers).toMatchObject({ "Content-Type": "application/json" });
+      expect(JSON.parse(init.body)).toEqual({
+        provider: "ollama",
+        endpoint: "http://localhost:11434",
+      });
+      expect(init.signal).toBeInstanceOf(AbortSignal);
+      expect(desktopMocks.invoke).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("fetches lm-studio models through the sidecar /api/local-models endpoint", async () => {
+      desktopMocks.sidecarFetch.mockResolvedValue(
+        createJsonResponse({ models: ["qwen2.5-7b-instruct", "llama-3.2-3b-instruct"] }),
+      );
+
+      const { getModelsForProvider } = await getModule();
+      const models = await getModelsForProvider("lm-studio");
+
+      expect(models.map((m) => m.id)).toEqual([
+        "qwen2.5-7b-instruct",
+        "llama-3.2-3b-instruct",
+      ]);
+      expect(desktopMocks.sidecarFetch).toHaveBeenCalledTimes(1);
+      const [path, init] = desktopMocks.sidecarFetch.mock.calls[0] as [
+        string,
+        { method: string; body: string },
+      ];
+      expect(path).toBe("/api/local-models");
+      expect(init.method).toBe("POST");
+      expect(JSON.parse(init.body)).toEqual({
+        provider: "lm-studio",
+        endpoint: "http://localhost:1234/v1",
+      });
+      expect(desktopMocks.invoke).not.toHaveBeenCalled();
+      expect(mockFetch).not.toHaveBeenCalled();
+    });
+
+    it("uses the provided endpoint for local models on desktop", async () => {
+      desktopMocks.sidecarFetch.mockResolvedValue(
+        createJsonResponse({ models: ["remote-model"] }),
+      );
+
+      const { getModelsForProvider } = await getModule();
+      await getModelsForProvider("ollama", "http://192.168.1.20:11434");
+
+      const [, init] = desktopMocks.sidecarFetch.mock.calls[0] as [
+        string,
+        { body: string },
+      ];
+      expect(JSON.parse(init.body)).toEqual({
+        provider: "ollama",
+        endpoint: "http://192.168.1.20:11434",
+      });
+    });
+
+    it("throws when the sidecar local-models request fails", async () => {
+      desktopMocks.sidecarFetch.mockResolvedValue({ ok: false, status: 502 });
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(getModelsForProvider("ollama")).rejects.toThrow(
+        "Local models fetch failed: 502",
+      );
+    });
+
+    it("throws when the sidecar local-models request rejects", async () => {
+      desktopMocks.sidecarFetch.mockRejectedValue(new Error("sidecar down"));
+
+      const { getModelsForProvider } = await getModule();
+
+      await expect(getModelsForProvider("lm-studio")).rejects.toThrow("sidecar down");
     });
   });
 });
