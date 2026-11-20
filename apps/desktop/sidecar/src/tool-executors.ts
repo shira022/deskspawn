@@ -384,8 +384,9 @@ function classifyTsError(message: string, filePath?: string): Pick<ErrorEntry, '
 async function getTsErrors(): Promise<ErrorEntry[]> {
   const errors: ErrorEntry[] = [];
   try {
-    // Run tsc via the Rust security server (validated command allowlist)
-    const result = await securityPost('/api/run-shell', { command: 'npx tsc --noEmit' });
+    // Run tsc via the Rust security server (validated command allowlist).
+    // Bun 経由で実行し、Node 非依存にする（ストア版は Node を同梱しない）。
+    const result = await securityPost('/api/run-shell', { command: 'bun x tsc --noEmit' });
     // If exit code is 0, no errors — success path returns stdout
     if (result.exit_code === 0) return errors;
     const output = result.stderr || result.stdout || '';

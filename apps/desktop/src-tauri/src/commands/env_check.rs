@@ -1,43 +1,5 @@
-use crate::models::config::{EnvCheckItem, WingetStatus};
+use crate::models::config::WingetStatus;
 use std::process::Command;
-
-const WINGET_NODEJS: &str = "OpenJS.NodeJS.LTS";
-
-/// Check if Node.js >= 20 is installed.
-#[tauri::command]
-pub fn check_environment() -> Result<Vec<EnvCheckItem>, String> {
-    let mut results: Vec<EnvCheckItem> = Vec::new();
-
-    // ── Node.js ────────────────────────────────────────────────────────────
-    let node_check = check_tool(
-        "Node.js",
-        "Node.js >= 20 runtime",
-        "node --version",
-        |output| {
-            let version_str = output.trim();
-            if let Some(ver) = version_str.strip_prefix('v') {
-                let major: u32 = ver
-                    .split('.')
-                    .next()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
-                if major >= 20 {
-                    Ok(())
-                } else {
-                    Err(format!(
-                        "Node.js version {} is too old. Need >= 20",
-                        version_str
-                    ))
-                }
-            } else {
-                Err(format!("Unexpected node version output: {}", version_str))
-            }
-        },
-    );
-    results.push(add_winget_meta(node_check, Some(WINGET_NODEJS), Some(30)));
-
-    Ok(results)
-}
 
 /// Check whether winget (Windows Package Manager) is available on this system.
 #[tauri::command]
@@ -150,67 +112,6 @@ pub fn open_url(url: String) -> Result<(), String> {
             .map(|_| ())
     };
     result.map_err(|e| format!("Failed to open URL: {}", e))
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────
-
-fn check_tool(
-    name: &str,
-    description: &str,
-    check_command: &str,
-    validator: fn(&str) -> Result<(), String>,
-) -> EnvCheckItem {
-    let parts: Vec<&str> = check_command.splitn(2, ' ').collect();
-    let program = parts.first().unwrap_or(&"");
-    let args = parts.get(1).unwrap_or(&"");
-
-    let output = Command::new(program)
-        .args(args.split_whitespace())
-        .output();
-
-    let (status, download_url) = match output {
-        Ok(out) => {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            match validator(&stdout) {
-                Ok(_) => ("ok".to_string(), None),
-                Err(msg) => {
-                    log::warn!("{} check failed: {}", name, msg);
-                    ("fail".to_string(), get_download_url(name))
-                }
-            }
-        }
-        Err(e) => {
-            log::warn!("{} check error: {}", name, e);
-            ("fail".to_string(), get_download_url(name))
-        }
-    };
-
-    EnvCheckItem {
-        name: name.to_string(),
-        description: description.to_string(),
-        check_command: check_command.to_string(),
-        status,
-        download_url,
-        winget_package: None,
-        size_mb: None,
-    }
-}
-
-fn add_winget_meta(
-    mut item: EnvCheckItem,
-    winget_package: Option<&str>,
-    size_mb: Option<u32>,
-) -> EnvCheckItem {
-    item.winget_package = winget_package.map(|s| s.to_string());
-    item.size_mb = size_mb;
-    item
-}
-
-fn get_download_url(name: &str) -> Option<String> {
-    match name {
-        "Node.js" => Some("https://nodejs.org/en/download/".to_string()),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
