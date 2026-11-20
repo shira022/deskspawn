@@ -7,7 +7,7 @@
     ".": "./src/index.ts"
   },
   "dependencies": {
-    "ai": "^6.0.198",
+    "ai": "^7.0.157",
     "zod": "^4.6.7"
   },
   "devDependencies": {
