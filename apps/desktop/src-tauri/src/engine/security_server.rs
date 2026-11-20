@@ -406,12 +406,14 @@ fn execute_shell_action(workspace: &Path, command: &str) -> Result<ShellResult, 
         return Err(format!("Command not allowed: {}", command));
     }
 
-    // Critical-1: npm run はスクリプト名 + package.json scripts.dev を検証する。
-    //（is_command_allowed は "npm run" で始まれば true のまま — 実行可否の厳格化はここ）
+    // Critical-1: npm run / bun run はスクリプト名 + package.json scripts.dev を検証する。
+    //（is_command_allowed は "npm run" / "bun run" で始まれば true のまま — 実行可否の厳格化はここ）
     let trimmed = command.trim();
-    if trimmed.starts_with("npm run") && !security::is_npm_run_allowed(command, workspace) {
+    if (trimmed.starts_with("npm run") || trimmed.starts_with("bun run"))
+        && !security::is_npm_run_allowed(command, workspace)
+    {
         return Err(format!(
-            "Command not allowed: {}. npm run is limited to dev (scripts.dev must be \"vite\"), build, preview.",
+            "Command not allowed: {}. npm run / bun run is limited to dev (scripts.dev must be \"vite\"), build, preview.",
             command
         ));
     }
@@ -425,9 +427,37 @@ fn execute_shell_action(workspace: &Path, command: &str) -> Result<ShellResult, 
     let program = parts[0];
     let args = &parts[1..];
 
-    log::info!("Security server running: {} (sanitized from: {})", sanitized, command);
+    // 同梱 bun は PATH に依存せず絶対パスで起動する。解決できない場合は
+    // パスを含めない固定文言で失敗させる（パスはログ・エラーに出さない）。
+    let resolved_program = if program == "bun" {
+        match crate::engine::bun::resolve_bun_path() {
+            Some(path) => path.to_string_lossy().into_owned(),
+            None => {
+                return Err(
+                    "bun が見つかりません（同梱ランタイムの配置を確認してください）".to_string(),
+                )
+            }
+        }
+    } else {
+        program.to_string()
+    };
 
-    let output = execute_with_timeout(program, args, workspace, 120_000)?;
+    log::info!(
+        "Security server running: {} (sanitized from: {})",
+        sanitized,
+        command
+    );
+
+    let output =
+        execute_with_timeout(&resolved_program, args, workspace, 120_000).map_err(|e| {
+            // 絶対パスで起動した場合も、エラー文言はユーザー入力どおりの
+            // コマンド名（bun）に置き換えてパスを露出させない。
+            if resolved_program.as_str() == program {
+                e
+            } else {
+                e.replace(&resolved_program, program)
+            }
+        })?;
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();

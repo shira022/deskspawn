@@ -361,6 +361,29 @@ function Build-TauriOverride {
   }
 }
 
+# Download the pinned Bun runtime bundled as `binaries/bun-<triple>` (externalBin).
+# Idempotent: scripts/fetch-bun.mjs skips the download when it is up to date.
+function Get-BundledBun {
+  param([string]$RepoDir)
+  Push-Location $RepoDir
+  try {
+    if (Test-Command 'node') {
+      Write-Log 'Fetching bundled bun runtime (node scripts/fetch-bun.mjs).'
+      node scripts/fetch-bun.mjs
+    } elseif (Test-Command 'bun') {
+      Write-Log 'Fetching bundled bun runtime (bun scripts/fetch-bun.mjs).'
+      bun scripts/fetch-bun.mjs
+    } else {
+      Die 'Cannot fetch the bundled bun runtime: node (or bun) is required. Install Node.js 20+ and re-run, or run: node scripts/fetch-bun.mjs'
+    }
+    if ($LASTEXITCODE -ne 0) {
+      Die 'Failed to fetch the bundled bun runtime. Re-run: node scripts/fetch-bun.mjs'
+    }
+  } finally {
+    Pop-Location
+  }
+}
+
 function Build-Tauri {
   param([string]$RepoDir)
   if ($script:BuildPath -eq 'pnpm') {
@@ -453,6 +476,7 @@ function Main {
     return
   }
 
+  Get-BundledBun -RepoDir $repoDir
   Build-Tauri -RepoDir $repoDir
 
   Show-Summary -RepoDir $repoDir
