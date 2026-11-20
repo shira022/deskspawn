@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // ── Mock all AI SDK provider packages ──────────────────────────────────────────
 vi.mock("@ai-sdk/openai", () => ({
@@ -61,7 +61,9 @@ vi.mock("../lib/platform", () => ({
 
 vi.mock("../lib/sidecar", () => ({
   sidecarBase: vi.fn(() => "http://127.0.0.1:3009"),
-  sidecarFetchWithToken: vi.fn(),
+  sidecarFetchWithToken: vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
+    fetch(input, init),
+  ),
   sidecarFetch: vi.fn(),
 }));
 
@@ -442,6 +444,10 @@ describe("getModel — all 9 providers", () => {
     isDesktopEnvMock.mockReturnValue(false);
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("returns a model instance for every ProviderKind", () => {
     const kinds = Object.keys(providerCategories) as ProviderKind[];
 
@@ -505,6 +511,97 @@ describe("getModel — all 9 providers", () => {
     const calls = vi.mocked(createOpenAICompatible).mock.calls;
     const opts = calls[calls.length - 1][0];
     expect(opts.baseURL).toBe("https://my-proxy.example.com/v1");
+    expect(opts.fetch).toBeUndefined();
+  });
+
+  it("routes desktop ollama through the sidecar local proxy with x-local-endpoint", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    getModel({ provider: "ollama", model: "llama3.2" });
+
+    const calls = vi.mocked(createOpenAICompatible).mock.calls;
+    const opts = calls[calls.length - 1][0] as {
+      baseURL: string;
+      fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+    };
+    expect(opts.baseURL).toBe(`${sidecarBase()}/local/v1`);
+    expect(opts.fetch).toBeTypeOf("function");
+
+    await opts.fetch!(`${opts.baseURL}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "llama3.2", messages: [] }),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit];
+    expect(String(url)).toBe("http://127.0.0.1:3009/local/v1/chat/completions");
+    expect(new Headers(init.headers).get("x-local-endpoint")).toBe(
+      "http://localhost:11434/v1",
+    );
+  });
+
+  it("routes desktop lm-studio through the sidecar local proxy with x-local-endpoint", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    getModel({ provider: "lm-studio", model: "qwen2.5-7b-instruct" });
+
+    const calls = vi.mocked(createOpenAICompatible).mock.calls;
+    const opts = calls[calls.length - 1][0] as {
+      baseURL: string;
+      fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+    };
+    expect(opts.baseURL).toBe(`${sidecarBase()}/local/v1`);
+
+    await opts.fetch!(`${opts.baseURL}/chat/completions`, { method: "POST" });
+
+    const [url, init] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit];
+    expect(String(url)).toBe("http://127.0.0.1:3009/local/v1/chat/completions");
+    expect(new Headers(init.headers).get("x-local-endpoint")).toBe(
+      "http://localhost:1234/v1",
+    );
+  });
+
+  it("uses the custom endpoint as x-local-endpoint for desktop ollama", async () => {
+    isDesktopEnvMock.mockReturnValue(true);
+    const fetchMock = vi.fn().mockResolvedValue(new Response("{}", { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    getModel({
+      provider: "ollama",
+      model: "llama3.2",
+      customEndpoint: "http://192.168.1.100:11434/v1",
+    });
+
+    const calls = vi.mocked(createOpenAICompatible).mock.calls;
+    const opts = calls[calls.length - 1][0] as {
+      baseURL: string;
+      fetch?: (input: RequestInfo | URL, init?: RequestInit) => Promise<Response>;
+    };
+    await opts.fetch!(`${opts.baseURL}/chat/completions`, { method: "POST" });
+
+    const [, init] = fetchMock.mock.calls[0] as [RequestInfo | URL, RequestInit];
+    expect(new Headers(init.headers).get("x-local-endpoint")).toBe(
+      "http://192.168.1.100:11434/v1",
+    );
+  });
+
+  it("keeps web ollama on the direct endpoint (no local proxy fetch)", () => {
+    isDesktopEnvMock.mockReturnValue(false);
+
+    getModel({
+      provider: "ollama",
+      model: "llama3.2",
+      customEndpoint: "http://192.168.1.20:11434/v1",
+    });
+
+    const calls = vi.mocked(createOpenAICompatible).mock.calls;
+    const opts = calls[calls.length - 1][0];
+    expect(opts.baseURL).toBe("http://192.168.1.20:11434/v1");
     expect(opts.fetch).toBeUndefined();
   });
 });

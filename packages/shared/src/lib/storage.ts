@@ -444,6 +444,31 @@ export async function loadCurrentAppId(): Promise<string | null> {
   }
 }
 
+// ── Config health (corrupt config.json recovery) ─────────────────────────────
+//
+// Rust quarantines an unparsable config.json as config.json.corrupt-<unix> and
+// records it in-process. The frontend reads this once at startup to show a
+// one-time banner. Web (non-Tauri) is a no-op: { recovered: false }.
+
+export interface ConfigHealth {
+  recovered: boolean;
+  backupFile?: string | null;
+}
+
+export async function loadConfigHealth(): Promise<ConfigHealth> {
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    const health = await invoke<ConfigHealth>("config_health");
+    return {
+      recovered: !!health?.recovered,
+      backupFile: health?.backupFile ?? null,
+    };
+  } catch {
+    // Not in Tauri environment (Web) — nothing was recovered
+    return { recovered: false };
+  }
+}
+
 // ── App Operations ────────────────────────────────────────────────────────
 /**
  * Desktop uses real files via Rust IPC (ADR-008); Web uses IndexedDB.

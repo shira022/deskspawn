@@ -38,7 +38,7 @@ import type {
   TriageState,
 } from "../types";
 import { DEFAULT_SETTINGS } from "../types";
-import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKeyInfo, setSessionApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, saveCurrentAppId, loadCurrentAppId, saveSettingsDesktop, loadSettingsDesktop, listApps, deleteLegacyPlaintextFile as removeLegacyPlaintextFile, type ApiKeyStorageMethod } from "../lib/storage";
+import { saveProviderConfig, loadProviderConfig, saveApiKey, loadApiKeyInfo, setSessionApiKey, deleteApiKey, hasApiKey, saveLastProvider, loadLastProvider, saveCurrentAppId, loadCurrentAppId, saveSettingsDesktop, loadSettingsDesktop, listApps, loadConfigHealth, deleteLegacyPlaintextFile as removeLegacyPlaintextFile, type ApiKeyStorageMethod } from "../lib/storage";
 import { setAppId, listCheckpoints as engineListCheckpoints, persistChatHistory, loadChatHistory } from "../engine/tool-executors";
 import { setModelCostCache, clearModelCostCache } from "../lib/cost";
 import { getModelsForProvider } from "../lib/models-fetcher";
@@ -199,6 +199,8 @@ interface Store {
   settings: AppSettings;
   /** 初回起動（言語未設定）フラグ — デスクトップは言語選択画面を表示する */
   languageUnset: boolean;
+  /** 壊れた config.json を退避して初期化したか（起動時に一度だけバナー表示） */
+  configRecovered: boolean;
   setSettings: (settings: AppSettings) => void;
   updateSettings: (partial: Partial<AppSettings>) => void;
 
@@ -218,6 +220,7 @@ export const useAppStore = create<Store>((set, get) => ({
   setPhase: (phase) => set({ phase }),
   initialized: false,
   languageUnset: false,
+  configRecovered: false,
   initialize: async () => {
     // 全体タイムアウト: どの処理がハングしても 10 秒で強制完了させる。
     // これにより Cloudflare 本番などで models.dev の fetch や IndexedDB が
@@ -236,6 +239,12 @@ export const useAppStore = create<Store>((set, get) => ({
           } else {
             set({ languageUnset: true });
           }
+        } catch {}
+        // Detect a corrupt config.json that was quarantined during startup.
+        // Web returns { recovered: false } (no-op).
+        try {
+          const health = await loadConfigHealth();
+          set({ configRecovered: !!health.recovered });
         } catch {}
         // Load AI config from per-provider storage
         const lastProvider = await loadLastProvider();
@@ -296,14 +305,19 @@ export const useAppStore = create<Store>((set, get) => ({
           set({ apps: storedApps });
         }
 
-        // Load current app
+        // Load current app — only if it still exists in the registry.
+        // A stale `currentApp` (deleted app / empty registry) must fall back to
+        // "no app selected" and self-heal so the ghost reference is not kept.
         try {
           const pid = await loadCurrentAppId();
-          if (pid) {
+          const appExists = !!pid && storedApps.some((a) => a.id === pid);
+          if (appExists) {
             set({ currentAppId: pid });
             setAppId(pid);
             // Load checkpoints
             await get().fetchCheckpoints();
+          } else if (pid) {
+            await saveCurrentAppId(null);
           }
         } catch {}
       } catch (e) {

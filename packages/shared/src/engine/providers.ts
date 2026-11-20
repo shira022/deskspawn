@@ -17,6 +17,24 @@ import type { ProviderConfig } from "@deskspawn/ai-core";
 import { sidecarBase, sidecarFetchWithToken } from "../lib/sidecar";
 import { isDesktopEnv } from "../lib/platform";
 
+/** ローカルモデルの既定エンドポイント（OpenAI 互換 API の baseURL）。 */
+const LOCAL_MODEL_CHAT_ENDPOINTS = {
+  ollama: 'http://localhost:11434/v1',
+  'lm-studio': 'http://localhost:1234/v1',
+} as const;
+
+/**
+ * デスクトップ用: サイドカーの /local/v1 プロキシへ x-local-endpoint を付与して
+ * 転送する fetch ラッパー。WebView2 の CORS を回避しつつ H1 トークンも付与する。
+ */
+function createLocalProxyFetch(endpoint: string) {
+  return async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+    const headers = new Headers(init?.headers);
+    headers.set('x-local-endpoint', endpoint);
+    return sidecarFetchWithToken(input, { ...init, headers });
+  };
+}
+
 export function getModel(config: ProviderConfig): LanguageModel {
   const { provider, model, apiKey, customEndpoint } = config;
 
@@ -66,28 +84,36 @@ export function getModel(config: ProviderConfig): LanguageModel {
     }
 
     case 'ollama': {
-      const ollama = createOpenAICompatible({
-        name: 'ollama',
-        baseURL: customEndpoint ?? 'http://localhost:11434/v1',
-      });
       if (!model) {
         throw new Error(
           'Ollama model is not specified. Please enter a model name in the settings (e.g. llama3.2, qwen2.5).',
         );
       }
+      const endpoint = customEndpoint ?? LOCAL_MODEL_CHAT_ENDPOINTS.ollama;
+      // デスクトップでは CORS 回避のためサイドカーの /local/v1 経由にする。
+      const isDesktop = isDesktopEnv();
+      const ollama = createOpenAICompatible({
+        name: 'ollama',
+        baseURL: isDesktop ? `${sidecarBase()}/local/v1` : endpoint,
+        ...(isDesktop ? { fetch: createLocalProxyFetch(endpoint) } : {}),
+      });
       return ollama.chatModel(model) as unknown as LanguageModel;
     }
 
     case 'lm-studio': {
-      const lmStudio = createOpenAICompatible({
-        name: 'lm-studio',
-        baseURL: customEndpoint ?? 'http://localhost:1234/v1',
-      });
       if (!model) {
         throw new Error(
           'LM Studio model is not specified. Please enter a model name in the settings (e.g. qwen2.5-7b-instruct).',
         );
       }
+      const endpoint = customEndpoint ?? LOCAL_MODEL_CHAT_ENDPOINTS['lm-studio'];
+      // デスクトップでは CORS 回避のためサイドカーの /local/v1 経由にする。
+      const isDesktop = isDesktopEnv();
+      const lmStudio = createOpenAICompatible({
+        name: 'lm-studio',
+        baseURL: isDesktop ? `${sidecarBase()}/local/v1` : endpoint,
+        ...(isDesktop ? { fetch: createLocalProxyFetch(endpoint) } : {}),
+      });
       return lmStudio.chatModel(model) as unknown as LanguageModel;
     }
 
