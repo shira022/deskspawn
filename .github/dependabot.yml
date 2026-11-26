@@ -17,6 +17,11 @@ updates:
         update-types:
           - "minor"
           - "patch"
+        # Tauri の npm パッケージは Rust クレートと minor を揃える必要があり、
+        # グループ更新に巻き込むと ignore（下記）が効かずに 2.12 系へ上がってしまう。
+        # 個別PRに戻せば ignore が正しく適用される。
+        exclude-patterns:
+          - "@tauri-apps/api"
     # 手動で保留している更新。各項目の「解除条件」を満たしたらその行を削除する。
     # 保留の実測根拠は各Issue/PRに残している。
     ignore:
@@ -61,3 +66,24 @@ updates:
       - dependency-name: "typescript"
         versions:
           - "7.x"
+      # ai 7 はプロバイダ実装（@ai-sdk/*）ごと書き換えるメジャー移行。#217 で追跡。
+      # 解除条件: #217 の移行PRを出すとき。
+      - dependency-name: "ai"
+        versions:
+          - "7.x"
+      # lucide-react 1.x はアイコンAPIの破壊的変更を含む。
+      # 解除条件: 使用アイコンの棚卸しと置換を終えたとき。
+      - dependency-name: "lucide-react"
+        versions:
+          - "1.x"
+      # msw 3.x はハンドラAPI変更。#192（vitest 5 待ち）と同じ扱いで保留。
+      # 解除条件: テストのリクエストハンドラを移行したとき。
+      - dependency-name: "msw"
+        versions:
+          - "3.x"
+      # @types/node は CI / 実行環境の Node に合わせる（現在 Node 22）。
+      # 解除条件: CI とホストの Node を 26 系へ上げたとき。
+      - dependency-name: "@types/node"
+        versions:
+          - "26.x"
+
