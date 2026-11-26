@@ -218,6 +218,59 @@ function sleepSync(ms) {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+const RETRY_DELAYS_MS = [2000, 5000];
+
+function defaultSleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryableStatus(status) {
+  return status === 408 || status === 429 || (status >= 500 && status <= 599);
+}
+
+export async function fetchWithRetry(url, options = {}) {
+  const {
+    fetchImpl = globalThis.fetch,
+    sleepImpl = defaultSleep,
+    delayMs = RETRY_DELAYS_MS,
+    maxAttempts = 3,
+    logImpl = log,
+    ...fetchOptions
+  } = options;
+
+  const delayAt = (attempt) =>
+    delayMs[Math.min(attempt - 1, delayMs.length - 1)] ?? 0;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let response;
+    try {
+      response = await fetchImpl(url, fetchOptions);
+    } catch (err) {
+      if (attempt >= maxAttempts) throw err;
+      logImpl(
+        `retrying ${url} (attempt ${attempt + 1}/${maxAttempts}, ${err.message})`,
+      );
+      await sleepImpl(delayAt(attempt));
+      continue;
+    }
+
+    if (response.ok) return response;
+
+    const reason = `HTTP ${response.status}`;
+    if (!isRetryableStatus(response.status)) {
+      throw new Error(reason);
+    }
+    if (attempt >= maxAttempts) {
+      throw new Error(reason);
+    }
+
+    logImpl(`retrying ${url} (attempt ${attempt + 1}/${maxAttempts}, ${reason})`);
+    await sleepImpl(delayAt(attempt));
+  }
+
+  throw new Error('fetch failed: retries exhausted');
+}
+
 function runPlatformExtractor(zipPath, destDir) {
   if (process.platform === 'win32') {
     return spawnSync(
@@ -335,12 +388,9 @@ async function main() {
 
   let response;
   try {
-    response = await fetch(url, { redirect: 'follow' });
+    response = await fetchWithRetry(url, { redirect: 'follow' });
   } catch (err) {
     fail(`download failed: ${err.message}`);
-  }
-  if (!response.ok) {
-    fail(`download failed: HTTP ${response.status}`);
   }
 
   const bytes = Buffer.from(await response.arrayBuffer());

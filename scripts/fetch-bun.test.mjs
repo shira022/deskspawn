@@ -15,7 +15,7 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { fileURLToPath } from 'node:url';
 
-import { extractWithNode, findBinary } from './fetch-bun.mjs';
+import { extractWithNode, fetchWithRetry, findBinary } from './fetch-bun.mjs';
 
 const SCRIPTS_DIR = path.dirname(fileURLToPath(import.meta.url));
 
@@ -137,4 +137,60 @@ test('findBinary returns null when the binary is absent', (t) => {
   fs.writeFileSync(path.join(dir, 'nested', 'deeper', 'readme.txt'), 'not a binary');
 
   assert.equal(findBinary(dir, 'bun.exe'), null);
+});
+
+// The retry tests never touch the network: fetchImpl is always stubbed and the
+// inter-attempt delay is set to zero.
+const RETRY_TEST_OPTIONS = { delayMs: [0, 0], logImpl: () => {} };
+
+test('fetchWithRetry retries a 504 and succeeds on the second attempt', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return calls === 1
+      ? { ok: false, status: 504 }
+      : { ok: true, status: 200 };
+  };
+
+  const response = await fetchWithRetry('https://example.test/bun.zip', {
+    ...RETRY_TEST_OPTIONS,
+    fetchImpl,
+  });
+
+  assert.equal(response.status, 200);
+  assert.equal(calls, 2);
+});
+
+test('fetchWithRetry does not retry a 404 and fails immediately', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return { ok: false, status: 404 };
+  };
+
+  await assert.rejects(
+    fetchWithRetry('https://example.test/bun.zip', {
+      ...RETRY_TEST_OPTIONS,
+      fetchImpl,
+    }),
+    /HTTP 404/,
+  );
+  assert.equal(calls, 1);
+});
+
+test('fetchWithRetry throws after three 5xx attempts', async () => {
+  let calls = 0;
+  const fetchImpl = async () => {
+    calls += 1;
+    return { ok: false, status: 503 };
+  };
+
+  await assert.rejects(
+    fetchWithRetry('https://example.test/bun.zip', {
+      ...RETRY_TEST_OPTIONS,
+      fetchImpl,
+    }),
+    /HTTP 503/,
+  );
+  assert.equal(calls, 3);
 });
