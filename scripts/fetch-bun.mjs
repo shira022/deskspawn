@@ -41,9 +41,8 @@ const repoRoot = path.resolve(scriptDir, '..');
 const outDir = path.join(repoRoot, 'apps', 'desktop', 'src-tauri', 'binaries');
 const versionFile = path.join(outDir, '.bun-version');
 
-const key = `${process.platform}-${process.arch}`;
-const asset = ASSETS[key];
-const checkOnly = process.argv.includes('--check');
+const platformKey = `${process.platform}-${process.arch}`;
+const platformAsset = ASSETS[platformKey];
 
 function log(status) {
   console.log(`fetch-bun: ${status}`);
@@ -54,6 +53,7 @@ let tempDir = null;
 function cleanup() {
   if (tempDir) {
     fs.rmSync(tempDir, { recursive: true, force: true });
+    tempDir = null;
   }
 }
 
@@ -63,12 +63,6 @@ function fail(message) {
   process.exit(1);
 }
 
-if (!asset) {
-  fail(`unsupported platform ${key} (supported: ${Object.keys(ASSETS).join(', ')})`);
-}
-
-const outFile = path.join(outDir, `bun-${asset.triple}${asset.exe === 'bun.exe' ? '.exe' : ''}`);
-
 function readVersionFile() {
   try {
     return fs.readFileSync(versionFile, 'utf8').trim();
@@ -77,43 +71,26 @@ function readVersionFile() {
   }
 }
 
-if (checkOnly) {
-  if (!fs.existsSync(outFile)) {
-    fail(`bundled bun is missing (expected bun-${asset.triple}); run node scripts/fetch-bun.mjs`);
-  }
-  if (readVersionFile() !== BUN_VERSION) {
-    fail(`bundled bun version marker is missing or stale; run node scripts/fetch-bun.mjs`);
-  }
-  log(`ok (v${BUN_VERSION})`);
-  process.exit(0);
-}
-
-if (fs.existsSync(outFile) && readVersionFile() === BUN_VERSION) {
-  log(`up to date (v${BUN_VERSION})`);
-  process.exit(0);
-}
-
-fs.mkdirSync(outDir, { recursive: true });
-
-const url = `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${asset.file}`;
-tempDir = fs.mkdtempSync(path.join(outDir, '.fetch-bun-'));
-
-function findBinary(dir) {
+export function findBinary(dir, exeName = platformAsset?.exe) {
+  if (!exeName) return null;
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      const found = findBinary(full);
+      const found = findBinary(full, exeName);
       if (found) return found;
-    } else if (entry.name === asset.exe) {
+    } else if (entry.name === exeName) {
       return full;
     }
   }
   return null;
 }
 
-// Minimal ZIP reader used only when the platform extractor (`unzip`) is not
-// installed. Handles the stored/deflate entries Bun publishes.
-function extractWithNode(zipPath, destDir) {
+// Minimal ZIP reader. Handles the stored/deflate entries Bun publishes and
+// keeps the archive's directory structure so findBinary() can locate nested
+// binaries (e.g. bun-windows-x64/bun.exe).
+export function extractWithNode(zipPath, destDir, exeName = platformAsset?.exe) {
+  if (!exeName) throw new Error('no executable name supplied');
+
   const buf = fs.readFileSync(zipPath);
   const EOCD_SIG = 0x06054b50;
   let eocd = -1;
@@ -141,7 +118,7 @@ function extractWithNode(zipPath, destDir) {
     const name = buf.toString('utf8', offset + 46, offset + 46 + nameLen);
     offset += 46 + nameLen + extraLen + commentLen;
 
-    if (path.posix.basename(name) !== asset.exe) continue;
+    if (path.posix.basename(name) !== exeName) continue;
     if (buf.readUInt32LE(localOffset) !== 0x04034b50) {
       throw new Error('invalid zip local-file header');
     }
@@ -159,15 +136,203 @@ function extractWithNode(zipPath, destDir) {
       throw new Error(`unsupported zip compression method ${method}`);
     }
 
-    const out = path.join(destDir, asset.exe);
+    const relative = name
+      .split('/')
+      .filter((part) => part && part !== '.' && part !== '..')
+      .join(path.sep);
+    const out = path.join(destDir, relative || exeName);
+    fs.mkdirSync(path.dirname(out), { recursive: true });
     fs.writeFileSync(out, data);
     return out;
   }
   return null;
 }
 
+function truncate(value, max = 500) {
+  const text = String(value ?? '');
+  return text.length > max ? `${text.slice(0, max)}…` : text;
+}
+
+function describeDirectory(dir, limit = 20) {
+  const lines = [];
+
+  function walk(current) {
+    if (lines.length >= limit) return;
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch (err) {
+      lines.push(`<unreadable: ${err.message}>`);
+      return;
+    }
+    for (const entry of entries) {
+      if (lines.length >= limit) return;
+      const full = path.join(current, entry.name);
+      const rel = path.relative(dir, full) || '.';
+      if (entry.isDirectory()) {
+        lines.push(`${rel}/`);
+        walk(full);
+      } else {
+        let size;
+        try {
+          size = `${fs.statSync(full).size} bytes`;
+        } catch (err) {
+          size = `<stat failed: ${err.message}>`;
+        }
+        lines.push(`${rel} (${size})`);
+      }
+    }
+  }
+
+  walk(dir);
+  if (lines.length === 0) return '  (empty)';
+  const suffix = lines.length >= limit ? `\n  ... (truncated to ${limit} entries)` : '';
+  return lines.map((line) => `  ${line}`).join('\n') + suffix;
+}
+
+function toAttempt(name, result) {
+  return {
+    name,
+    status: result.status,
+    stdout: truncate(result.stdout),
+    stderr: truncate(result.stderr),
+    error: result.error ? result.error.message : null,
+    ok: !result.error && result.status === 0,
+  };
+}
+
+function formatAttempt(attempt) {
+  return [
+    `- ${attempt.name}: status=${attempt.status ?? 'n/a'}`,
+    `    stdout: ${attempt.stdout || '(empty)'}`,
+    `    stderr: ${attempt.stderr || '(empty)'}`,
+    ...(attempt.error ? [`    error: ${attempt.error}`] : []),
+  ].join('\n');
+}
+
+function psQuote(value) {
+  return `'${String(value).replace(/'/g, "''")}'`;
+}
+
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function runPlatformExtractor(zipPath, destDir) {
+  if (process.platform === 'win32') {
+    return spawnSync(
+      'powershell',
+      [
+        '-NoProfile',
+        '-Command',
+        `Expand-Archive -LiteralPath ${psQuote(zipPath)} -DestinationPath ${psQuote(destDir)} -Force`,
+      ],
+      { encoding: 'utf8' },
+    );
+  }
+  return spawnSync('unzip', ['-o', zipPath, '-d', destDir], { encoding: 'utf8' });
+}
+
+function extractionFailure(exeName, attempts, dir) {
+  return [
+    `could not find ${exeName} in the downloaded archive`,
+    'extraction attempts:',
+    ...attempts.map(formatAttempt),
+    `contents of ${dir}:`,
+    describeDirectory(dir),
+  ].join('\n');
+}
+
+function extractArchive(zipPath, destDir, exeName) {
+  const attempts = [];
+  let extracted = null;
+
+  try {
+    extracted = extractWithNode(zipPath, destDir, exeName);
+    attempts.push({
+      name: 'extractWithNode',
+      status: extracted ? 0 : 1,
+      stdout: '',
+      stderr: extracted ? '' : 'no matching entry found in archive',
+      error: null,
+      ok: Boolean(extracted),
+    });
+  } catch (err) {
+    attempts.push({
+      name: 'extractWithNode',
+      status: null,
+      stdout: '',
+      stderr: truncate(err.message),
+      error: null,
+      ok: false,
+    });
+  }
+
+  if (!extracted) {
+    const name = process.platform === 'win32' ? 'Expand-Archive' : 'unzip';
+    let result = runPlatformExtractor(zipPath, destDir);
+    attempts.push(toAttempt(name, result));
+
+    if (process.platform === 'win32' && (result.error || result.status !== 0)) {
+      sleepSync(1000);
+      result = runPlatformExtractor(zipPath, destDir);
+      attempts.push(toAttempt(`${name} (retry)`, result));
+    }
+  }
+
+  if (!extracted) {
+    extracted = findBinary(destDir, exeName);
+  }
+  if (!extracted) {
+    throw new Error(extractionFailure(exeName, attempts, destDir));
+  }
+
+  const size = fs.statSync(extracted).size;
+  if (size <= 0) {
+    throw new Error(
+      [
+        `extracted ${exeName} is empty (0 bytes)`,
+        'extraction attempts:',
+        ...attempts.map(formatAttempt),
+      ].join('\n'),
+    );
+  }
+
+  return extracted;
+}
+
 async function main() {
+  const asset = platformAsset;
+  const checkOnly = process.argv.includes('--check');
+
+  if (!asset) {
+    fail(`unsupported platform ${platformKey} (supported: ${Object.keys(ASSETS).join(', ')})`);
+  }
+
+  const outFile = path.join(outDir, `bun-${asset.triple}${asset.exe === 'bun.exe' ? '.exe' : ''}`);
+
+  if (checkOnly) {
+    if (!fs.existsSync(outFile)) {
+      fail(`bundled bun is missing (expected bun-${asset.triple}); run node scripts/fetch-bun.mjs`);
+    }
+    if (readVersionFile() !== BUN_VERSION) {
+      fail(`bundled bun version marker is missing or stale; run node scripts/fetch-bun.mjs`);
+    }
+    log(`ok (v${BUN_VERSION})`);
+    process.exit(0);
+  }
+
+  if (fs.existsSync(outFile) && readVersionFile() === BUN_VERSION) {
+    log(`up to date (v${BUN_VERSION})`);
+    process.exit(0);
+  }
+
+  fs.mkdirSync(outDir, { recursive: true });
+
+  const url = `https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/${asset.file}`;
   log(`downloading v${BUN_VERSION} (${asset.file})`);
+  tempDir = fs.mkdtempSync(path.join(outDir, '.fetch-bun-'));
+
   let response;
   try {
     response = await fetch(url, { redirect: 'follow' });
@@ -188,35 +353,11 @@ async function main() {
   const zipPath = path.join(tempDir, asset.file);
   fs.writeFileSync(zipPath, bytes);
 
-  let result;
-  if (process.platform === 'win32') {
-    result = spawnSync(
-      'powershell',
-      [
-        '-NoProfile',
-        '-Command',
-        `Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${tempDir}' -Force`,
-      ],
-      { stdio: 'ignore' },
-    );
-  } else {
-    result = spawnSync('unzip', ['-o', zipPath, '-d', tempDir], { stdio: 'ignore' });
-  }
-  let extracted = null;
-  if (result.error || result.status !== 0) {
-    // `unzip` is not guaranteed to exist on Linux; fall back to reading the
-    // archive directly with Node so fetching still works on a bare host.
-    try {
-      extracted = extractWithNode(zipPath, tempDir);
-    } catch (err) {
-      fail(`failed to extract archive: ${err.message}`);
-    }
-  }
-  if (!extracted) {
-    extracted = findBinary(tempDir);
-  }
-  if (!extracted) {
-    fail(`could not find ${asset.exe} in the downloaded archive`);
+  let extracted;
+  try {
+    extracted = extractArchive(zipPath, tempDir, asset.exe);
+  } catch (err) {
+    fail(err.message);
   }
 
   fs.copyFileSync(extracted, outFile);
@@ -227,6 +368,11 @@ async function main() {
   log(`installed v${BUN_VERSION} (${path.basename(outFile)})`);
 }
 
-main()
-  .catch((err) => fail(err.message))
-  .finally(cleanup);
+const isMain =
+  Boolean(process.argv[1]) && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isMain) {
+  main()
+    .catch((err) => fail(err.message))
+    .finally(cleanup);
+}
