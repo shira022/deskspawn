@@ -1,7 +1,6 @@
 version: 2
 updates:
   - package-ecosystem: "npm"
-    package-manager: pnpm
     directory: "/"
     schedule:
       interval: "weekly"
@@ -17,9 +16,8 @@ updates:
         update-types:
           - "minor"
           - "patch"
-        # Tauri の npm パッケージは Rust クレートと minor を揃える必要があり、
-        # グループ更新に巻き込むと ignore（下記）が効かずに 2.12 系へ上がってしまう。
-        # 個別PRに戻せば ignore が正しく適用される。
+        # Tauri の npm パッケージは Rust クレートと minor を揃える必要がある。
+        # ignore（下記）だけに頼らず、グループからも外して個別PRで扱う。
         exclude-patterns:
           - "@tauri-apps/api"
     # 手動で保留している更新。各項目の「解除条件」を満たしたらその行を削除する。
