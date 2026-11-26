@@ -50,6 +50,8 @@ import {
 } from "../../lib/constants";
 import { loadProviderConfig } from "../../lib/storage";
 import { LanguageSelectScreen } from "../onboarding/LanguageSelectScreen";
+import { EnvCheckScreen } from "../onboarding/EnvCheckScreen";
+import { ConfigRecoveredBanner } from "../common/ConfigRecoveredBanner";
 import { useModels } from "../../hooks/useModels";
 
 const layoutIcons: Record<string, React.ReactNode> = {
@@ -204,22 +206,37 @@ export function MainLayout() {
   // BootSequence が言語選択を済ませてからここに来るため、この分岐はデス
   // クトップ専用に実質作用する — F0 / docs/user-flow-spec.md）。
   const languageUnset = useAppStore((s) => s.languageUnset);
+  const [runtimeEnvReady, setRuntimeEnvReady] = useState(!isDesktopEnv());
 
   if (languageUnset) {
     return (
-      <LanguageSelectScreen
-        onSelect={(code) => {
-          // 言語を保存（デスクトップ: config.json via Rust IPC / Web: localStorage）
-          // して初期化フラグを解除 → メイン画面へ。
-          updateSettings({ language: code as LanguageCode });
-          useAppStore.setState({ languageUnset: false });
-        }}
-      />
+      <>
+        <ConfigRecoveredBanner />
+        <LanguageSelectScreen
+          onSelect={(code) => {
+            // 言語を保存（デスクトップ: config.json via Rust IPC / Web: localStorage）
+            // して初期化フラグを解除 → メイン画面へ。
+            updateSettings({ language: code as LanguageCode });
+            useAppStore.setState({ languageUnset: false });
+          }}
+        />
+      </>
+    );
+  }
+
+  if (isDesktopEnv() && !runtimeEnvReady) {
+    return (
+      <>
+        <ConfigRecoveredBanner />
+        <EnvCheckScreen onReady={() => setRuntimeEnvReady(true)} />
+      </>
     );
   }
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
+      <ConfigRecoveredBanner />
+
       {/* Toolbar */}
       <div className="relative z-10 flex h-10 items-center justify-between border-b bg-muted/30 px-3">
         <div className="flex items-center gap-2">

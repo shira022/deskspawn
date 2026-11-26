@@ -20,7 +20,7 @@ src-tauri/gen/
 *.cer
 *.p12
 sidecar/dist/
-src-tauri/binaries/
+**/src-tauri/binaries/
 coverage/
 
 # Preview/screenshot images

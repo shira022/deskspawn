@@ -190,6 +190,10 @@ jobs:
       # and is not committed, so compile it before invoking the Tauri CLI.
       - name: Build sidecar (externalBin)
         run: cd apps/desktop && bun scripts/build-sidecar.mjs
+      # The preview runtime is bundled as `binaries/bun-<triple>` (externalBin),
+      # so fetch the pinned Bun asset for the runner OS before the Tauri build.
+      - name: Fetch bundled Bun runtime
+        run: node scripts/fetch-bun.mjs
       - name: Build Tauri bundles
         shell: bash
         # This runner has Node+pnpm, which is required here: the Tauri config's
